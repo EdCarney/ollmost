@@ -1,4 +1,4 @@
-import { FolderClosed, MessageSquare, PanelLeft, Plus, Settings, Shapes, Sparkles } from 'lucide-react'
+import { FolderClosed, MessageSquare, PanelLeft, Plus, Settings, Shapes, Sparkles, SquareTerminal } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/format'
 import { type Route, useApp } from '@/stores/app'
@@ -91,6 +91,12 @@ export function Sidebar() {
           label="Projects"
           active={route.name === 'projects' || route.name === 'project'}
           onClick={() => go({ name: 'projects' })}
+        />
+        <NavItem
+          icon={<SquareTerminal className="size-4" />}
+          label="Code"
+          active={route.name === 'code'}
+          onClick={() => go({ name: 'code' })}
         />
         <NavItem
           icon={<Shapes className="size-4" />}

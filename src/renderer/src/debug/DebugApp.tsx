@@ -19,7 +19,7 @@ function initialConversation(): string | null {
 
 export function DebugApp() {
   useTheme()
-  const { settings, conversations, loadSettings, loadThemes, loadConversations, updateSettings } = useApp()
+  const { settings, conversations, sessions, loadSettings, loadThemes, loadConversations, updateSettings } = useApp()
   const [conversationId, setConversationId] = useState<string | null>(initialConversation)
   const [traces, setTraces] = useState<TraceSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -103,6 +103,9 @@ export function DebugApp() {
       return next.size ? next : new Set(KINDS)
     })
 
+  // Chats and code sessions are kept in separate lists; either can be picked here.
+  const pickable = [...conversations, ...sessions]
+
   if (!settings) return <div className="h-full bg-canvas" />
 
   return (
@@ -117,8 +120,8 @@ export function DebugApp() {
             className="h-8 max-w-[280px] rounded-lg border border-line bg-panel px-2 text-[13px] outline-none"
           >
             <option value="">All recent requests</option>
-            {conversationId && !conversations.some((c) => c.id === conversationId) && <option value={conversationId}>This chat</option>}
-            {conversations.map((c) => (
+            {conversationId && !pickable.some((c) => c.id === conversationId) && <option value={conversationId}>This conversation</option>}
+            {pickable.map((c) => (
               <option key={c.id} value={c.id}>
                 {c.title}
               </option>

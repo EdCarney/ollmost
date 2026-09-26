@@ -149,6 +149,12 @@ function flush(): void {
 
 const onScreen = (conversationId: string) => showsConversation(useApp.getState().route, conversationId)
 
+/** A chat or a code session from the app's lists. */
+function listed(conversationId: string): Conversation | undefined {
+  const { conversations, sessions } = useApp.getState()
+  return conversations.find((c) => c.id === conversationId) ?? sessions.find((c) => c.id === conversationId)
+}
+
 function handle(e: ChatEvent): void {
   switch (e.type) {
     case 'delta': {
@@ -170,7 +176,7 @@ function handle(e: ChatEvent): void {
       })
       // The chat on screen shows the question inline; any other one gets a toast (and a mark in the sidebar).
       if (e.event.awaiting && !onScreen(e.conversationId)) {
-        const title = useApp.getState().conversations.find((c) => c.id === e.conversationId)?.title
+        const title = listed(e.conversationId)?.title
         // A chat's first reply runs before it has a title.
         const which = title && title !== 'New chat' ? `"${title}"` : 'A new chat'
         useApp.getState().toast(`${which} is waiting for your approval to use a tool.`)
@@ -198,7 +204,7 @@ function handle(e: ChatEvent): void {
       if (useChat.getState().conversation?.id !== e.conversationId) useApp.getState().toast(e.error, 'error')
       break
     case 'title': {
-      const conv = useApp.getState().conversations.find((c) => c.id === e.conversationId)
+      const conv = listed(e.conversationId)
       if (conv) useApp.getState().upsertConversation({ ...conv, title: e.title })
       const current = useChat.getState().conversation
       if (current?.id === e.conversationId) useChat.setState({ conversation: { ...current, title: e.title } })

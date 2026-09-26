@@ -5,6 +5,7 @@ import { CommandPalette } from './components/CommandPalette'
 import { Sidebar } from './components/Sidebar'
 import { TooltipProvider } from './components/ui'
 import { api } from './lib/api'
+import { openFolder } from './lib/codeActions'
 import { cn } from './lib/format'
 import { useApp } from './stores/app'
 import { useArtifactPanel } from './stores/artifactPanel'
@@ -13,6 +14,8 @@ import { useTheme } from './theme/useTheme'
 import { ArtifactsView } from './views/ArtifactsView'
 import { ChatsView } from './views/ChatsView'
 import { ChatView } from './views/ChatView'
+import { CodeSessionView } from './views/CodeSessionView'
+import { CodeView } from './views/CodeView'
 import { HomeView } from './views/HomeView'
 import { ProjectsView } from './views/ProjectsView'
 import { ProjectView } from './views/ProjectView'
@@ -40,10 +43,14 @@ function useBootstrap() {
       if (action === 'new-chat') {
         useArtifactPanel.getState().close()
         s.navigate({ name: 'home' })
+      } else if (action === 'new-code-session') {
+        useArtifactPanel.getState().close()
+        s.navigate({ name: 'code' })
+        void openFolder()
       } else if (action === 'settings') s.navigate({ name: 'settings' })
       else if (action === 'search') s.setSearchOpen(true)
       else if (action === 'toggle-sidebar') s.toggleSidebar()
-      else if (action === 'debugger') void api.debug.open(s.route.name === 'chat' ? s.route.id : null)
+      else if (action === 'debugger') void api.debug.open(s.route.name === 'chat' || s.route.name === 'code' ? (s.route.id ?? null) : null)
     })
     // The menu accelerator covers ⌘K normally; this also catches it when the menu doesn't see the key.
     const onKey = (e: KeyboardEvent) => {
@@ -97,6 +104,8 @@ function CurrentView() {
       return <ChatView key={route.id} id={route.id} />
     case 'chats':
       return <ChatsView />
+    case 'code':
+      return route.id ? <CodeSessionView key={route.id} id={route.id} /> : <CodeView />
     case 'projects':
       return <ProjectsView />
     case 'project':
@@ -115,7 +124,8 @@ export function App() {
   useTheme()
   const sidebarOpen = useApp((s) => s.sidebarOpen)
   const settings = useApp((s) => s.settings)
-  const isChat = useApp((s) => s.route.name === 'chat')
+  // A code session's replies can hold artifacts too.
+  const showsPanel = useApp((s) => s.route.name === 'chat' || (s.route.name === 'code' && !!s.route.id))
 
   if (!settings) return <div className="h-full bg-canvas" />
 
@@ -127,7 +137,7 @@ export function App() {
           <div className="flex min-w-0 flex-1 flex-col">
             <CurrentView />
           </div>
-          {isChat && <ArtifactPanel />}
+          {showsPanel && <ArtifactPanel />}
         </main>
       </div>
       <CommandPalette />

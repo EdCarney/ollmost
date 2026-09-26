@@ -28,6 +28,7 @@ const {
   toolsFor
 } = await import('../src/main/chat/tools')
 const { basePrompt } = await import('../src/main/chat/prompts')
+const { describeAllowKey } = await import('../src/shared/toolAllow')
 type ToolProvider = import('../src/main/chat/tools').ToolProvider
 type ToolContext = import('../src/main/chat/tools').ToolContext
 
@@ -294,5 +295,18 @@ describe('asking first', () => {
     expect(toolEndpoint(call('browser.open', { url: 'https://a.io' }), c)).toMatch(/\/api\/web_fetch$/)
     expect(toolEndpoint(call('notes__read'), c)).toBe('mcp://notes/read')
     expect(toolEndpoint(call('load_skill', { name: 'pdf' }), c)).toBe('ollmost://tools/load_skill')
+  })
+})
+
+describe('describeAllowKey', () => {
+  it('names what each kind of key covers', () => {
+    expect(describeAllowKey('mcp:srv1/write_file')).toEqual({ serverId: 'srv1', tool: 'write_file' })
+    expect(describeAllowKey('web_fetch@example.com')).toEqual({ tool: 'web_fetch', host: 'example.com' })
+    expect(describeAllowKey('web_search')).toEqual({ tool: 'web_search' })
+  })
+
+  it("names the tools behind a code session's keys", () => {
+    expect(describeAllowKey('code:commands')).toEqual({ tool: 'run_command' })
+    expect(describeAllowKey('code:edits')).toEqual({ tool: 'edit_file, write_file' })
   })
 })

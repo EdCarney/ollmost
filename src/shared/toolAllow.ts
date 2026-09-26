@@ -23,6 +23,9 @@ export function describeAllowKey(key: string): AllowKeyParts {
   if (mcp) return { serverId: mcp[1], tool: mcp[2] }
   const web = /^web_fetch@(.+)$/.exec(key)
   if (web) return { tool: 'web_fetch', host: web[1] }
+  // A code session's answers cover its commands, or all its file edits, whichever tool made them.
+  if (key === 'code:commands') return { tool: 'run_command' }
+  if (key === 'code:edits') return { tool: 'edit_file, write_file' }
   return { tool: key }
 }
 

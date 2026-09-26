@@ -1,10 +1,10 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { FolderClosed, MessageSquare, Plus, Search, Settings, Sparkles } from 'lucide-react'
+import { FolderClosed, MessageSquare, Plus, Search, Settings, Sparkles, SquareTerminal } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import type { SearchHit } from '@shared/types'
 import { api } from '@/lib/api'
 import { cn, relativeTime } from '@/lib/format'
-import { type Route, useApp } from '@/stores/app'
+import { conversationRoute, type Route, useApp } from '@/stores/app'
 import { Snippet } from '@/views/ChatsView'
 
 interface Item {
@@ -16,7 +16,7 @@ interface Item {
 }
 
 export function CommandPalette() {
-  const { searchOpen, setSearchOpen, conversations, projects, navigate } = useApp()
+  const { searchOpen, setSearchOpen, conversations, sessions, projects, navigate } = useApp()
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<SearchHit[]>([])
   const [index, setIndex] = useState(0)
@@ -41,6 +41,7 @@ export function CommandPalette() {
       return [
         { key: 'new', icon: <Plus className="size-4" />, label: 'New chat', route: { name: 'home' } },
         { key: 'projects', icon: <FolderClosed className="size-4" />, label: 'Projects', route: { name: 'projects' } },
+        { key: 'code', icon: <SquareTerminal className="size-4" />, label: 'Code sessions', route: { name: 'code' } },
         { key: 'skills', icon: <Sparkles className="size-4" />, label: 'Skills', route: { name: 'skills' } },
         { key: 'settings', icon: <Settings className="size-4" />, label: 'Settings', route: { name: 'settings' } },
         ...conversations.slice(0, 8).map((c) => ({
@@ -60,15 +61,18 @@ export function CommandPalette() {
         detail: 'Project',
         route: { name: 'project', id: p.id } as Route
       }))
-    const chatItems = hits.map((h) => ({
-      key: h.conversationId,
-      icon: <MessageSquare className="size-4" />,
-      label: h.title,
-      detail: <Snippet text={h.snippet} />,
-      route: { name: 'chat', id: h.conversationId } as Route
-    }))
+    const chatItems = hits.map((h) => {
+      const route = conversationRoute(h.conversationId, sessions)
+      return {
+        key: h.conversationId,
+        icon: route.name === 'code' ? <SquareTerminal className="size-4" /> : <MessageSquare className="size-4" />,
+        label: h.title,
+        detail: <Snippet text={h.snippet} />,
+        route
+      }
+    })
     return [...projectItems, ...chatItems]
-  }, [query, hits, conversations, projects])
+  }, [query, hits, conversations, sessions, projects])
 
   const choose = (item: Item | undefined) => {
     if (!item) return

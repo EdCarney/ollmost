@@ -79,6 +79,7 @@ function buildMenu(): void {
       label: 'File',
       submenu: [
         { label: 'New Chat', accelerator: 'CmdOrCtrl+N', click: () => sendMenu('new-chat') },
+        { label: 'New Code Session…', accelerator: 'CmdOrCtrl+Shift+N', click: () => sendMenu('new-code-session') },
         { label: 'Search Chats…', accelerator: 'CmdOrCtrl+K', click: () => sendMenu('search') },
         { label: 'Open Debugger', accelerator: 'CmdOrCtrl+Shift+D', click: () => sendMenu('debugger') },
         { type: 'separator' },

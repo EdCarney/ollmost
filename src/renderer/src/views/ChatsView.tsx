@@ -6,7 +6,7 @@ import { PageHeader, TopBar } from '@/components/TopBar'
 import { Button, EmptyState } from '@/components/ui'
 import { api } from '@/lib/api'
 import { relativeTime } from '@/lib/format'
-import { useApp } from '@/stores/app'
+import { conversationRoute, useApp } from '@/stores/app'
 
 /** Render FTS snippets (matches wrapped in \u0001…\u0002) without touching innerHTML. */
 export function Snippet({ text }: { text: string }) {
@@ -28,7 +28,7 @@ export function Snippet({ text }: { text: string }) {
 }
 
 export function ChatsView() {
-  const { conversations, projects, navigate } = useApp()
+  const { conversations, sessions, projects, navigate } = useApp()
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<SearchHit[] | null>(null)
 
@@ -70,7 +70,7 @@ export function ChatsView() {
                 {hits.map((h) => (
                   <li key={h.conversationId}>
                     <button
-                      onClick={() => navigate({ name: 'chat', id: h.conversationId })}
+                      onClick={() => navigate(conversationRoute(h.conversationId, sessions))}
                       className="w-full rounded-lg px-3 py-3 text-left hover:bg-hover"
                     >
                       <div className="text-sm font-medium">{h.title}</div>
