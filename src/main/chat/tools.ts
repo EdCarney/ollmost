@@ -3,6 +3,7 @@ import type { OllamaTool, ToolCall } from '../ollama/client'
 import { errorMessage } from '../util'
 import type { PastToolCall } from './assemble'
 import { capText, TOOL_RESULT_CHARS } from './results'
+import { codeTools } from '../code/tools'
 import { mcpTools } from '../mcp/provider'
 import { runnerTools } from '../runner/provider'
 import { skillTools } from './skillTools'
@@ -57,7 +58,7 @@ export interface ResolvedCall {
   args: Record<string, unknown>
 }
 
-/** A group of tools: the built-in skill and web tools now, MCP servers and a code runner later (#31). */
+/** A group of tools: the built-in skill and web tools, the code runner, a code session's tools, MCP servers. */
 export interface ToolProvider {
   id: string
   /** The tools offered with this request; none when the provider is off. */
@@ -101,7 +102,7 @@ export interface ToolProvider {
 }
 
 // In order: a name offered by two providers belongs to the first.
-const BUILT_IN: ToolProvider[] = [skillTools, webTools, runnerTools, mcpTools]
+const BUILT_IN: ToolProvider[] = [skillTools, webTools, runnerTools, codeTools, mcpTools]
 let registered: ToolProvider[] = []
 
 /** Add a provider; returns a function that removes it. */

@@ -4,7 +4,7 @@ import { describeAllowKey } from '@shared/toolAllow'
 import type { Conversation, McpServer } from '@shared/types'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/format'
-import { reportError, useApp } from '@/stores/app'
+import { reportError, showsConversation, useApp } from '@/stores/app'
 import { useArtifactPanel } from '@/stores/artifactPanel'
 import { useChat } from '@/stores/chat'
 import { useDrafts } from '@/stores/drafts'
@@ -57,6 +57,8 @@ export function ConversationMenu({
   const [title, setTitle] = useState(conversation.title)
   const [editingInstructions, setEditingInstructions] = useState(false)
   const [instructions, setInstructions] = useState(conversation.instructions)
+  const session = conversation.mode === 'code'
+  const noun = session ? 'session' : 'chat'
 
   const remove = async () => {
     try {
@@ -65,10 +67,12 @@ export function ConversationMenu({
       setDeleting(false)
       const app = useApp.getState()
       await Promise.all([app.loadConversations(), app.loadProjects()])
-      if (app.route.name === 'chat' && app.route.id === conversation.id) {
+      if (showsConversation(app.route, conversation.id)) {
         useArtifactPanel.getState().close()
         useChat.getState().clear()
-        app.navigate(conversation.projectId ? { name: 'project', id: conversation.projectId } : { name: 'home' })
+        app.navigate(
+          session ? { name: 'code' } : conversation.projectId ? { name: 'project', id: conversation.projectId } : { name: 'home' }
+        )
       }
     } catch (err) {
       reportError(err)
@@ -81,7 +85,7 @@ export function ConversationMenu({
         <MenuTrigger asChild>
           {trigger ?? (
             <button
-              aria-label="Chat options"
+              aria-label={session ? 'Session options' : 'Chat options'}
               onClick={(e) => e.stopPropagation()}
               className="flex size-6 items-center justify-center rounded-md text-muted hover:bg-hover hover:text-fg"
             >
@@ -114,21 +118,23 @@ export function ConversationMenu({
           >
             {conversation.instructions.trim() ? 'Edit instructions' : 'Add instructions'}
           </MenuItem>
-          <MenuSub label="Move to project" icon={<FolderInput className="size-4" />}>
-            {projects.length === 0 && <MenuLabel>No projects yet</MenuLabel>}
-            {projects.map((p) => (
-              <MenuItem key={p.id} disabled={p.id === conversation.projectId} onSelect={() => patch(conversation, { projectId: p.id })}>
-                <span className="max-w-[220px] truncate">{p.name}</span>
-              </MenuItem>
-            ))}
-          </MenuSub>
-          {conversation.projectId && (
+          {!session && (
+            <MenuSub label="Move to project" icon={<FolderInput className="size-4" />}>
+              {projects.length === 0 && <MenuLabel>No projects yet</MenuLabel>}
+              {projects.map((p) => (
+                <MenuItem key={p.id} disabled={p.id === conversation.projectId} onSelect={() => patch(conversation, { projectId: p.id })}>
+                  <span className="max-w-[220px] truncate">{p.name}</span>
+                </MenuItem>
+              ))}
+            </MenuSub>
+          )}
+          {!session && conversation.projectId && (
             <MenuItem icon={<FolderMinus className="size-4" />} onSelect={() => patch(conversation, { projectId: null })}>
               Remove from project
             </MenuItem>
           )}
           {conversation.allowedTools.length > 0 && (
-            <MenuSub label="Tools allowed in this chat" icon={<Hand className="size-4" />}>
+            <MenuSub label={`Tools allowed in this ${noun}`} icon={<Hand className="size-4" />}>
               <MenuLabel>These run without asking here:</MenuLabel>
               {conversation.allowedTools.map((key) => {
                 const { tool, where } = allowLabel(key, mcpServers)
@@ -153,7 +159,7 @@ export function ConversationMenu({
       <Modal
         open={renaming}
         onOpenChange={setRenaming}
-        title="Rename chat"
+        title={`Rename ${noun}`}
         footer={
           <>
             <Button variant="ghost" onClick={() => setRenaming(false)}>
@@ -187,8 +193,8 @@ export function ConversationMenu({
       <Modal
         open={editingInstructions}
         onOpenChange={setEditingInstructions}
-        title="Chat instructions"
-        description="Applied to every reply in this chat, on top of your preferences and any project instructions. Use it for a role, tone or rules, e.g. “You are a strict code reviewer. Answer in bullet points.”"
+        title={session ? 'Session instructions' : 'Chat instructions'}
+        description={`Applied to every reply in this ${noun}, on top of your preferences${session ? '' : ' and any project instructions'}. Use it for a role, tone or rules, e.g. “You are a strict code reviewer. Answer in bullet points.”`}
         footer={
           <>
             <Button variant="ghost" onClick={() => setEditingInstructions(false)}>
@@ -211,15 +217,19 @@ export function ConversationMenu({
           rows={8}
           value={instructions}
           onChange={(e) => setInstructions(e.target.value)}
-          placeholder="How should the model behave in this chat?"
+          placeholder={`How should the model behave in this ${noun}?`}
         />
       </Modal>
 
       <Modal
         open={deleting}
         onOpenChange={setDeleting}
-        title="Delete chat?"
-        description={`“${conversation.title}” and its artifacts will be permanently deleted.`}
+        title={`Delete ${noun}?`}
+        description={
+          session
+            ? `“${conversation.title}” and its artifacts will be permanently deleted. The folder it works in stays as it is.`
+            : `“${conversation.title}” and its artifacts will be permanently deleted.`
+        }
         footer={
           <>
             <Button variant="ghost" onClick={() => setDeleting(false)}>

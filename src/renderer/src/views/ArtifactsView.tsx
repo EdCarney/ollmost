@@ -6,7 +6,7 @@ import { PageHeader, TopBar } from '@/components/TopBar'
 import { EmptyState, Spinner } from '@/components/ui'
 import { api } from '@/lib/api'
 import { cn, relativeTime } from '@/lib/format'
-import { useApp } from '@/stores/app'
+import { conversationRoute, useApp } from '@/stores/app'
 import { useArtifactPanel } from '@/stores/artifactPanel'
 
 const FILTERS: Array<{ value: ArtifactType | 'all'; label: string }> = [
@@ -61,7 +61,7 @@ export function ArtifactsView() {
                   <button
                     key={a.id}
                     onClick={() => {
-                      navigate({ name: 'chat', id: a.conversationId })
+                      navigate(conversationRoute(a.conversationId, useApp.getState().sessions))
                       useArtifactPanel.getState().openArtifact(a.id)
                     }}
                     className="flex flex-col rounded-ollmost-lg border border-line bg-panel p-4 text-left transition-colors hover:border-line-strong"

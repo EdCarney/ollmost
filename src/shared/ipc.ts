@@ -5,6 +5,7 @@ import type {
   ArtifactType,
   Attachment,
   ChatEvent,
+  CodeNetwork,
   Conversation,
   ConversationDetail,
   FileSource,
@@ -60,6 +61,8 @@ export interface ConversationPatch {
   toolSources?: string[]
   /** Set to [] to have this chat ask again before every tool. */
   allowedTools?: string[]
+  /** A code session's network preset. */
+  network?: CodeNetwork
 }
 
 export interface SkillInput {
@@ -75,7 +78,8 @@ export interface SkillInput {
  */
 export interface OllmostApi {
   app: {
-    info(): Promise<{ version: string; dataDir: string; platform: string }>
+    /** `home` is the user's home folder, for display only (shortened to ~); never use it to build or check a path. */
+    info(): Promise<{ version: string; dataDir: string; platform: string; home: string }>
     setNativeTheme(mode: 'system' | 'light' | 'dark', background: string): Promise<void>
     openExternal(url: string): Promise<void>
     openDataFolder(): Promise<void>
@@ -104,7 +108,8 @@ export interface OllmostApi {
     removeFile(fileId: ID): Promise<void>
   }
   conversations: {
-    list(opts?: { projectId?: ID; limit?: number }): Promise<Conversation[]>
+    /** Every conversation, or only chats or only code sessions. */
+    list(opts?: { projectId?: ID; limit?: number; mode?: Conversation['mode'] }): Promise<Conversation[]>
     get(id: ID): Promise<ConversationDetail | null>
     update(id: ID, patch: ConversationPatch): Promise<Conversation>
     delete(id: ID): Promise<void>
@@ -186,6 +191,23 @@ export interface OllmostApi {
     revealFile(conversationId: ID, path: string): Promise<void>
     saveFile(conversationId: ID, path: string): Promise<boolean>
   }
+  code: {
+    /**
+     * Choose a folder for a code session: a folder dialog, then the checks in validateRoot (src/main/runner/root.ts).
+     * Its real path, or null when cancelled; throws with the reason when the folder can't be used.
+     */
+    pickFolder(): Promise<string | null>
+    /** Make a session on `root` (a folder pickFolder returned; checked again), titled after the folder. */
+    create(input: { root: string; model: string; think: ThinkSetting | null }): Promise<Conversation>
+    /** The folders of recent sessions that still exist, most recent first. */
+    recentRoots(): Promise<string[]>
+    /** A session's folder was moved or renamed: choose it again. The session as updated, or null when cancelled. */
+    locate(id: ID): Promise<Conversation | null>
+    /** Whether a session's folder is still where it was, and the git branch checked out there (null when not a repository). */
+    status(id: ID): Promise<{ found: boolean; branch: string | null }>
+    /** Show a session's folder in Finder. */
+    reveal(id: ID): Promise<void>
+  }
   mcp: {
     /** Configured servers (environment variable names only, never values). */
     list(): Promise<McpServer[]>
@@ -251,6 +273,7 @@ export const INVOKE_CHANNELS = {
   debug: ['open', 'list', 'get', 'clear', 'exportTraces', 'replay', 'target', 'inspectApp'],
   links: ['preview'],
   runner: ['status', 'packages', 'resetEnvironment', 'openFile', 'revealFile', 'saveFile'],
+  code: ['pickFolder', 'create', 'recentRoots', 'locate', 'status', 'reveal'],
   mcp: ['list', 'save', 'remove', 'status', 'connect', 'restart', 'log', 'setToolPolicy', 'importJson', 'importSources', 'importFrom']
 } as const satisfies { [G in Exclude<keyof OllmostApi, 'events' | 'files'>]: ReadonlyArray<keyof OllmostApi[G]> }
 

@@ -1,6 +1,7 @@
-import { rm, writeFile } from 'node:fs/promises'
-import { basename } from 'node:path'
-import { app, BrowserWindow, dialog, ipcMain, nativeTheme, shell } from 'electron'
+import { realpath, rm, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
+import { basename, dirname } from 'node:path'
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type OpenDialogOptions, shell } from 'electron'
 import { artifactExtension, slugify } from '@shared/artifactParser'
 import { EVENT_CHANNELS, type OllmostApi } from '@shared/ipc'
 import { parseServersJson } from '@shared/mcpImport'
@@ -8,16 +9,20 @@ import { openWith } from '@shared/workspace'
 import { BUILTIN_THEMES } from '@shared/themes'
 import type { ThemeDef } from '@shared/types'
 import { decide } from './chat/approvals'
-import { edit, regenerate, send, stop, stopAll } from './chat/service'
+import { edit, isReplyingIn, regenerate, send, stop, stopAll } from './chat/service'
+import { readBranch } from './code/git'
 import { addArtifactVersion, getArtifact, listAllArtifacts, listArtifacts } from './db/artifacts'
 import {
+  createConversation,
   deleteConversation,
   deletePendingAttachment,
   getConversation,
   insertAttachment,
+  listCodeRoots,
   listConversations,
   listMessages,
   search,
+  setConversationRoot,
   updateConversation
 } from './db/conversations'
 import { deleteCustomTheme, listCustomThemes, saveCustomTheme } from './db/kv'
@@ -40,10 +45,12 @@ import { quarantine } from './quarantine'
 import { errorMessage } from './util'
 import { stageArtifact } from './protocols'
 import { installedPackages } from './runner/python'
+import { validateRoot } from './runner/root'
 import { runnerStatus } from './runner/status'
 import {
   copyWorkspaceFile,
   markWorkspaceFiles,
+  realRoot,
   removeWorkspace,
   resetEnvironments,
   stageWorkspaceFile,
@@ -102,9 +109,35 @@ function broadcastSkillsChanged(): void {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send(EVENT_CHANNELS.skills)
 }
 
+/** A folder for a code session, from a folder dialog (unchecked: see validateRoot), or null when cancelled. */
+async function chooseFolder(defaultPath?: string): Promise<string | null> {
+  const win = BrowserWindow.getFocusedWindow()
+  const opts: OpenDialogOptions = {
+    properties: ['openDirectory', 'createDirectory'],
+    message: 'Choose a folder for Ollmost to work in, such as a project or repository of yours.',
+    defaultPath
+  }
+  const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+  return res.canceled ? null : (res.filePaths[0] ?? null)
+}
+
+/** A code session's folder, as stored; throws for any other id, since the renderer may send anything. */
+function sessionRoot(id: string): string {
+  const c = getConversation(id)
+  if (!c) throw new Error('That session no longer exists.')
+  if (c.mode !== 'code' || !c.root) throw new Error('That chat isn’t a code session.')
+  return c.root
+}
+
+/** Refuse while a reply runs in a session: its commands work in the folder it started with. */
+function assertNotReplying(id: string): void {
+  if (isReplyingIn(id))
+    throw new Error('Ollmost is still responding in this session. Stop it or let it finish, then choose the folder again.')
+}
+
 const impl: Impl = {
   app: {
-    info: async () => ({ version: app.getVersion(), dataDir: paths.data, platform: process.platform }),
+    info: async () => ({ version: app.getVersion(), dataDir: paths.data, platform: process.platform, home: homedir() }),
     setNativeTheme: async (mode, background) => {
       nativeTheme.themeSource = mode
       for (const w of BrowserWindow.getAllWindows()) w.setBackgroundColor(background)
@@ -334,6 +367,59 @@ const impl: Impl = {
         throw new Error(`Couldn’t mark the copy as downloaded, so it wasn’t saved: ${errorMessage(err)}`)
       })
       return true
+    }
+  },
+
+  // Code sessions (#86): a conversation working in a folder of the user's, which Ollmost never owns (see workspace.ts).
+  code: {
+    pickFolder: async () => {
+      const picked = await chooseFolder()
+      return picked === null ? null : validateRoot(picked)
+    },
+    create: async ({ root, model, think }) => {
+      // Checked again: the renderer may send any path.
+      const real = await validateRoot(root)
+      return createConversation({
+        projectId: null,
+        model,
+        think,
+        skills: [],
+        toolSources: [],
+        mode: 'code',
+        root: real,
+        network: getSettings().code.defaultNetwork,
+        title: basename(real)
+      })
+    },
+    recentRoots: async () => {
+      // Only folders still where they were: one moved, or a link put in its place, is found again with locate.
+      const roots = listCodeRoots()
+      const found = await Promise.all(roots.map(async (root) => (await realpath(root).catch(() => null)) === root))
+      return roots.filter((_, i) => found[i])
+    },
+    locate: async (id) => {
+      const root = sessionRoot(id)
+      assertNotReplying(id)
+      const picked = await chooseFolder(dirname(root))
+      if (picked === null) return null
+      const real = await validateRoot(picked)
+      // The session may have been deleted, or a reply started in it, while the dialog was open.
+      sessionRoot(id)
+      assertNotReplying(id)
+      return setConversationRoot(id, real)
+    },
+    status: async (id) => {
+      const root = sessionRoot(id)
+      const found = await realRoot(workspaceFor(id)).then(
+        () => true,
+        () => false
+      )
+      return { found, branch: found ? await readBranch(root) : null }
+    },
+    reveal: async (id) => {
+      sessionRoot(id)
+      // Throws RootMissingError when the folder isn't where it was.
+      shell.showItemInFolder(await realRoot(workspaceFor(id)))
     }
   },
 

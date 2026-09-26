@@ -32,6 +32,7 @@ import type { ContinueReason } from '@/lib/chatActions'
 import { type StreamState, useChat } from '@/stores/chat'
 import { ArtifactCard } from './ArtifactCard'
 import { CodeBlock, useCopy } from './CodeBlock'
+import { CommandCard } from './CodeCards'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { Button, IconButton, TextArea, Tooltip } from './ui'
@@ -371,7 +372,8 @@ export function ApprovalCard({
 }) {
   const [answering, setAnswering] = useState(false)
   const args = argsText(e)
-  const code = e.tool === 'run_code' ? String(e.args.code ?? '') : null
+  const code = e.tool === 'run_code' ? String(e.args.code ?? '') : e.tool === 'run_command' ? String(e.args.command ?? '') : null
+  const lang = e.tool === 'run_command' ? 'bash' : runLanguage(e)
   const answer = async (decision: ToolDecision) => {
     setAnswering(true)
     try {
@@ -386,8 +388,15 @@ export function ApprovalCard({
       <div className="flex items-center gap-2">
         <Hand className="size-4 shrink-0 text-warn" />
         <span className="min-w-0 flex-1">
-          {code !== null ? (
-            <>Run this {runLanguage(e) === 'bash' ? 'bash script' : 'Python'} in the sandbox?</>
+          {e.tool === 'run_command' ? (
+            <>
+              Run this command in the sandbox?
+              {typeof e.args.timeout_sec === 'number' && (
+                <span className="text-muted"> It asks for up to {Math.min(30, Math.max(1, Math.round(e.args.timeout_sec / 60)))} min.</span>
+              )}
+            </>
+          ) : code !== null ? (
+            <>Run this {lang === 'bash' ? 'bash script' : 'Python'} in the sandbox?</>
           ) : (
             <>
               Allow the model to use <span className="font-mono font-medium text-fg">{toolName(e)}</span>
@@ -404,7 +413,7 @@ export function ApprovalCard({
       </div>
       {code !== null ? (
         <div className="mt-2 max-h-96 overflow-auto">
-          <CodeBlock code={code} lang={runLanguage(e)} />
+          <CodeBlock code={code} lang={lang} />
         </div>
       ) : (
         <>
@@ -462,6 +471,8 @@ export function ToolGroup({
           <ApprovalCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} scope={scope} />
         ) : e.tool === 'run_code' ? (
           <CodeRunCard key={index} e={e} conversationId={conversationId} />
+        ) : e.tool === 'run_command' ? (
+          <CommandCard key={index} e={e} />
         ) : WEB_TOOL_NAMES.has(e.tool) ? (
           <WebEvent key={index} e={e} />
         ) : SKILL_TOOL_NAMES.has(e.tool) ? (
@@ -471,7 +482,7 @@ export function ToolGroup({
         )
       )}
       {unavailable.length > 0 && (
-        <Tooltip content="The model tried tools that aren't available in this chat.">
+        <Tooltip content={`The model tried tools that aren't available in this ${scope}.`}>
           <span className="flex items-center gap-1.5 rounded-lg border border-line px-2 py-1 font-ui text-xs text-muted">
             <Ban className="size-3.5 text-warn" />
             Tried unavailable {unavailable.length === 1 ? 'tool' : 'tools'}:{' '}
@@ -507,6 +518,8 @@ interface AssistantProps {
   isLast: boolean
   onRetry: () => void
   onContinue: (reason: ContinueReason) => void
+  /** Passed through to ToolGroup; see ApprovalCard's scope prop. */
+  scope?: string
 }
 
 export const AssistantMessage = memo(function AssistantMessage({
@@ -515,7 +528,8 @@ export const AssistantMessage = memo(function AssistantMessage({
   artifacts,
   isLast,
   onRetry,
-  onContinue
+  onContinue,
+  scope = 'chat'
 }: AssistantProps) {
   const streaming = !!stream
   const content = stream ? stream.content : message.content
@@ -572,7 +586,15 @@ export const AssistantMessage = memo(function AssistantMessage({
   const occurrences = new Map<string, number>()
   const rendered = timeline.map((item, i) => {
     if (item.kind === 'tools')
-      return <ToolGroup key={`t${item.events[0].index}`} events={item.events} conversationId={conversationId} messageId={message.id} />
+      return (
+        <ToolGroup
+          key={`t${item.events[0].index}`}
+          events={item.events}
+          conversationId={conversationId}
+          messageId={message.id}
+          scope={scope}
+        />
+      )
     const seg = item.segment
     if (seg.kind === 'text')
       return <Markdown key={i} text={seg.text} conversationId={conversationId} onOpenAsArtifact={streaming ? undefined : openAsArtifact} />

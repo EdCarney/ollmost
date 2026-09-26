@@ -92,10 +92,12 @@ export async function codeEnded(workspace: Workspace): Promise<void> {
  * stopped. `work` must not quiesce the same workspace again: it would wait for itself.
  */
 export async function quiesce<T>(workspace: Workspace, work: () => Promise<T>): Promise<T> {
-  if (running.has(workspace.key)) throw new CodeRunningError()
+  // A session's lock is its folder's: the code running may be another session's.
+  const where = workspace.owned ? 'this chat' : "this session's folder"
+  if (running.has(workspace.key)) throw new CodeRunningError(where)
   return exclusive([workspace], async () => {
     // A run may have started while earlier work finished.
-    if (running.has(workspace.key)) throw new CodeRunningError()
+    if (running.has(workspace.key)) throw new CodeRunningError(where)
     if (!settled.has(workspace.id)) await check([workspace])
     return work()
   })

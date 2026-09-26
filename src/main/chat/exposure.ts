@@ -9,9 +9,16 @@ import { WEB_TOOLS } from './webTools'
 
 const BUILT_IN = new Set([...SKILL_TOOLS, ...WEB_TOOLS].map((t) => t.function.name))
 
-/** The chat holds files the user shared: attachments, or its project's knowledge. */
+/**
+ * The chat holds files the user shared: attachments, or its project's knowledge. A code session holds a whole folder
+ * of theirs, which its tools read.
+ */
 export function hasPrivateFiles(conversation: Conversation, messages: Message[]): boolean {
-  return messages.some((m) => m.attachments.length > 0) || (!!conversation.projectId && hasProjectFiles(conversation.projectId))
+  return (
+    conversation.mode === 'code' ||
+    messages.some((m) => m.attachments.length > 0) ||
+    (!!conversation.projectId && hasProjectFiles(conversation.projectId))
+  )
 }
 
 /**

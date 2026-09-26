@@ -918,6 +918,112 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(results[0].content).toMatch(/^Exit code 0\.\n\n42/)
     expect(done.message.toolEvents[0]).toMatchObject({ tool: 'run_code', ok: true })
   }, 120_000)
+
+  // #88: a code session's reply works in the user's folder with run_command, under the session's prompt.
+  it('runs a command in a session’s folder after asking, and remembers Allow for this session', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync, writeFileSync, existsSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-session-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    writeFileSync(join(folder, 'CLAUDE.md'), 'Say hello in French.')
+    chat = (b, res, n) =>
+      n === 1
+        ? void res.writeHead(200).end(toolCall('run_command', { command: 'echo bonjour > greeting.txt && cat greeting.txt' }))
+        : reply('Done: bonjour.')(b, res, n)
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    const r = service.send({
+      conversationId: session.id,
+      projectId: null,
+      content: 'make a greeting file',
+      attachmentIds: [],
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      toolSources: []
+    })
+    const ask = await waitFor(
+      () =>
+        events.find(
+          (e): e is Extract<ChatEvent, { type: 'tool' }> =>
+            e.type === 'tool' && e.conversationId === r.conversation.id && !!e.event.awaiting
+        ),
+      30_000
+    )
+    expect(ask.event).toMatchObject({ tool: 'run_command', args: { command: 'echo bonjour > greeting.txt && cat greeting.txt' } })
+    const system = (chatCalls[0].messages as Array<{ content: string }>)[0].content
+    expect(system).toMatch(/coding agent running inside Ollmost/)
+    expect(system).toMatch(new RegExp(`working in the folder ${folder}`))
+    expect(system).toMatch(/<project_instructions file="CLAUDE\.md">[\s\S]*Say hello in French/)
+    expect(system).not.toMatch(/<artifacts>|<code_runner>/)
+    const offered = ((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
+    expect(offered).toContain('run_command')
+    expect(offered).not.toContain('run_code')
+    approvals.decide(r.conversation.id, ask.messageId, ask.index, 'chat')
+    const done = await waitFor(
+      () => events.find((e): e is Extract<ChatEvent, { type: 'done' }> => e.type === 'done' && e.conversationId === r.conversation.id),
+      60_000
+    )
+    const results = (chatCalls[1].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
+    expect(results[0].content).toMatch(/^Exit code 0\.\n\nbonjour/)
+    expect(done.message.toolEvents[0]).toMatchObject({
+      tool: 'run_command',
+      ok: true,
+      summary: 'echo bonjour > greeting.txt && cat greeting.txt'
+    })
+    expect(existsSync(join(folder, 'greeting.txt'))).toBe(true)
+    expect(getConversation(session.id)!.allowedTools).toEqual(['code:commands'])
+    expect(existsSync(join(dir, 'runner', 'sessions', session.id, 'home'))).toBe(true)
+    // The session's title stays: only a 'New chat' gets titled (an earlier test's title request may still arrive here).
+    await new Promise((resolve) => setTimeout(resolve, 300))
+    expect(titleCalls.some((t) => JSON.stringify(t).includes('make a greeting file'))).toBe(false)
+    expect(getConversation(session.id)!.title).toBe('repo')
+  }, 120_000)
+
+  it('says when a session’s folder is gone, and offers no code tools that turn', async () => {
+    const { mkdtempSync, realpathSync, rmSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-gone-')))
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'gone'
+    })
+    rmSync(folder, { recursive: true })
+    chat = reply('I cannot see the folder.')
+    const r = service.send({
+      conversationId: session.id,
+      projectId: null,
+      content: 'hi',
+      attachmentIds: [],
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      toolSources: []
+    })
+    const done = await doneEvent(r.conversation.id)
+    expect(done.message.stats?.unavailableTools?.[0]).toMatch(
+      /This session's tools aren't available: This session's folder is no longer at/
+    )
+    expect(chatCalls[0].tools).toBeUndefined()
+    expect((chatCalls[0].messages as Array<{ content: string }>)[0].content).toMatch(/coding agent/)
+  })
 })
 
 describe('markInterruptedReplies', () => {

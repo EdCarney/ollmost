@@ -187,6 +187,20 @@ export async function readyForRun(ws: Workspace): Promise<void> {
   await quiesce(ws, () => fixFolders(ws))
 }
 
+/**
+ * A code session ready for a reply: its folder where it was (else RootMissingError), its scratch in order, then
+ * `work` under its lock, given the root (a real path by construction). What `work` reads of the root goes through
+ * openSessionFile. Only for a session's workspace.
+ */
+export async function readyForSession<T>(ws: Workspace, work: (root: string) => Promise<T>): Promise<T> {
+  if (ws.owned) throw new Error('Not a code session')
+  await ensureRoot(ws)
+  return quiesce(ws, async () => {
+    await fixFolders(ws)
+    return work(ws.root)
+  })
+}
+
 export type Snapshot = Map<string, { size: number; mtimeMs: number }>
 
 /**
@@ -312,20 +326,30 @@ async function openWorkspaceFile(conversationId: string, rel: string): Promise<{
   if (!isPlainId(conversationId)) return null
   const ws = workspaceFor(conversationId)
   if (ws.owned) return openNoLinks(await pathInside(ws, rel))
-  return quiesce(ws, async () => {
-    // pathInside checked the root is where it was, so its real path is ws.root.
-    const path = await pathInside(ws, rel)
-    const real = path ? await realpath(path).catch(() => null) : null
-    return openNoLinks(real?.startsWith(ws.root + sep) ? real : null)
-  })
+  return quiesce(ws, () => openSessionFile(ws, rel))
 }
 
-/** Open `path` as a file with no link anywhere in it (see openWorkspaceFile), or null. */
-async function openNoLinks(path: string | null): Promise<{ handle: FileHandle; path: string } | null> {
+/**
+ * Open a file in a code session's folder by its relative path (see openWorkspaceFile for the rule), or null. Only
+ * under the session's lock (readyForSession, quiesce): the check and the open must not be raced by session code.
+ */
+export async function openSessionFile(ws: Workspace, rel: string): Promise<{ handle: FileHandle; path: string } | null> {
+  // pathInside checked the root is where it was, so its real path is ws.root.
+  const path = await pathInside(ws, rel)
+  const real = path ? await realpath(path).catch(() => null) : null
+  return openNoLinks(real?.startsWith(ws.root + sep) ? real : null)
+}
+
+/**
+ * Open `path` as a file with no link anywhere in it (see openWorkspaceFile), or null. Non-blocking: a named pipe code
+ * left under the name (mkfifo) would otherwise hold the open, and with it the lock, forever; opened so, it's simply
+ * not a file. The caller closes the handle.
+ */
+export async function openNoLinks(path: string | null): Promise<{ handle: FileHandle; path: string } | null> {
   if (!path) return null
   let handle: FileHandle | null = null
   try {
-    handle = await open(path, constants.O_RDONLY | NO_LINKS)
+    handle = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | NO_LINKS)
     // Elsewhere only the file itself is checked by open(): the folders above it are checked here.
     const ok = (await handle.stat()).isFile() && (process.platform === 'darwin' || (await realpath(path)) === path)
     if (ok) return { handle, path }

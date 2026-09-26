@@ -12,6 +12,12 @@ describe('the policy for a reply', () => {
     expect(CODE_TOOL_ROUNDS).toBeGreaterThan(TOOL_SOURCE_ROUNDS)
   })
 
+  it('takes a code session’s rounds from Settings when given, and the constant otherwise', () => {
+    expect(turnPolicy({ mode: 'code', sources: [], artifacts: true, codeRounds: 20 }).maxRounds).toBe(20)
+    expect(turnPolicy({ mode: 'chat', sources: [], artifacts: true, codeRounds: 20 }).maxRounds).toBe(DEFAULT_TOOL_ROUNDS)
+    expect(turnPolicy({ mode: 'code', sources: [], artifacts: true, codeRounds: 20, maxToolRounds: 3 }).maxRounds).toBe(3)
+  })
+
   it('honours a caller’s round limit in either mode, never below one round', () => {
     expect(turnPolicy({ mode: 'chat', sources: ['mcp:x'], artifacts: true, maxToolRounds: 3 }).maxRounds).toBe(3)
     expect(turnPolicy({ mode: 'code', sources: [], artifacts: true, maxToolRounds: 2 }).maxRounds).toBe(2)

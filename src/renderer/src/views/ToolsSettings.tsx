@@ -1,6 +1,6 @@
 import { ChevronRight, ClipboardPaste, Download, Plus, RotateCcw, ScrollText, Trash2, X } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import type { McpImportResult, McpImportSource, McpServer, McpStatus, RunnerStatus, Settings, ToolPolicy } from '@shared/types'
+import type { CodeNetwork, McpImportResult, McpImportSource, McpServer, McpStatus, RunnerStatus, Settings, ToolPolicy } from '@shared/types'
 import { Button, Field, Modal, Switch, TextArea, TextField, Tooltip } from '@/components/ui'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/format'
@@ -489,6 +489,68 @@ function RunnerSection() {
   )
 }
 
+const ASK_ALLOW: Array<{ value: 'ask' | 'allow'; label: string }> = [
+  { value: 'ask', label: 'Ask each time' },
+  { value: 'allow', label: 'Always allow' }
+]
+const COMMAND_LIMITS = [60, 300, 600, 1800].map((sec) => ({ value: String(sec), label: sec < 300 ? `${sec} s` : `${sec / 60} min` }))
+const ROUNDS = [30, 60, 100].map((n) => ({ value: String(n), label: String(n) }))
+const NETWORKS: Array<{ value: CodeNetwork; label: string }> = [
+  { value: 'none', label: 'None' },
+  { value: 'registries', label: 'Package registries' },
+  { value: 'registries-git', label: 'Registries + git hosts' }
+]
+
+function CodeSessionsSection() {
+  const { settings, updateSettings } = useApp()
+  if (!settings) return null
+  const c = settings.code
+  const update = (patch: Partial<Settings['code']>) => void updateSettings({ code: patch })
+
+  return (
+    <Section
+      title="Code sessions"
+      description="Lets a model work in a folder you choose: reading files, editing them and running commands, in the same macOS sandbox as the code runner. It can read that folder, the system and your toolchains (nvm, cargo, pyenv and the like) but not the rest of your home folder; it writes only to that folder and a scratch folder of its own; and it has no network access unless a session's preset allows package registries, or those and git hosts."
+    >
+      <Row label="When a model wants to run a command">
+        <Segmented
+          label="When a model wants to run a command"
+          value={c.commands}
+          options={ASK_ALLOW}
+          onChange={(commands) => update({ commands })}
+        />
+      </Row>
+      <Row label="When a model wants to edit a file">
+        <Segmented label="When a model wants to edit a file" value={c.edits} options={ASK_ALLOW} onChange={(edits) => update({ edits })} />
+      </Row>
+      <Row label="Time limit per command">
+        <Segmented
+          label="Time limit per command"
+          value={String(c.timeoutSec)}
+          options={COMMAND_LIMITS}
+          onChange={(v) => update({ timeoutSec: Number(v) })}
+        />
+      </Row>
+      <Row label="Tool calls per reply" hint="A reply stops after this many and offers Continue.">
+        <Segmented
+          label="Tool calls per reply"
+          value={String(c.maxRounds)}
+          options={ROUNDS}
+          onChange={(v) => update({ maxRounds: Number(v) })}
+        />
+      </Row>
+      <Row label="Network for new sessions" hint="Registries + git hosts is the only preset that can send data out of your Mac.">
+        <Segmented
+          label="Network for new sessions"
+          value={c.defaultNetwork}
+          options={NETWORKS}
+          onChange={(defaultNetwork) => update({ defaultNetwork })}
+        />
+      </Row>
+    </Section>
+  )
+}
+
 export function ToolsTab() {
   const { mcpServers, mcpStatus, loadMcp } = useApp()
   const [editing, setEditing] = useState<McpServer | 'new' | null>(null)
@@ -502,6 +564,7 @@ export function ToolsTab() {
   return (
     <>
       <RunnerSection />
+      <CodeSessionsSection />
       <Section
         title="MCP servers"
         description="Local servers that give models more tools: files, notes, calendars, developer tools. Ollmost starts them on this Mac when a chat uses them. They run with your permissions and aren't sandboxed, so add only servers you trust. Models ask before using a tool."

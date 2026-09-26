@@ -22,6 +22,7 @@ export type Route =
   | { name: 'home' }
   | { name: 'chat'; id: string }
   | { name: 'chats' }
+  | { name: 'code'; id?: string }
   | { name: 'projects' }
   | { name: 'project'; id: string }
   | { name: 'artifacts' }
@@ -61,8 +62,12 @@ interface AppState {
   projects: Project[]
   loadProjects: () => Promise<void>
 
+  /** Chats; code sessions are kept apart in `sessions`. */
   conversations: Conversation[]
+  sessions: Conversation[]
+  /** Loads both lists. */
   loadConversations: () => Promise<void>
+  /** Puts a conversation in the list its mode belongs to. */
   upsertConversation: (c: Conversation) => void
 
   themes: ThemeDef[]
@@ -132,11 +137,18 @@ export const useApp = create<AppState>((set, get) => ({
   loadProjects: async () => set({ projects: await api.projects.list() }),
 
   conversations: [],
-  loadConversations: async () => set({ conversations: await api.conversations.list({ limit: 300 }) }),
+  sessions: [],
+  loadConversations: async () => {
+    const [conversations, sessions] = await Promise.all([
+      api.conversations.list({ limit: 300, mode: 'chat' }),
+      api.conversations.list({ limit: 300, mode: 'code' })
+    ])
+    set({ conversations, sessions })
+  },
   upsertConversation: (c) =>
     set((s) => {
-      const rest = s.conversations.filter((x) => x.id !== c.id)
-      return { conversations: [c, ...rest].sort((a, b) => b.updatedAt - a.updatedAt) }
+      const put = (list: Conversation[]) => [c, ...list.filter((x) => x.id !== c.id)].sort((a, b) => b.updatedAt - a.updatedAt)
+      return c.mode === 'code' ? { sessions: put(s.sessions) } : { conversations: put(s.conversations) }
     }),
 
   themes: [],
@@ -178,9 +190,14 @@ export function thinkProfileFor(models: ModelInfo[], name: string | null): Think
   return model ? resolveThinkProfile(model.name, model.capabilities, model.overrides.think) : { kind: 'none' }
 }
 
-/** Whether `route` is showing this conversation's chat UI (inline approvals, etc.); add `|| (route.name === 'code' && route.id === conversationId)` once the code route exists. */
+/** Whether `route` is showing this conversation's chat UI (inline approvals, etc.): a chat, or a code session. */
 export function showsConversation(route: Route, conversationId: string): boolean {
-  return route.name === 'chat' && route.id === conversationId
+  return (route.name === 'chat' || route.name === 'code') && route.id === conversationId
+}
+
+/** Where a conversation opens: a code session in the Code pane, anything else as a chat. */
+export function conversationRoute(id: string, sessions: Conversation[]): Route {
+  return sessions.some((c) => c.id === id) ? { name: 'code', id } : { name: 'chat', id }
 }
 
 /** Surface an error from an async UI action as a toast. */

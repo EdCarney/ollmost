@@ -43,6 +43,7 @@ import { getSettings } from '../settings'
 import { getSkill, listSkills } from '../skills/library'
 import { ensure as ensureServers, readyTools } from '../mcp/manager'
 import { MCP_SOURCE } from '../mcp/provider'
+import { type CodeSession, prepareCodeSession } from '../code/session'
 import { CODE_SOURCE } from '../runner/provider'
 import { runnerStatus } from '../runner/status'
 import { prepareWorkspace, type Workspace, workspaceFor } from '../runner/workspace'
@@ -185,6 +186,8 @@ export function stop(conversationId: string, opts: { quiet?: boolean } = {}): Pr
 }
 
 export const isReplying = (): boolean => active.size > 0
+/** Whether a reply is running in this conversation. */
+export const isReplyingIn = (conversationId: string): boolean => active.has(conversationId)
 
 /**
  * Replies that were still streaming when Ollmost last quit or crashed. Their checkpointed text is kept;
@@ -335,25 +338,51 @@ async function generate(
       mode: conversation.mode,
       sources,
       artifacts: settings.artifacts.enabled && model.overrides.artifacts !== false,
-      maxToolRounds: reply.maxToolRounds
+      maxToolRounds: reply.maxToolRounds,
+      codeRounds: settings.code.maxRounds
     })
     const serverIds = sources.filter((s) => s.startsWith(MCP_SOURCE)).map((s) => s.slice(MCP_SOURCE.length))
     const unavailable = serverIds.length ? await ensureServers(serverIds, SERVER_WAIT_MS) : []
     if (!toolsCapable && conversation.toolSources.length)
       unavailable.push(`${modelName} can't use tools, so this chat's tools weren't used.`)
 
-    // The code runner: a chat's folder is readied (its attachments copied in) only when code may run. A code session
-    // has tools of its own.
+    // The folder code runs in. A chat's is readied (its attachments copied in) only when the code runner is on; a code
+    // session's is the user's, readied for its own tools (#88). Either fails when code an earlier run left can't be
+    // stopped (#71), a session's also when its folder isn't where it was: the reply then has no code tools, and says so.
     let workspace: Workspace | null = null
     let codeRunner: { pypi: boolean; timeoutSec: number; uploads: string[] } | null = null
-    if (policy.mode === 'chat' && sources.includes(CODE_SOURCE) && settings.runner.mode !== 'off') {
+    let codeSession: CodeSession | null = null
+    const wantsRunner = policy.mode === 'chat' && sources.includes(CODE_SOURCE) && settings.runner.mode !== 'off'
+    if (policy.mode === 'code' || wantsRunner) {
+      const what = policy.mode === 'code' ? "This session's tools aren't available" : "The code runner isn't available"
+      // A session needs the runner too: the reaper that stops what a command leaves running is a Python script.
       const runner = await runnerStatus()
-      if (!runner.available) unavailable.push(`The code runner isn't available: ${runner.reason}`)
+      if (policy.mode === 'code') {
+        const ws = workspaceFor(conversationId)
+        const session = runner.available
+          ? await prepareCodeSession(ws, { network: conversation.network, timeoutSec: settings.code.timeoutSec }).catch(
+              (err: unknown) => new Error(errorMessage(err))
+            )
+          : new Error(runner.reason ?? 'the runner is not available')
+        if (session instanceof Error) {
+          unavailable.push(`${what}: ${session.message}`)
+          // Still a session's reply, with no tools: the prompt says what it is and can't do.
+          codeSession = {
+            root: ws.root,
+            instructions: null,
+            branch: null,
+            network: conversation.network,
+            timeoutSec: settings.code.timeoutSec
+          }
+        } else {
+          workspace = ws
+          codeSession = session
+        }
+      } else if (!runner.available) unavailable.push(`${what}: ${runner.reason}`)
       else {
-        // Fails when code an earlier run left can't be stopped: then Ollmost won't work in the chat's folder (#71).
         const ws = workspaceFor(conversationId)
         const ready = await prepareWorkspace(ws).catch((err: unknown) => new Error(errorMessage(err)))
-        if (ready instanceof Error) unavailable.push(`The code runner isn't available: ${ready.message}`)
+        if (ready instanceof Error) unavailable.push(`${what}: ${ready.message}`)
         else {
           workspace = ws
           codeRunner = { pypi: settings.runner.pypi, timeoutSec: settings.runner.timeoutSec, uploads: ready.uploads }
@@ -397,6 +426,7 @@ async function generate(
       grants: [...grants],
       mcpServers: servers,
       codeRunner,
+      codeSession,
       toolTokens: toolsTokens(tools),
       pastTools: toolsCapable,
       project: project ? { name: project.name, instructions: project.instructions } : null,

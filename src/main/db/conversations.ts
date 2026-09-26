@@ -1,5 +1,5 @@
 import type { ConversationPatch } from '@shared/ipc'
-import type { Attachment, Conversation, Message, MessageStats, Role, SearchHit, ThinkSetting, ToolEvent } from '@shared/types'
+import type { Attachment, CodeNetwork, Conversation, Message, MessageStats, Role, SearchHit, ThinkSetting, ToolEvent } from '@shared/types'
 import { isServerAllowKey } from '@shared/toolAllow'
 import { fromStored, toStored } from '../paths'
 import { now, parseJson, uid } from '../util'
@@ -20,10 +20,15 @@ interface ConversationRow {
   tool_sources: string
   mode: string
   root: string | null
+  network: string
   pinned: number
   created_at: number
   updated_at: number
 }
+
+const NETWORKS: readonly CodeNetwork[] = ['none', 'registries', 'registries-git']
+/** A stored preset, or the safe one for anything else (a value a later version wrote, say). */
+const toNetwork = (v: string): CodeNetwork => (NETWORKS.includes(v as CodeNetwork) ? (v as CodeNetwork) : 'none')
 
 const toConversation = (r: ConversationRow): Conversation => ({
   id: r.id,
@@ -38,17 +43,34 @@ const toConversation = (r: ConversationRow): Conversation => ({
   toolSources: parseJson<string[]>(r.tool_sources, []),
   mode: r.mode === 'code' ? 'code' : 'chat',
   root: r.root,
+  network: toNetwork(r.network),
   pinned: !!r.pinned,
   createdAt: r.created_at,
   updatedAt: r.updated_at
 })
 
-export function listConversations(opts: { projectId?: string; limit?: number } = {}): Conversation[] {
+export function listConversations(opts: { projectId?: string; limit?: number; mode?: Conversation['mode'] } = {}): Conversation[] {
   const limit = opts.limit ?? 200
-  const rows = opts.projectId
-    ? all<ConversationRow>('SELECT * FROM conversations WHERE project_id = ? ORDER BY updated_at DESC LIMIT ?', opts.projectId, limit)
-    : all<ConversationRow>('SELECT * FROM conversations ORDER BY updated_at DESC LIMIT ?', limit)
+  const filters = [
+    ['project_id = ?', opts.projectId],
+    ['mode = ?', opts.mode]
+  ].filter((f): f is [string, string] => f[1] !== undefined)
+  const where = filters.map(([clause]) => clause)
+  const args = filters.map(([, value]) => value)
+  const rows = all<ConversationRow>(
+    `SELECT * FROM conversations${where.length ? ` WHERE ${where.join(' AND ')}` : ''} ORDER BY updated_at DESC LIMIT ?`,
+    ...args,
+    limit
+  )
   return rows.map(toConversation)
+}
+
+/** The folders code sessions were opened on, each once, by its most recently updated session: most recent first. */
+export function listCodeRoots(limit = 8): string[] {
+  return all<{ root: string }>(
+    `SELECT root FROM conversations WHERE mode = 'code' AND root IS NOT NULL GROUP BY root ORDER BY MAX(updated_at) DESC LIMIT ?`,
+    limit
+  ).map((r) => r.root)
 }
 
 export function getConversation(id: string): Conversation | null {
@@ -65,24 +87,31 @@ export function createConversation(input: {
   /** A code session works in `root`, a folder of the user's (its real path); a chat, the default, has none. */
   mode?: 'chat' | 'code'
   root?: string | null
+  /** A code session's network preset; 'none' unless given. */
+  network?: CodeNetwork
+  /** A session is titled after its folder from the start; a chat is 'New chat' until its first reply names it. */
+  title?: string
 }): Conversation {
   const id = uid()
   const t = now()
+  const title = input.title?.trim() || 'New chat'
   run(
-    `INSERT INTO conversations (id, project_id, model, think, skills, tool_sources, mode, root, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO conversations (id, project_id, title, model, think, skills, tool_sources, mode, root, network, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     input.projectId,
+    title,
     input.model,
     input.think,
     JSON.stringify(input.skills),
     JSON.stringify(input.toolSources ?? []),
     input.mode ?? 'chat',
     input.root ?? null,
+    input.network ?? 'none',
     t,
     t
   )
-  indexTitle(id, 'New chat')
+  indexTitle(id, title)
   return getConversation(id)!
 }
 
@@ -102,11 +131,12 @@ export function updateConversation(
     autoSkills: patch.autoSkills ?? c.autoSkills,
     instructions: patch.instructions ?? c.instructions,
     allowedTools: patch.allowedTools ?? c.allowedTools,
-    toolSources: patch.toolSources ?? c.toolSources
+    toolSources: patch.toolSources ?? c.toolSources,
+    network: patch.network ?? c.network
   }
   run(
     `UPDATE conversations SET title = ?, pinned = ?, project_id = ?, model = ?, think = ?, skills = ?, auto_skills = ?,
-       instructions = ?, allowed_tools = ?, tool_sources = ?, updated_at = ?
+       instructions = ?, allowed_tools = ?, tool_sources = ?, network = ?, updated_at = ?
      WHERE id = ?`,
     next.title,
     next.pinned ? 1 : 0,
@@ -118,10 +148,24 @@ export function updateConversation(
     next.instructions,
     JSON.stringify(next.allowedTools),
     JSON.stringify(next.toolSources),
+    next.network,
     patch.touch ? now() : c.updatedAt,
     id
   )
   if (next.title !== c.title) indexTitle(id, next.title)
+  return getConversation(id)!
+}
+
+/**
+ * Point a code session at the folder it was moved to. Apart from updateConversation on purpose: a session's root is
+ * where a model may write, so it's set only from the main process (code.locate), after validateRoot checked the
+ * folder, and never from a patch the renderer sends.
+ */
+export function setConversationRoot(id: string, root: string): Conversation {
+  const c = getConversation(id)
+  if (!c) throw new Error('Conversation not found')
+  if (c.mode !== 'code') throw new Error('Not a code session')
+  run('UPDATE conversations SET root = ? WHERE id = ?', root, id)
   return getConversation(id)!
 }
 
