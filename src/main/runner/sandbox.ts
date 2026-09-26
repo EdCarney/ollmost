@@ -4,6 +4,7 @@ import { childEnv } from '../env'
 import { type GroupProcess, spawnGroup } from '../processes'
 import { errorMessage } from '../util'
 import { codeEnded, codeStarting } from './lock'
+import type { Workspace } from './workspace'
 
 // Code the model writes runs under macOS's Seatbelt sandbox through @anthropic-ai/sandbox-runtime (the one Claude
 // Code uses). The package is ESM-only and Ollmost's main process is CommonJS, so it's loaded with import() on first use.
@@ -207,13 +208,13 @@ export async function holdNetwork(
 /**
  * Run a shell command in the sandbox, in its own process group (so background jobs die with it). Stop (the signal)
  * kills it and rejects; running past `timeoutMs` kills it and says so. Either way, by the time it returns, anything
- * the code left running in `cwd` (the workspace) is stopped too, even outside its process group (see reaper.ts).
+ * the code left running in the workspace is stopped too, even outside its process group (see reaper.ts).
  */
 export async function runSandboxed(opts: {
   command: string
   policy: SandboxRuntimeConfig
-  /** The workspace: code runs there, and whatever it leaves running there is stopped when it ends. */
-  cwd: string
+  /** Where code runs (in its root), and whose leftovers are stopped when it ends. */
+  workspace: Workspace
   env: Record<string, string>
   timeoutMs: number
   signal?: AbortSignal
@@ -222,9 +223,9 @@ export async function runSandboxed(opts: {
 }): Promise<RunResult> {
   const sb = await sandbox()
   opts.signal?.throwIfAborted()
-  await codeStarting(opts.cwd)
+  await codeStarting(opts.workspace)
   let ended: Promise<void> | null = null
-  const end = () => (ended ??= codeEnded(opts.cwd))
+  const end = () => (ended ??= codeEnded(opts.workspace))
   let release = () => {}
   try {
     // Waits while another run uses other network rules. Stop pressed while the start waited for Ollmost's work in the
@@ -232,11 +233,13 @@ export async function runSandboxed(opts: {
     release = await holdNetwork(sb, opts.policy, opts.signal)
     // The runtime's TMPDIR=/tmp/claude is part of the command, where the environment can't override it: set ours there.
     const command = opts.env.TMPDIR ? `export TMPDIR=${shellQuote(opts.env.TMPDIR)}; ${opts.command}` : opts.command
-    const { argv, env } = await sb.wrapWithSandboxArgv(command, '/bin/bash', opts.policy, opts.signal, opts.cwd, { commandId: opts.id })
+    const { argv, env } = await sb.wrapWithSandboxArgv(command, '/bin/bash', opts.policy, opts.signal, opts.workspace.root, {
+      commandId: opts.id
+    })
     const procEnv = { ...(await childEnv()), ...env, ...opts.env }
     // Stop may have come while the command was being built.
     opts.signal?.throwIfAborted()
-    const proc = spawnGroup(argv[0], argv.slice(1), { cwd: opts.cwd, env: procEnv, stdio: ['ignore', 'pipe', 'pipe'] })
+    const proc = spawnGroup(argv[0], argv.slice(1), { cwd: opts.workspace.root, env: procEnv, stdio: ['ignore', 'pipe', 'pipe'] })
     const { code, output, timedOut, truncated } = await supervise(proc, opts, end)
     return { code, output: sb.annotateStderrWithSandboxFailures(opts.id, output), timedOut, truncated }
   } finally {

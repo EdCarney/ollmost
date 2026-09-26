@@ -59,6 +59,16 @@ const alive = (pid: number) => {
   }
 }
 
+type Workspace = import('../src/main/runner/workspace').Workspace
+/** A chat's workspace at `dir`, as workspaceFor makes it (the sandbox tests' folders aren't under paths.workspaces). */
+const chatWs = (dir: string): Workspace => ({
+  id: basename(dir),
+  root: dir,
+  owned: true,
+  key: dir,
+  folders: [dir, python.chatVenvDir(basename(dir))]
+})
+
 describe('the sandbox policy', () => {
   const base = { workspace: '/w', home: '/Users/me', readable: ['/Users/me/.claude/skills'], venv: '/Users/me/k/venv' }
 
@@ -120,10 +130,10 @@ describe('workspaces', () => {
       })
     }
     linkAttachments(['a1', 'a2'], m.id)
-    const ws = await workspace.prepareWorkspace(c.id)
-    expect(ws.uploads).toEqual(['data.csv', 'data (2).csv'])
-    expect(readFileSync(join(ws.dir, 'uploads', 'data.csv'), 'utf8')).toBe('x,y\n1,2\n')
-    expect(existsSync(join(ws.dir, '.ollmost', 'home'))).toBe(true)
+    const ws = workspace.workspaceFor(c.id)
+    expect(await workspace.prepareWorkspace(ws)).toEqual({ uploads: ['data.csv', 'data (2).csv'] })
+    expect(readFileSync(join(ws.root, 'uploads', 'data.csv'), 'utf8')).toBe('x,y\n1,2\n')
+    expect(existsSync(join(ws.root, '.ollmost', 'home'))).toBe(true)
   })
 
   it('lists files that are new or changed, leaving out uploads and Ollmost’s own', () => {
@@ -184,7 +194,7 @@ describe('workspaces', () => {
     expect(await workspace.workspaceFile(rooted, 'secret.txt')).toBeNull()
     expect(await workspace.stageWorkspaceFile(rooted, 'secret.txt')).toBeNull()
     expect(await workspace.workspaceFiles(rooted)).toEqual([])
-    expect(await workspace.snapshot(workspace.workspaceDir(rooted))).toEqual(new Map())
+    expect(await workspace.snapshot(workspace.workspaceFor(rooted))).toEqual(new Map())
   })
 
   it('makes a real folder of a workspace, or its .ollmost or uploads, that a link replaced, writing nothing through it', async () => {
@@ -210,21 +220,21 @@ describe('workspaces', () => {
 
     mkdirSync(paths.workspaces, { recursive: true })
     symlinkSync(outside, dir)
-    await workspace.prepareWorkspace(c.id)
+    await workspace.prepareWorkspace(workspace.workspaceFor(c.id))
     expect(lstatSync(dir).isDirectory()).toBe(true)
     untouched()
 
     for (const sub of ['.ollmost', 'uploads']) {
       rmSync(join(dir, sub), { recursive: true })
       symlinkSync(outside, join(dir, sub))
-      await workspace.prepareWorkspace(c.id)
+      await workspace.prepareWorkspace(workspace.workspaceFor(c.id))
       expect(lstatSync(join(dir, sub)).isDirectory()).toBe(true)
       untouched()
     }
     // An upload replaced by a link to a file elsewhere: the copy replaces the link instead of overwriting that file.
     rmSync(join(dir, 'uploads', 'sales.csv'))
     symlinkSync(file, join(dir, 'uploads', 'sales.csv'))
-    await workspace.prepareWorkspace(c.id)
+    await workspace.prepareWorkspace(workspace.workspaceFor(c.id))
     expect(lstatSync(join(dir, 'uploads', 'sales.csv')).isFile()).toBe(true)
     expect(readFileSync(join(dir, 'uploads', 'sales.csv'), 'utf8')).toBe('a,b\n')
     expect(readFileSync(file, 'utf8')).toBe('keep')
@@ -268,7 +278,7 @@ describe('workspaces, further', () => {
     linkAttachments(['g1'], m.id)
     mkdirSync(join(workspace.workspaceDir(c.id), 'uploads'), { recursive: true })
     writeFileSync(join(workspace.workspaceDir(c.id), 'uploads', 'gone.csv'), 'edited')
-    expect((await workspace.prepareWorkspace(c.id)).uploads).toEqual([])
+    expect((await workspace.prepareWorkspace(workspace.workspaceFor(c.id))).uploads).toEqual([])
     expect(readFileSync(join(workspace.workspaceDir(c.id), 'uploads', 'gone.csv'), 'utf8')).toBe('edited')
   })
 
@@ -283,14 +293,14 @@ describe('workspaces, further', () => {
     expect(second).toBe(first)
     expect(readFileSync(second!, 'utf8')).toBe('two')
     expect(await workspace.stageWorkspaceFile(id, 'missing.txt')).toBeNull()
-    await workspace.removeWorkspace(id)
+    await workspace.removeWorkspace(workspace.workspaceFor(id))
     expect(existsSync(first!)).toBe(false)
   })
 
   // A chat delete that couldn't stop the chat's code leaves its folders; the next start removes them.
   it('deletes the folders of chats that are gone at startup, never those of chats that exist, nor when quitting', async () => {
     const kept = createConversation({ projectId: null, model: 'm', think: null, skills: [] })
-    await workspace.prepareWorkspace(kept.id)
+    await workspace.prepareWorkspace(workspace.workspaceFor(kept.id))
     const gone = 'chat-gone'
     const folders = [workspace.workspaceDir(gone), workspace.scriptsDir(gone), python.chatVenvDir(gone)]
     for (const dir of folders) mkdirSync(dir, { recursive: true })
@@ -355,7 +365,7 @@ describe("Ollmost's Python environments", () => {
     writeFileSync(join(outside, 'keep.txt'), 'keep')
     plantPackage(python.chatVenvDir('chat-c'), 'six', '1.16.0')
     symlinkSync(outside, join(python.chatVenvDir('chat-c'), 'lib', 'link'))
-    await workspace.removeWorkspace('chat-c')
+    await workspace.removeWorkspace(workspace.workspaceFor('chat-c'))
     expect(existsSync(python.chatVenvDir('chat-c'))).toBe(false)
 
     plantPackage(python.chatVenvDir('chat-d'), 'six', '1.16.0')
@@ -495,7 +505,7 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
     runSandboxed({
       command,
       policy,
-      cwd: ws,
+      workspace: chatWs(ws),
       env: extra.env ?? {},
       timeoutMs: extra.timeoutMs ?? 30_000,
       signal: extra.signal,
@@ -517,7 +527,7 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
       runSandboxed({
         command: plantHook,
         policy: policyFor({ workspace, home: fakeHome, readable: [], venv: join(root, 'venv'), pypi: false }),
-        cwd: workspace,
+        workspace: chatWs(workspace),
         env: {},
         timeoutMs: 30_000,
         id
@@ -616,12 +626,14 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
   })
 
   describe('as run_code', () => {
-    const ctx = (dir: string) => ({ skills: false, web: false, sources: ['code'], workspace: dir })
+    const ctx = (dir: string) => ({ mode: 'chat' as const, skills: false, web: false, sources: ['code'], workspace: chatWs(dir) })
     const call = (name: string, args: Record<string, unknown> | string) => ({ function: { name, arguments: args } })
 
     it('is offered only in chats with the runner on, and asks unless set to Always allow', () => {
       expect((tools.toolsFor({ ...ctx(ws), sources: [] }) ?? []).map((t) => t.function.name)).not.toContain('run_code')
       expect((tools.toolsFor(ctx(ws)) ?? []).map((t) => t.function.name)).toContain('run_code')
+      // A code session has tools of its own (#82).
+      expect((tools.toolsFor({ ...ctx(ws), mode: 'code' }) ?? []).map((t) => t.function.name)).not.toContain('run_code')
       expect(tools.toolGrants(ctx(ws)).has('code')).toBe(true)
       expect(tools.approvalFor(call('run_code', { code: '1' }), ctx(ws))).toBe('ask')
       updateSettings({ runner: { mode: 'allow' } })
@@ -766,7 +778,8 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
 
     it('is stopped in every chat at startup or when quitting, when no run’s end did it (a crash)', async () => {
       const c = createConversation({ projectId: null, model: 'm', think: null, skills: [] })
-      const { dir } = await workspace.prepareWorkspace(c.id)
+      const dir = workspace.workspaceFor(c.id).root
+      await workspace.prepareWorkspace(workspace.workspaceFor(c.id))
       const real = realpathSync(dir)
       const left = await leftBehind(
         dir,
@@ -782,7 +795,7 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
   // #76: a run waits while Ollmost works in its folder; Stop pressed meanwhile must still stop it.
   it('waits for Ollmost’s work in the folder to finish before code starts, and heeds Stop pressed meanwhile', async () => {
     let release = () => {}
-    const work = quiesce(ws, () => new Promise<void>((resolve) => (release = resolve)))
+    const work = quiesce(chatWs(ws), () => new Promise<void>((resolve) => (release = resolve)))
     await new Promise((resolve) => setTimeout(resolve, 100))
     const controller = new AbortController()
     let started = false
@@ -798,11 +811,12 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
 
   // #71: Ollmost works in a chat's folder outside the sandbox, so it must never follow a link code left there.
   describe('links code leaves in its workspace', () => {
-    const ctx = (dir: string) => ({ skills: false, web: false, sources: ['code'], workspace: dir })
+    const ctx = (dir: string) => ({ mode: 'chat' as const, skills: false, web: false, sources: ['code'], workspace: chatWs(dir) })
     const call = (name: string, args: Record<string, unknown>) => ({ function: { name, arguments: args } })
     const chat = async () => {
       const c = createConversation({ projectId: null, model: 'm', think: null, skills: [] })
-      return { id: c.id, dir: (await workspace.prepareWorkspace(c.id)).dir }
+      await workspace.prepareWorkspace(workspace.workspaceFor(c.id))
+      return { id: c.id, dir: workspace.workspaceFor(c.id).root }
     }
 
     it('can’t replace the workspace or its .ollmost folder, so later runs still work there', async () => {
@@ -872,7 +886,7 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
     const run = runSandboxed({
       command: 'echo ok > first.txt; sleep 2; echo x > second.txt; echo "exit=$?"',
       policy,
-      cwd: workspace,
+      workspace: chatWs(workspace),
       env: {},
       timeoutMs: 30_000,
       id: 'moved-folder'

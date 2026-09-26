@@ -1403,9 +1403,14 @@ const evilSvg = (port) =>
       if (existsSync(join(kiln, `ollmost.db${suffix}`))) renameSync(join(kiln, `ollmost.db${suffix}`), join(kiln, `kiln.db${suffix}`))
     const db = new DatabaseSync(join(kiln, 'kiln.db'))
     db.prepare("UPDATE attachments SET path = ? || '/' || path").run(kiln)
-    // Kiln's schema: every migration but the two the rename added (relative paths, trace labels), so they run again.
+    // Kiln's database: its last schema version, so every migration Ollmost added runs again: the two the rename added
+    // (relative paths, trace labels), and later ones. The app made this database, so what those later ones added to
+    // the schema is taken out first, or they'd fail on it. A new schema migration means updating this too.
+    const KILN_DB_VERSION = 8
     const version = db.prepare('PRAGMA user_version').get().user_version
-    db.exec(`PRAGMA user_version = ${version - 2}`)
+    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 3, `database version ${version}`)
+    db.exec('DROP INDEX conversations_mode; ALTER TABLE conversations DROP COLUMN root; ALTER TABLE conversations DROP COLUMN mode')
+    db.exec(`PRAGMA user_version = ${KILN_DB_VERSION}`)
     db.close()
     mkdirSync(join(kiln, 'runner', 'venvs', conversationId, 'bin'), { recursive: true })
     mkdirSync(join(kiln, 'workspaces', conversationId, '.kiln', 'home'), { recursive: true })

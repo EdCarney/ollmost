@@ -7,20 +7,24 @@ import { mcpTools } from '../mcp/provider'
 import { runnerTools } from '../runner/provider'
 import { skillTools } from './skillTools'
 import { webTools } from './webTools'
+import type { Workspace } from '../runner/workspace'
+import type { TurnMode } from './turn'
 
 /** What a request's tools let the model do. Decides what the prompt and error messages say Ollmost can't do. */
 export type ToolGrant = 'web' | 'code'
 
 /** What this request offers, and the reply it belongs to. */
 export interface ToolContext {
+  /** The kind of conversation the reply is in: a chat, or a code session working in a folder (see turn.ts). */
+  mode: TurnMode
   skills: boolean
   web: boolean
   /** Tool sources switched on for the chat (Conversation.toolSources): `mcp:<server id>`. */
   sources: readonly string[]
   /** The chat holds files the user shared: attachments, or its project's knowledge. */
   privateFiles?: boolean
-  /** The folder tools act in, for a later Code mode. Nothing uses it yet. */
-  workspace: string | null
+  /** The folder code runs in, when this reply may run code (see runner/workspace.ts); null otherwise. */
+  workspace: Workspace | null
   /** The reply's stop signal: long-running tools are cancelled with it. */
   signal?: AbortSignal
   /**

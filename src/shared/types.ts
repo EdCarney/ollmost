@@ -42,6 +42,10 @@ export interface Conversation {
   allowedTools: string[]
   /** Tool sources switched on for this chat: `mcp:<server id>` for each MCP server. */
   toolSources: string[]
+  /** A chat, or a code session: agentic work in `root`, a folder of the user's. */
+  mode: 'chat' | 'code'
+  /** A code session's folder, by its real path; null for a chat. */
+  root: string | null
   pinned: boolean
   createdAt: number
   updatedAt: number

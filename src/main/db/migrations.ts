@@ -183,5 +183,12 @@ export const MIGRATIONS: string[] = [
   /* sql */ `
   -- The debugger's recorded endpoints for built-in tools, under the app's new URL scheme (#60).
   UPDATE traces SET data = replace(data, '"endpoint":"kiln://', '"endpoint":"ollmost://') WHERE data LIKE '%"endpoint":"kiln://%';
+  `,
+  /* sql */ `
+  -- Code sessions: agentic work in a folder of the user's, which Ollmost never owns (#78). \`root\` is that folder's
+  -- real path; null for a chat.
+  ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'chat';
+  ALTER TABLE conversations ADD COLUMN root TEXT;
+  CREATE INDEX conversations_mode ON conversations(mode, updated_at DESC);
   `
 ]

@@ -31,7 +31,14 @@ const { basePrompt } = await import('../src/main/chat/prompts')
 type ToolProvider = import('../src/main/chat/tools').ToolProvider
 type ToolContext = import('../src/main/chat/tools').ToolContext
 
-const ctx = (over: Partial<ToolContext> = {}): ToolContext => ({ skills: false, web: false, sources: [], workspace: null, ...over })
+const ctx = (over: Partial<ToolContext> = {}): ToolContext => ({
+  mode: 'chat',
+  skills: false,
+  web: false,
+  sources: [],
+  workspace: null,
+  ...over
+})
 const call = (name: string, args: Record<string, unknown> = {}) => ({ function: { name, arguments: args } })
 const names = (c: ToolContext) => (toolsFor(c) ?? []).map((t) => t.function.name)
 
