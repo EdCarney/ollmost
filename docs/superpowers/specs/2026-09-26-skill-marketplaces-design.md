@@ -9,6 +9,7 @@
   - Commands move to [#90](https://github.com/EdCarney/ollmost/issues/90).
   - Proxy support isn't part of this work.
   - GitHub only, and nothing requires `git` to be installed.
+  - Local folder marketplaces stay, for writing a marketplace and for offline tests.
 
 ## Goal
 
