@@ -10,7 +10,7 @@
   - Proxy support isn't part of this work.
   - GitHub only, and nothing requires `git` to be installed.
   - Local folder marketplaces stay, for writing a marketplace and for offline tests.
-  - Anthropic's marketplaces are built in, each with a switch that starts off (decision 12, A7).
+  - Anthropic's official marketplace, `claude-plugins-official`, is built in with a switch that starts off (decision 12, A7). Anthropic's other two aren't built in for now.
 
 ## Goal
 
@@ -18,7 +18,7 @@ Ollmost can browse and install skills from the same catalogs Claude Code uses: C
 
 After this change:
 
-- You add a marketplace by typing `owner/repo` or a GitHub URL. A local folder also works, for writing a marketplace and for tests. Anthropic's three public marketplaces are already listed, each with a switch. They stay off, and nothing is fetched from them, until you turn one on.
+- You add a marketplace by typing `owner/repo` or a GitHub URL. A local folder also works, for writing a marketplace and for tests. Anthropic's official marketplace is already listed, with a switch. It stays off, and nothing is fetched from it, until you turn it on.
 - Skills → **Browse** lists every plugin in your marketplaces, searchable, with its description, author, category and whether it's installed.
 - **Review** downloads a plugin and shows exactly what would be installed: each skill's instructions, its files, what Ollmost will ignore, its license, and roughly how many tokens it adds to each request. **Install** then makes it permanent; **Discard** removes the download.
 - An installed plugin's skills work like any other skill: they're listed under Skills, turned on per chat with `/` or the + menu, and loaded by the model with `load_skill`. They're read-only, with **Duplicate to edit** as today.
@@ -76,7 +76,7 @@ Across the 303 skills whose files are in those repos:
 9. **Reserved names are enforced as Claude Code does.** A marketplace calling itself `claude-plugins-official` (and the rest of Claude Code's reserved list) is refused unless it comes from `github.com/anthropics/`. Those from `anthropics/` get an **Anthropic** badge.
 10. **`web_fetch` asks first while a marketplace skill is active in the chat**, unless you already allowed that site for the chat (E1). *Agreed.*
 11. **A plugin's MCP servers are offered, never added.** **Add its MCP servers…** pre-fills Settings → Tools → Paste JSON, where you add them as you would any server (C4). *Agreed.*
-12. **Anthropic's marketplaces are built in, each behind a switch that starts off** (A7). *Agreed.*
+12. **Anthropic's official marketplace is built in, behind a switch that starts off** (A7). *Agreed*, for `claude-plugins-official` only.
 
 ## Part A: the model
 
@@ -132,7 +132,7 @@ interface StoredMarketplace {
   fetchedAt: number | null
   /** The last refresh's error, shown on the marketplace; the previous snapshot stays in use. */
   error: string | null
-  /** One of Anthropic's marketplaces that ship with Ollmost (A7). */
+  /** A marketplace that ships with Ollmost (A7). */
   builtIn: boolean
   /** Its switch. Always true for a marketplace you added; false for a built-in one until you turn it on. */
   enabled: boolean
@@ -189,17 +189,16 @@ When a skill's text reaches the model (`getSkill`, used by `load_skill` and by s
 
 For code runs, `readableFolders()` (`src/main/runner/provider.ts`) adds each plugin's root to the skill folders it lists already, so `run_code` and code sessions can read `${CLAUDE_PLUGIN_ROOT}/scripts/…`. For a skill with scripts, `load_skill` also names the plugin's folder in the run hint, next to the skill's.
 
-### A7. Anthropic's marketplaces, built in
+### A7. Anthropic's official marketplace, built in
 
-Ollmost ships with Anthropic's three marketplaces already listed, each with its own switch. They start **off**, and nothing is fetched from one until you turn it on.
+Ollmost ships with Anthropic's official marketplace already listed, with its own switch. It starts **off**, and nothing is fetched from it until you turn it on.
 
 | Name (from its `marketplace.json`) | Repository | What's in it (2026-09-26) |
 | --- | --- | --- |
 | `claude-plugins-official` | `anthropics/claude-plugins-official` | Anthropic's curated directory: 314 plugins from Anthropic and partners |
-| `knowledge-work-plugins` | `anthropics/knowledge-work-plugins` | 121 plugins for everyday work, made for Cowork |
-| `anthropic-agent-skills` | `anthropics/skills` | Anthropic's example and document skills, as 5 plugins |
 
-- **In code.** `BUILT_IN_MARKETPLACES` in `catalog.ts` holds each one's expected name, repository and a one-line description. They're always in the marketplaces list, with `builtIn: true`.
+- **The other two aren't built in for now.** `anthropics/knowledge-work-plugins` and `anthropics/skills` get no switch. Like any GitHub marketplace, they can still be added by typing their repository.
+- **In code.** `BUILT_IN_MARKETPLACES` in `catalog.ts` holds each built-in marketplace's expected name, repository and a one-line description. It's a list with one entry, so building in another later is one line. Built-in marketplaces are always in the marketplaces list, with `builtIn: true`.
 - **Turning one on** fetches it as if you'd added it (B1–B3), and its plugins appear in Browse.
   - The fetched `marketplace.json` must give the name in the table.
   - If it doesn't, the switch goes back off with the error, so a changed repository can't arrive under a name Ollmost vouches for.
@@ -208,7 +207,7 @@ Ollmost ships with Anthropic's three marketplaces already listed, each with its 
   - Those plugins show "From <marketplace> (off)" and get no updates while it's off.
   - Its snapshot is kept, so turning it back on shows the catalog at once, refreshed if it's more than 24 hours old.
 - **Built-in marketplaces can't be removed, only turned off.** **Remove** appears only on marketplaces you added.
-- **Adding one by hand.** Typing one of these repositories in **Add** turns its switch on, instead of adding a second copy.
+- **Adding it by hand.** Typing `anthropics/claude-plugins-official` in **Add** turns its switch on, instead of adding a second copy.
 - **Badge and reserved names.** The Anthropic badge and the reserved-name exception (decision 9) come from the source being `github.com/anthropics/`, not from being built in.
 
 ## Part B: fetching
@@ -223,7 +222,7 @@ Ollmost ships with Anthropic's three marketplaces already listed, each with its 
 | An absolute path, or **Choose folder…** | `directory`: read in place, for writing a marketplace and for tests |
 | Anything else | Refused: "Ollmost can add marketplaces from GitHub only." |
 
-- **Anthropic's marketplaces** are built in (A7). Typing one of their repositories turns its switch on.
+- **Anthropic's official marketplace** is built in (A7). Typing its repository turns its switch on.
 - **What `marketplace.json` must have.** It's validated like Claude Code's required fields: `name`, `owner.name`, `plugins[]`. Each entry is validated on its own, so one bad entry is listed with its reason instead of failing the marketplace.
 - **Keys Ollmost reads:** `name`, `description` (or `metadata.description`), `metadata.pluginRoot` and `renames`.
 - **Entry fields Ollmost reads:** `name`, `displayName`, `description`, `author`, `homepage`, `repository`, `license`, `category`, `tags`, `keywords`, `version`, `strict`, `skills` and `source`. Everything else is ignored.
@@ -392,7 +391,7 @@ update:  .staging/<id> + .ollmost-commit
   - A skill's page adds badges: Anthropic, the marketplace, "Update available", "No longer in <marketplace>".
   - It also shows the frontmatter notes from A4.
 - **Browse:** a search box and a marketplace filter; the list searches name, `displayName`, description, category, tags and keywords.
-  - With no marketplace on, Browse shows Anthropic's three with their switches instead of an empty list.
+  - With no marketplace on, Browse shows Anthropic's official marketplace with its switch instead of an empty list.
   - Each row shows the plugin's name, marketplace, category, the Anthropic badge, and one of: Installed, Update, or Not available (with the reason).
   - **The detail pane before review** shows the entry's own fields (description, author, homepage, license, source). For a non-relative source, only these fields are known until a download, as in Claude Code.
   - **Review** downloads, with a spinner and **Cancel**, then fills the pane from `PluginReview`:
@@ -402,12 +401,12 @@ update:  .staging/<id> + .ollmost-commit
     - **Install**, **Install turned off** and **Discard**.
     - The plugin's MCP servers, if any, with **Add its MCP servers…** (C4).
   - For an update, the pane lists the files added, changed and removed, and **Update** replaces **Install**.
-- **Manage marketplaces…** at the foot of the Browse tab: a modal listing each marketplace with its source, commit, when it was fetched, and any error. Anthropic's three are at the top, each with its switch. The rest have **Refresh** and **Remove**. It also has an **Add** field and the GitHub token field.
+- **Manage marketplaces…** at the foot of the Browse tab: a modal listing each marketplace with its source, commit, when it was fetched, and any error. Anthropic's official marketplace is at the top, with its switch. The rest have **Refresh** and **Remove**. It also has an **Add** field and the GitHub token field.
 
 ### D2. Elsewhere
 
 - **The `/` menu and + menu** show `plugin:skill` for marketplace skills and hide `user-invocable: false` ones.
-- **Settings → Web, artifacts & skills** gains a **Marketplaces** row: a switch for each of Anthropic's three, and **Manage…** for the rest, opening the same modal.
+- **Settings → Web, artifacts & skills** gains a **Marketplaces** row: the switch for Anthropic's official marketplace, and **Manage…** for the rest, opening the same modal.
 
 ## Part E: security
 
@@ -468,7 +467,7 @@ A skill that passed review can still tell the model to fetch `https://collector.
 | `src/main/settings.ts` | `setGitHubToken` / `getGitHubToken`, stored like the API key |
 | `src/main/index.ts` | Staging recovery (C3) before the first `listSkills()` |
 | `src/renderer/src/views/SkillsView.tsx` | Tabs, grouping, badges |
-| `src/renderer/src/views/SettingsView.tsx` | The **Marketplaces** row, with the built-in switches |
+| `src/renderer/src/views/SettingsView.tsx` | The **Marketplaces** row, with the built-in switch |
 | `src/renderer/src/components/skills/{BrowsePane,PluginReview,MarketplacesDialog}.tsx` | New |
 | `src/renderer/src/components/Composer.tsx` | `qualifiedName`, and hides `userInvocable: false` |
 | `README.md` | The Skills section: marketplaces, what's installed, what isn't, and the token. Web search: `web_fetch` asks while a marketplace skill is active. |
@@ -507,7 +506,7 @@ A skill that passed review can still tell the model to fetch `https://collector.
     - A fixture shaped like `claude-plugins-official`: sha-pinned `git-subdir`, plus `renames`.
     - Per-entry validation errors.
     - Built-in marketplaces:
-      - a fresh data folder lists all three, off, with no request made;
+      - a fresh data folder lists `claude-plugins-official`, off, with no request made;
       - turning one on fetches it;
       - a fetched name that differs turns it back off with the error;
       - turning it off hides its plugins and skips its refreshes, while installed plugins keep working;
@@ -542,7 +541,12 @@ A skill that passed review can still tell the model to fetch `https://collector.
     - an app skill only, which stays `auto`.
   - **`mcpImport`:** the plugin substitutions, `${NAME}` env values that start locked, and remote servers left out.
 - **e2e (`e2e/run.mjs`):** a local folder marketplace (no network) → Browse → Review → Install turned on. Then, in a chat, `/plugin:skill` applies it, and a tools-capable model calls `load_skill` with the qualified name.
-- **By hand, before release:** add all three Anthropic marketplaces, then review and install `document-skills`, one `git-subdir` plugin and one plugin using `${CLAUDE_PLUGIN_ROOT}`. Run one of each's scripts with the code runner on.
+- **By hand, before release:** turn on `claude-plugins-official`, then review and install:
+  - one relative-path plugin;
+  - one `git-subdir` plugin;
+  - one plugin using `${CLAUDE_PLUGIN_ROOT}`.
+
+  Run one of each's scripts with the code runner on.
 
 ## Rollout
 
@@ -550,7 +554,7 @@ The work splits into five pull requests. Each builds on the one before.
 
 1. **Library and the `web_fetch` rule:** qualified names, frontmatter flags, variables, the marketplace root reading install records, `readableFolders()`, and E1. No network. E1 lands first so it's in place before anything can be installed. Existing skills behave as before, apart from honouring `disable-model-invocation` and `user-invocable`.
 2. **Main process:** sources, catalog (with the built-in marketplaces), GitHub, unpack, install, recovery, IPC. Tests use fixtures and a fake `fetch`.
-3. **Interface:** Browse, Review, Manage marketplaces, the built-in switches (Browse, the modal, Settings), grouping and badges; the e2e run; the README.
+3. **Interface:** Browse, Review, Manage marketplaces, the built-in switch (Browse, the modal, Settings), grouping and badges; the e2e run; the README.
 4. **GitHub token and updates:** the token field, update detection, and the update review.
 5. **A plugin's MCP servers:** C4.
 
