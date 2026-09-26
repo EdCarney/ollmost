@@ -1,7 +1,7 @@
 import { create } from 'zustand'
 import type { Artifact, ChatEvent, ChatUsage, Conversation, Message, SendResult, ToolEvent } from '@shared/types'
 import { api } from '@/lib/api'
-import { useApp } from './app'
+import { showsConversation, useApp } from './app'
 import { useArtifactPanel } from './artifactPanel'
 
 export interface StreamState {
@@ -147,10 +147,7 @@ function flush(): void {
   })
 }
 
-const onScreen = (conversationId: string) => {
-  const route = useApp.getState().route
-  return route.name === 'chat' && route.id === conversationId
-}
+const onScreen = (conversationId: string) => showsConversation(useApp.getState().route, conversationId)
 
 function handle(e: ChatEvent): void {
   switch (e.type) {
