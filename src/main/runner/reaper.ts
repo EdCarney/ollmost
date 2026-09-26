@@ -99,10 +99,14 @@ print(json.dumps({'stopped': len(held), 'left': left}))
 
 /**
  * Stop every process whose sandbox is Ollmost's for one of these folders (a chat's workspace or Python environment):
- * code from the chats they belong to. Returns how many were stopped, and which of the folders were checked: a process
- * can only be matched against a folder that exists, so a missing one (or one that isn't a real folder) isn't. Throws if
- * a process is still running afterwards. On Linux the sandbox (bubblewrap, in its own process namespace) takes every
- * process with it when the run ends, so there's nothing to do.
+ * code from the chats they belong to. Each folder must be one only Ollmost's policy pins (those, or a session's scratch
+ * under runner/sessions), never one Ollmost doesn't own, like the user's folder a session works in: sandbox-runtime
+ * denies writing .git/hooks (and .bashrc, .mcp.json and more) under the working directory of the app that builds a
+ * sandbox, which pins that folder, so another app's sandbox there, such as Claude Code's in the repo it runs in, would
+ * match and be killed (#80). Returns how many were stopped, and
+ * which of the folders were checked: a process can only be matched against a folder that exists, so a missing one (or
+ * one that isn't a real folder) isn't. Throws if a process is still running afterwards. On Linux the sandbox
+ * (bubblewrap, in its own process namespace) takes every process with it when the run ends, so there's nothing to do.
  */
 export async function reap(folders: string[]): Promise<{ stopped: number; checked: string[] }> {
   if (process.platform !== 'darwin') return { stopped: 0, checked: folders }

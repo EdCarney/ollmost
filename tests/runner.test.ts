@@ -886,4 +886,66 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
     expect(existsSync(join(after, 'workspaces', 'c1', 'second.txt'))).toBe(false)
     expect(result.output).toMatch(/Operation not permitted/)
   })
+
+  // #80: the reaper takes any sandbox that may write a folder it's given, but neither write the folder above it nor
+  // delete it, for Ollmost's. Other sandboxes pin folders too: sandbox-runtime always denies writing .git/hooks (among
+  // others) under the folder a sandbox is started in, so Claude Code's sandbox in a repo has the repo pinned. So a
+  // session working in the user's folder must be reaped by its own scratch, never by that folder.
+  describe('the folders the reaper is given', () => {
+    // Real paths, which the pins match. The user's folder is a repo; neither sandbox may write the scratch's parent.
+    const base = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-session-')))
+    const repo = join(base, 'repo')
+    const scratch = join(base, 'runner', 'sessions', 's1')
+    mkdirSync(join(repo, '.git', 'hooks'), { recursive: true })
+    mkdirSync(scratch, { recursive: true })
+    /** A sandboxed `sleep` started straight from the runtime, as if a run had left it (no run's end stops it). */
+    const leftBehind = async (dir: string, p: typeof policy) => {
+      const { SandboxManager } = await import('@anthropic-ai/sandbox-runtime')
+      const { argv, env } = await SandboxManager.wrapWithSandboxArgv('exec sleep 30', '/bin/bash', p, undefined, dir, { commandId: 'left' })
+      return spawn(argv[0], argv.slice(1), { cwd: dir, env: { ...process.env, ...env }, stdio: 'ignore', detached: true })
+    }
+    const settle = () => new Promise((resolve) => setTimeout(resolve, 1000))
+
+    it("stops a session's code by its scratch, which only the session's policy pins", async () => {
+      const run = policyFor({ workspace: scratch, home: fakeHome, readable: [], venv: join(root, 'venv'), pypi: false })
+      const session = await leftBehind(repo, {
+        ...run,
+        filesystem: {
+          ...run.filesystem,
+          allowRead: [repo, ...(run.filesystem.allowRead ?? [])],
+          allowWrite: [repo, scratch],
+          denyWrite: [RUNTIME_TMPDIR, join(scratch, '.pinned')]
+        }
+      })
+      await settle()
+      try {
+        expect(await reap([scratch])).toEqual({ stopped: 1, checked: [scratch] })
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        expect(alive(session.pid!)).toBe(false)
+        expect(await reap([scratch])).toEqual({ stopped: 0, checked: [scratch] })
+      } finally {
+        session.kill('SIGKILL')
+      }
+    }, 60_000)
+
+    it('leaves a Claude Code sandbox in the same repo alone, which reaping by the repo would stop', async () => {
+      // Like Claude Code's in the repo: it may write the repo, and .git/hooks there is pinned (the runtime would pin it
+      // under this process's working directory, not the repo, so the policy says it). Nothing in it names the scratch.
+      const claudeCode = await leftBehind(repo, {
+        network: { allowedDomains: [], deniedDomains: [] },
+        filesystem: { denyRead: [], allowRead: [], allowWrite: [repo], denyWrite: [RUNTIME_TMPDIR, join(repo, '.git', 'hooks')] }
+      })
+      await settle()
+      try {
+        expect(await reap([scratch])).toEqual({ stopped: 0, checked: [scratch] })
+        expect(alive(claudeCode.pid!)).toBe(true)
+        // Why the repo must never be given: the pin on its .git/hooks makes this sandbox look like Ollmost's.
+        expect(await reap([repo])).toEqual({ stopped: 1, checked: [repo] })
+        await new Promise((resolve) => setTimeout(resolve, 200))
+        expect(alive(claudeCode.pid!)).toBe(false)
+      } finally {
+        claudeCode.kill('SIGKILL')
+      }
+    }, 60_000)
+  })
 })
