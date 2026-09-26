@@ -502,6 +502,49 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
       id: command
     })
 
+  // #81: sandbox-runtime anchors its mandatory denies (.git/hooks among them) at the main process's cwd at wrap
+  // time, not at the run's own workspace, so a workspace outside that folder was never covered by them. Ollmost
+  // always runs with its cwd at / (see src/main/index.ts) so they cover every workspace; this proves the gap they'd
+  // otherwise leave, and that / closes it.
+  beforeAll(() => process.chdir('/'))
+
+  it('anchors sandbox-runtime’s mandatory denies at the process cwd, so only / covers every workspace', async () => {
+    const parentA = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-cwd-a-')))
+    const parentB = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-cwd-b-')))
+    const plantHook = 'mkdir -p .git/hooks && touch .git/hooks/pre-commit'
+    const hookPath = (workspace: string) => join(workspace, '.git', 'hooks', 'pre-commit')
+    const runIn = (workspace: string, id: string) =>
+      runSandboxed({
+        command: plantHook,
+        policy: policyFor({ workspace, home: fakeHome, readable: [], venv: join(root, 'venv'), pypi: false }),
+        cwd: workspace,
+        env: {},
+        timeoutMs: 30_000,
+        id
+      })
+
+    try {
+      // cwd outside parentB: the mandatory deny (anchored at cwd) never reaches a workspace under parentB.
+      process.chdir(parentA)
+      const gapWorkspace = join(parentB, 'gap')
+      mkdirSync(gapWorkspace, { recursive: true })
+      const gap = await runIn(gapWorkspace, 'cwd-gap')
+      expect(gap.code).toBe(0)
+      expect(existsSync(hookPath(gapWorkspace))).toBe(true)
+
+      // cwd at /: the same mandatory deny is now anchored at /, so it reaches every workspace, this one included.
+      process.chdir('/')
+      const coveredWorkspace = join(parentB, 'covered')
+      mkdirSync(coveredWorkspace, { recursive: true })
+      const covered = await runIn(coveredWorkspace, 'cwd-covered')
+      expect(covered.code).not.toBe(0)
+      expect(covered.output).toMatch(/Operation not permitted/)
+      expect(existsSync(hookPath(coveredWorkspace))).toBe(false)
+    } finally {
+      process.chdir('/')
+    }
+  })
+
   it('writes in the workspace and nowhere else, and reads nothing it was denied', async () => {
     const ok = await sandboxed('echo made > made.txt && cat made.txt')
     expect(ok).toMatchObject({ code: 0, timedOut: false })
