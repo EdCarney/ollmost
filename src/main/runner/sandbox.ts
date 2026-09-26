@@ -120,6 +120,90 @@ export interface RunResult {
   truncated: boolean
 }
 
+// The manager has one config, and its network part applies to every sandbox at once (the wrap reads allowLocalBinding
+// from it too). Concurrent runs with different network rules would overwrite each other's (#79), so they take turns:
+// runs with the same rules share them, and a run with other rules waits until none of those is running. Ollmost's
+// policies set nothing else under `network`.
+
+/** The network rules the manager has now (null until the first run), and how many runs hold them. */
+let networkRules: string | null = null
+let networkHolders = 0
+/** Runs waiting for their network rules, first come first served. `take` gives a run its rules and resolves its hold. */
+const networkQueue: { key: string; take: () => void }[] = []
+
+/** A policy's network rules, whatever the order of its domains. */
+const networkKey = ({ network: n }: SandboxRuntimeConfig) =>
+  JSON.stringify({
+    allowedDomains: [...n.allowedDomains].sort(),
+    deniedDomains: [...n.deniedDomains].sort(),
+    allowLocalBinding: n.allowLocalBinding ?? false
+  })
+
+/**
+ * Let in the runs whose turn it is: the first in line once no run holds other rules (the rules held may be its own,
+ * when a run ahead of it gave up its place), and with it everyone in line with the same rules.
+ */
+function admitNetwork(): void {
+  while (networkQueue.length && (!networkHolders || networkQueue[0].key === networkRules)) {
+    const { key } = networkQueue[0]
+    for (const w of networkQueue.filter((w) => w.key === key)) {
+      networkQueue.splice(networkQueue.indexOf(w), 1)
+      w.take()
+    }
+  }
+}
+
+/**
+ * Hold the manager's network config at `policy`'s rules while a run uses them; resolves to the release (releasing
+ * twice does nothing). A run joins the runs holding its rules at once, unless someone is waiting: then it queues behind
+ * them even with the same rules, or a stream of runs with the same rules could keep a run with other rules waiting
+ * forever. Stop (the signal) while waiting gives up the place in line and rejects.
+ */
+export async function holdNetwork(
+  sb: { updateConfig(cfg: SandboxRuntimeConfig): void },
+  policy: SandboxRuntimeConfig,
+  signal?: AbortSignal
+): Promise<() => void> {
+  signal?.throwIfAborted()
+  const key = networkKey(policy)
+  const take = () => {
+    // The network proxy reads the allowlist per request from the global config; the filesystem rules go with the command.
+    if (key !== networkRules) sb.updateConfig(policy)
+    networkRules = key
+    networkHolders++
+    let released = false
+    return () => {
+      if (released) return
+      released = true
+      networkHolders--
+      admitNetwork()
+    }
+  }
+  // No await from this look to taking the rules or a place in line, or another run could slip in between.
+  if (!networkQueue.length && (!networkHolders || key === networkRules)) return take()
+  return new Promise((resolve, reject) => {
+    const onAbort = () => {
+      networkQueue.splice(networkQueue.indexOf(waiter), 1)
+      reject(signal?.reason)
+      admitNetwork()
+    }
+    const waiter = {
+      key,
+      take: () => {
+        signal?.removeEventListener('abort', onAbort)
+        // A failure is this run's, not that of the run whose release let it in.
+        try {
+          resolve(take())
+        } catch (err) {
+          reject(err)
+        }
+      }
+    }
+    networkQueue.push(waiter)
+    signal?.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 /**
  * Run a shell command in the sandbox, in its own process group (so background jobs die with it). Stop (the signal)
  * kills it and rejects; running past `timeoutMs` kills it and says so. Either way, by the time it returns, anything
@@ -138,17 +222,19 @@ export async function runSandboxed(opts: {
 }): Promise<RunResult> {
   const sb = await sandbox()
   opts.signal?.throwIfAborted()
-  // The network proxy reads the allowlist per request from the global config; the filesystem rules go with the command.
-  sb.updateConfig(opts.policy)
-  // The runtime's TMPDIR=/tmp/claude is part of the command, where the environment can't override it: set ours there.
-  const command = opts.env.TMPDIR ? `export TMPDIR=${shellQuote(opts.env.TMPDIR)}; ${opts.command}` : opts.command
-  const { argv, env } = await sb.wrapWithSandboxArgv(command, '/bin/bash', opts.policy, opts.signal, opts.cwd, { commandId: opts.id })
-  const procEnv = { ...(await childEnv()), ...env, ...opts.env }
   await codeStarting(opts.cwd)
   let ended: Promise<void> | null = null
   const end = () => (ended ??= codeEnded(opts.cwd))
+  let release = () => {}
   try {
-    // Stop may have come while the start waited for Ollmost's work in the folder.
+    // Waits while another run uses other network rules. Stop pressed while the start waited for Ollmost's work in the
+    // folder, or while this waits, rejects here.
+    release = await holdNetwork(sb, opts.policy, opts.signal)
+    // The runtime's TMPDIR=/tmp/claude is part of the command, where the environment can't override it: set ours there.
+    const command = opts.env.TMPDIR ? `export TMPDIR=${shellQuote(opts.env.TMPDIR)}; ${opts.command}` : opts.command
+    const { argv, env } = await sb.wrapWithSandboxArgv(command, '/bin/bash', opts.policy, opts.signal, opts.cwd, { commandId: opts.id })
+    const procEnv = { ...(await childEnv()), ...env, ...opts.env }
+    // Stop may have come while the command was being built.
     opts.signal?.throwIfAborted()
     const proc = spawnGroup(argv[0], argv.slice(1), { cwd: opts.cwd, env: procEnv, stdio: ['ignore', 'pipe', 'pipe'] })
     const { code, output, timedOut, truncated } = await supervise(proc, opts, end)
@@ -156,6 +242,8 @@ export async function runSandboxed(opts: {
   } finally {
     sb.cleanupAfterCommand()
     await end()
+    // Only now: until its leftovers are stopped, they could make requests through the proxy under the next run's rules.
+    release()
   }
 }
 
