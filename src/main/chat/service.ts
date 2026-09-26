@@ -45,7 +45,7 @@ import { ensure as ensureServers, readyTools } from '../mcp/manager'
 import { MCP_SOURCE } from '../mcp/provider'
 import { CODE_SOURCE } from '../runner/provider'
 import { runnerStatus } from '../runner/status'
-import { prepareWorkspace } from '../runner/workspace'
+import { prepareWorkspace, type Workspace, workspaceFor } from '../runner/workspace'
 import { conversationUsage, insertUsageEvent } from '../db/usage'
 import { requestCost } from '../usage/pricing'
 import { errorMessage, estimateTokens } from '../util'
@@ -71,11 +71,8 @@ import {
   toolsFor
 } from './tools'
 import type { WebStatus } from './prompts'
+import { turnPolicy } from './turn'
 
-/** Requests a chat reply may make: room for a search, a few page reads and a skill load. The last is tool-free. */
-export const DEFAULT_TOOL_ROUNDS = 6
-/** Requests a reply may make in a chat with tool sources on (MCP servers), whose tasks take more steps. */
-export const TOOL_SOURCE_ROUNDS = 12
 /** How long a reply waits for the chat's MCP servers to start; ones still starting are left out of it. */
 const SERVER_WAIT_MS = 30_000
 // Sharing a round's room between its tool results: estimateTokens counts 4 characters a token, and a tenth is left
@@ -86,7 +83,7 @@ const MIN_RESULT_CHARS = 1_500
 
 /** Settings for one reply, for callers in the main process (the renderer can't set them). */
 export interface ReplyOptions {
-  /** Requests the reply may make, the last of them without tools. Defaults to DEFAULT_TOOL_ROUNDS. */
+  /** Requests the reply may make, the last of them without tools. Defaults to what the conversation's kind allows (see turn.ts). */
   maxToolRounds?: number
 }
 // How often a streaming reply is saved, so a quit or crash loses at most this much.
@@ -333,24 +330,33 @@ async function generate(
 
     // The chat's MCP servers: started if they aren't running (usually they are, from when the chat was opened).
     const sources = toolsCapable ? conversation.toolSources : []
+    // What this reply may do, by the kind of conversation: a code session's row says so (#78).
+    const policy = turnPolicy({
+      mode: conversation.mode,
+      sources,
+      artifacts: settings.artifacts.enabled && model.overrides.artifacts !== false,
+      maxToolRounds: reply.maxToolRounds
+    })
     const serverIds = sources.filter((s) => s.startsWith(MCP_SOURCE)).map((s) => s.slice(MCP_SOURCE.length))
     const unavailable = serverIds.length ? await ensureServers(serverIds, SERVER_WAIT_MS) : []
     if (!toolsCapable && conversation.toolSources.length)
       unavailable.push(`${modelName} can't use tools, so this chat's tools weren't used.`)
 
-    // The code runner: this chat's folder is readied (its attachments copied in) only when code may run.
-    let workspace: string | null = null
+    // The code runner: a chat's folder is readied (its attachments copied in) only when code may run. A code session
+    // has tools of its own.
+    let workspace: Workspace | null = null
     let codeRunner: { pypi: boolean; timeoutSec: number; uploads: string[] } | null = null
-    if (sources.includes(CODE_SOURCE) && settings.runner.mode !== 'off') {
+    if (policy.mode === 'chat' && sources.includes(CODE_SOURCE) && settings.runner.mode !== 'off') {
       const runner = await runnerStatus()
       if (!runner.available) unavailable.push(`The code runner isn't available: ${runner.reason}`)
       else {
         // Fails when code an earlier run left can't be stopped: then Ollmost won't work in the chat's folder (#71).
-        const ws = await prepareWorkspace(conversationId).catch((err: unknown) => new Error(errorMessage(err)))
-        if (ws instanceof Error) unavailable.push(`The code runner isn't available: ${ws.message}`)
+        const ws = workspaceFor(conversationId)
+        const ready = await prepareWorkspace(ws).catch((err: unknown) => new Error(errorMessage(err)))
+        if (ready instanceof Error) unavailable.push(`The code runner isn't available: ${ready.message}`)
         else {
-          workspace = ws.dir
-          codeRunner = { pypi: settings.runner.pypi, timeoutSec: settings.runner.timeoutSec, uploads: ws.uploads }
+          workspace = ws
+          codeRunner = { pypi: settings.runner.pypi, timeoutSec: settings.runner.timeoutSec, uploads: ready.uploads }
         }
       }
     }
@@ -359,6 +365,7 @@ async function generate(
     const project = conversation.projectId ? getProject(conversation.projectId) : null
     const messages = listMessages(conversationId)
     const toolContext: ToolContext = {
+      mode: policy.mode,
       skills: skillIndex.length > 0,
       web: web === 'on',
       sources,
@@ -369,7 +376,7 @@ async function generate(
     }
     const grants = toolGrants(toolContext)
     const tools = toolsFor(toolContext)
-    const maxRounds = Math.max(1, reply.maxToolRounds ?? (sources.length ? TOOL_SOURCE_ROUNDS : DEFAULT_TOOL_ROUNDS))
+    const maxRounds = policy.maxRounds
     const running = new Set(serverIds)
     const servers = readyTools()
       .filter((r) => running.has(r.server.id))
@@ -385,7 +392,7 @@ async function generate(
       userName: settings.userName,
       preferences: settings.preferences,
       date: new Date(),
-      artifacts: { enabled: settings.artifacts.enabled && model.overrides.artifacts !== false, allowCdn: settings.artifacts.allowCdn },
+      artifacts: { enabled: policy.artifacts, allowCdn: settings.artifacts.allowCdn },
       web,
       grants: [...grants],
       mcpServers: servers,

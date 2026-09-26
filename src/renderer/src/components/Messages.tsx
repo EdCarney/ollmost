@@ -143,7 +143,7 @@ export const UserMessage = memo(function UserMessage({
 const SKILL_TOOL_NAMES = new Set(['load_skill', 'read_skill_file'])
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
 
-const pill = 'flex max-w-full items-center gap-1.5 rounded-lg border px-2 py-1 font-ui text-xs'
+export const pill = 'flex max-w-full items-center gap-1.5 rounded-lg border px-2 py-1 font-ui text-xs'
 
 function WebEvent({ e }: { e: ToolEvent }) {
   const Icon = e.pending ? LoaderCircle : e.tool === 'web_search' ? Search : Globe
@@ -217,7 +217,7 @@ function SkillEvent({ e }: { e: ToolEvent }) {
   )
 }
 
-function Detail({ label, text }: { label: string; text: string }) {
+export function Detail({ label, text }: { label: string; text: string }) {
   return (
     <div>
       <div className="mb-1 text-subtle">{label}</div>
@@ -317,7 +317,7 @@ function RunFiles({ e, conversationId }: { e: ToolEvent; conversationId: string 
 }
 
 /** A run of the code runner: the language and first line; on click, the code and what it printed. */
-function CodeRunCard({ e, conversationId }: { e: ToolEvent; conversationId: string }) {
+export function CodeRunCard({ e, conversationId }: { e: ToolEvent; conversationId: string }) {
   const [open, setOpen] = useState(false)
   const language = runLanguage(e)
   const name = language === 'bash' ? 'bash' : 'Python'
@@ -355,7 +355,20 @@ function CodeRunCard({ e, conversationId }: { e: ToolEvent; conversationId: stri
 }
 
 /** A call waiting for your answer: what the model wants to run, and Deny / Allow for this chat / Allow once. */
-function ApprovalCard({ e, conversationId, messageId, index }: { e: ToolEvent; conversationId: string; messageId: string; index: number }) {
+export function ApprovalCard({
+  e,
+  conversationId,
+  messageId,
+  index,
+  scope = 'chat'
+}: {
+  e: ToolEvent
+  conversationId: string
+  messageId: string
+  index: number
+  /** What "Allow for this …" allows for, e.g. a code session reusing this card would pass 'session'. */
+  scope?: string
+}) {
   const [answering, setAnswering] = useState(false)
   const args = argsText(e)
   const code = e.tool === 'run_code' ? String(e.args.code ?? '') : null
@@ -414,7 +427,7 @@ function ApprovalCard({ e, conversationId, messageId, index }: { e: ToolEvent; c
         </Button>
         {!e.everyTime && (
           <Button size="sm" disabled={answering} onClick={() => void answer('chat')}>
-            Allow for this chat
+            Allow for this {scope}
           </Button>
         )}
         <Button size="sm" variant="primary" disabled={answering} onClick={() => void answer('once')}>
@@ -426,7 +439,18 @@ function ApprovalCard({ e, conversationId, messageId, index }: { e: ToolEvent; c
 }
 
 /** Tool calls made at one point in a reply, in the order they were made. */
-function ToolGroup({ events, conversationId, messageId }: { events: IndexedToolEvent[]; conversationId: string; messageId: string }) {
+export function ToolGroup({
+  events,
+  conversationId,
+  messageId,
+  scope = 'chat'
+}: {
+  events: IndexedToolEvent[]
+  conversationId: string
+  messageId: string
+  /** Passed through to ApprovalCard; see its scope prop. */
+  scope?: string
+}) {
   const shown = events.filter(({ event }) => !isUnavailable(event))
   // Tools the model invented collapse into one note instead of a row of errors.
   const unavailable = [...new Set(events.filter(({ event }) => isUnavailable(event) && !event.pending).map(({ event }) => event.tool))]
@@ -435,7 +459,7 @@ function ToolGroup({ events, conversationId, messageId }: { events: IndexedToolE
     <div data-testid="tool-group" className="my-3 flex flex-wrap gap-1.5 first:mt-0">
       {shown.map(({ event: e, index }) =>
         e.awaiting ? (
-          <ApprovalCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} />
+          <ApprovalCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} scope={scope} />
         ) : e.tool === 'run_code' ? (
           <CodeRunCard key={index} e={e} conversationId={conversationId} />
         ) : WEB_TOOL_NAMES.has(e.tool) ? (

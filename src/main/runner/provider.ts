@@ -1,18 +1,19 @@
 import { existsSync } from 'node:fs'
 import { mkdir, realpath, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
-import { basename, delimiter, isAbsolute, join, resolve, sep } from 'node:path'
+import { delimiter, isAbsolute, join, resolve, sep } from 'node:path'
 import type { ToolEvent } from '@shared/types'
 import { childPath } from '../env'
 import type { OllamaTool } from '../ollama/client'
 import { getSettings } from '../settings'
 import { listSkills } from '../skills/library'
 import type { ToolProvider, ToolResult } from '../chat/tools'
+import type { TurnMode } from '../chat/turn'
 import { capText } from '../chat/results'
 import { errorMessage } from '../util'
 import { chatVenvDir, ensureBaseVenv, findPython, venvPython } from './python'
-import { OLLMOST_DIR, policyFor, PRIVATE_ROOTS, runSandboxed, shellQuote } from './sandbox'
-import { changedFiles, readyForRun, scriptsDir, snapshot } from './workspace'
+import { policyFor, PRIVATE_ROOTS, runSandboxed, shellQuote } from './sandbox'
+import { changedFiles, ownDir, readyForRun, realRoot, scriptsDir, snapshot, type Workspace } from './workspace'
 
 // run_code: Python or bash in the chat's workspace, under the sandbox. Each call is a fresh process; files persist.
 
@@ -38,9 +39,13 @@ export const RUN_CODE: OllamaTool = {
   }
 }
 
-/** Whether this reply may run code: the chat switched the runner on and a workspace was prepared for it. */
-const enabled = (ctx: { sources: readonly string[]; workspace: string | null }) =>
-  ctx.sources.includes(CODE_SOURCE) && !!ctx.workspace && getSettings().runner.mode !== 'off'
+/**
+ * Whether this reply may run code: the chat switched the runner on and a workspace of Ollmost's own was prepared for
+ * it. Never in a code session, which has tools of its own, and never a folder of the user's: run_code fills its folder
+ * with uploads and files of its own.
+ */
+const enabled = (ctx: { mode: TurnMode; sources: readonly string[]; workspace: Workspace | null }) =>
+  ctx.mode === 'chat' && ctx.sources.includes(CODE_SOURCE) && !!ctx.workspace?.owned && getSettings().runner.mode !== 'off'
 
 type Language = 'python' | 'bash'
 
@@ -88,14 +93,14 @@ export function foldersOnPathInside(path: string, hidden: string[]): string[] {
  * links in it that Ollmost, writing outside the sandbox, would follow.
  */
 async function environmentFor(
-  workspace: string,
+  ws: Workspace,
   pypi: boolean,
   sandbox: (venv: string) => Promise<ReturnType<typeof policyFor>>,
   env: Record<string, string>,
   signal?: AbortSignal
 ): Promise<{ venv: string } | { error: string }> {
   // readyForRun already replaced anything but a real folder here (the chat's code can write it, with PyPI allowed).
-  const own = chatVenvDir(basename(workspace))
+  const own = chatVenvDir(ws.id)
   if (existsSync(venvPython(own))) return { venv: own }
   if (!pypi) return { venv: await ensureBaseVenv() }
   const python = await findPython()
@@ -104,18 +109,18 @@ async function environmentFor(
   const made = await runSandboxed({
     command: `${shellQuote(python.path)} -m venv ${shellQuote(own)}`,
     policy: await sandbox(own),
-    cwd: workspace,
+    workspace: ws,
     env,
     timeoutMs: 120_000,
     signal,
-    id: `venv:${basename(workspace)}`
+    id: `venv:${ws.id}`
   })
   return made.code === 0 && existsSync(venvPython(own))
     ? { venv: own }
     : { error: `Couldn't make this chat's Python environment: ${made.output.trim().slice(-2000) || `exit code ${made.code}`}` }
 }
 
-async function run(language: Language, code: string, workspace: string, signal?: AbortSignal): Promise<ToolResult> {
+async function run(language: Language, code: string, ws: Workspace, signal?: AbortSignal): Promise<ToolResult> {
   const settings = getSettings().runner
   const args = { language, code }
   const summary = firstLine(code)
@@ -124,22 +129,23 @@ async function run(language: Language, code: string, workspace: string, signal?:
 
   // Nothing an earlier run left is still running (it could change the folder under Ollmost), and Ollmost's folders are there.
   try {
-    await readyForRun(workspace)
+    await readyForRun(ws)
   } catch (err) {
     return { content: `Error: ${errorMessage(err)}`, event: { tool: 'run_code', args, ok: false, summary: 'not run' } }
   }
   const n = ++runs
   // Outside the workspace, where code can't swap it for a link or change it before it runs.
-  const scripts = scriptsDir(basename(workspace))
+  const scripts = scriptsDir(ws.id)
   await mkdir(scripts, { recursive: true })
   const script = join(scripts, `run-${n}.${language === 'python' ? 'py' : 'sh'}`)
   await writeFile(script, code)
 
-  // Tools that keep caches or config in HOME or TMPDIR find a writable one inside the workspace.
+  // Tools that keep caches or config in HOME or TMPDIR find a writable one of Ollmost's own (see ownDir).
+  const own = ownDir(ws)
   const baseEnv = {
-    HOME: join(workspace, OLLMOST_DIR, 'home'),
-    TMPDIR: join(workspace, OLLMOST_DIR, 'tmp'),
-    PIP_CACHE_DIR: join(workspace, OLLMOST_DIR, 'tmp', 'pip'),
+    HOME: join(own, 'home'),
+    TMPDIR: join(own, 'tmp'),
+    PIP_CACHE_DIR: join(own, 'tmp', 'pip'),
     // pip checks certificates through macOS's trust service, which the sandbox blocks (SSLCertVerificationError, OSStatus
     // -26276), so every install failed. Its own certificate bundle works.
     PIP_USE_DEPRECATED: 'legacy-certs',
@@ -148,19 +154,19 @@ async function run(language: Language, code: string, workspace: string, signal?:
   }
   const readable = [...(await readableFolders()), scripts]
   // Real paths: the sandbox matches those (see PolicyInput).
-  const real = await realpath(workspace)
+  const real = await realRoot(ws)
   const sandbox = async (venv: string) =>
     policyFor({ workspace: real, home: homedir(), readable, venv: await realpath(venv).catch(() => venv), pypi: settings.pypi })
-  const environment = await environmentFor(workspace, settings.pypi, sandbox, baseEnv, signal)
+  const environment = await environmentFor(ws, settings.pypi, sandbox, baseEnv, signal)
   if ('error' in environment)
     return { content: `Error: ${environment.error}`, event: { tool: 'run_code', args, ok: false, summary: 'no Python environment' } }
   const { venv } = environment
 
-  const before = await snapshot(workspace)
+  const before = await snapshot(ws)
   const result = await runSandboxed({
     command: language === 'python' ? `${shellQuote(venvPython(venv))} ${shellQuote(script)}` : `/bin/bash ${shellQuote(script)}`,
     policy: await sandbox(venv),
-    cwd: workspace,
+    workspace: ws,
     // Ollmost's environment comes first on PATH for bash too, so `python` and `pip` work there (Homebrew has only python3).
     env: { ...baseEnv, VIRTUAL_ENV: venv, PATH: `${join(venv, 'bin')}${delimiter}${await childPath()}` },
     timeoutMs: settings.timeoutSec * 1000,
@@ -171,7 +177,7 @@ async function run(language: Language, code: string, workspace: string, signal?:
   let files: Array<{ path: string; size: number }> = []
   let unlisted = ''
   try {
-    files = changedFiles(before, await snapshot(workspace))
+    files = changedFiles(before, await snapshot(ws))
   } catch (err) {
     unlisted = `\n\nThe files it wrote aren't listed: ${errorMessage(err)}`
   }

@@ -92,7 +92,8 @@ export function handleProtocols(): void {
       const [conversationId, ...rest] = url.pathname.slice(1).split('/').map(decodeURIComponent)
       const path = rest.join('/')
       const type = IMAGE_TYPES[path.match(IMAGE_FILE)?.[1]?.toLowerCase() ?? '']
-      const data = type ? await readWorkspaceFile(conversationId, path) : null
+      // A code session's files aren't read while its code runs (see openWorkspaceFile): not found, for now.
+      const data = type ? await readWorkspaceFile(conversationId, path).catch(() => null) : null
       if (data) {
         // Shown only as <img>, but an SVG loaded any other way would run its scripts: this origin gets none, and loads
         // nothing (#67).

@@ -18,6 +18,8 @@ interface ConversationRow {
   instructions: string
   allowed_tools: string
   tool_sources: string
+  mode: string
+  root: string | null
   pinned: number
   created_at: number
   updated_at: number
@@ -34,6 +36,8 @@ const toConversation = (r: ConversationRow): Conversation => ({
   instructions: r.instructions,
   allowedTools: parseJson<string[]>(r.allowed_tools, []),
   toolSources: parseJson<string[]>(r.tool_sources, []),
+  mode: r.mode === 'code' ? 'code' : 'chat',
+  root: r.root,
   pinned: !!r.pinned,
   createdAt: r.created_at,
   updatedAt: r.updated_at
@@ -58,18 +62,23 @@ export function createConversation(input: {
   think: ThinkSetting | null
   skills: string[]
   toolSources?: string[]
+  /** A code session works in `root`, a folder of the user's (its real path); a chat, the default, has none. */
+  mode?: 'chat' | 'code'
+  root?: string | null
 }): Conversation {
   const id = uid()
   const t = now()
   run(
-    `INSERT INTO conversations (id, project_id, model, think, skills, tool_sources, created_at, updated_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO conversations (id, project_id, model, think, skills, tool_sources, mode, root, created_at, updated_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     id,
     input.projectId,
     input.model,
     input.think,
     JSON.stringify(input.skills),
     JSON.stringify(input.toolSources ?? []),
+    input.mode ?? 'chat',
+    input.root ?? null,
     t,
     t
   )

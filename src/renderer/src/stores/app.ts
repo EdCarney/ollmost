@@ -178,6 +178,11 @@ export function thinkProfileFor(models: ModelInfo[], name: string | null): Think
   return model ? resolveThinkProfile(model.name, model.capabilities, model.overrides.think) : { kind: 'none' }
 }
 
+/** Whether `route` is showing this conversation's chat UI (inline approvals, etc.); add `|| (route.name === 'code' && route.id === conversationId)` once the code route exists. */
+export function showsConversation(route: Route, conversationId: string): boolean {
+  return route.name === 'chat' && route.id === conversationId
+}
+
 /** Surface an error from an async UI action as a toast. */
 export function reportError(err: unknown): void {
   const raw = err instanceof Error ? err.message : String(err)

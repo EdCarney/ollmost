@@ -113,11 +113,14 @@ interface Props {
   placeholder?: string
   autoFocus?: boolean
   large?: boolean
+  /** A code session already runs in its own sandbox, so it has no attachments or code-runner toggle. */
+  mode?: 'chat' | 'code'
 }
 
-export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, placeholder, autoFocus, large }: Props) {
+export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, placeholder, autoFocus, large, mode = 'chat' }: Props) {
   const { models, skills: allSkills, navigate, mcpServers, mcpStatus, settings: appSettings } = useApp()
   const runnerOn = !!appSettings && appSettings.runner.mode !== 'off'
+  const chatMode = mode === 'chat'
   const settings = useComposerSettings(conversation)
   // Each chat keeps its own unsent text and files, so switching chats never carries them along.
   const key = draftKey ?? conversation?.id ?? 'new'
@@ -198,8 +201,9 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
     if (p.attachment) void api.attachments.remove(p.attachment.id)
   }
 
-  // Drop files anywhere in the window.
+  // Drop files anywhere in the window (not for a code session, which has no attachments).
   useEffect(() => {
+    if (!chatMode) return
     let depth = 0
     const hasFiles = (e: DragEvent) => e.dataTransfer?.types.includes('Files')
     const enter = (e: DragEvent) => {
@@ -230,7 +234,7 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
       window.removeEventListener('dragover', over)
       window.removeEventListener('drop', drop)
     }
-  }, [addFileObjects])
+  }, [addFileObjects, chatMode])
 
   // ---- textarea ----
   useEffect(() => {
@@ -403,7 +407,7 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
           ref={textRef}
           value={text}
           rows={large ? 3 : 1}
-          placeholder={placeholder ?? 'Reply…'}
+          placeholder={placeholder ?? (chatMode ? 'Reply…' : 'Ask for a change…')}
           onChange={(e) => {
             setText(e.target.value)
             updateSlash(e.target.value, e.target.selectionStart)
@@ -433,9 +437,11 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
               </button>
             </MenuTrigger>
             <MenuContent side="top">
-              <MenuItem icon={<Paperclip className="size-4" />} onSelect={() => void pickFiles()}>
-                Add files or photos
-              </MenuItem>
+              {chatMode && (
+                <MenuItem icon={<Paperclip className="size-4" />} onSelect={() => void pickFiles()}>
+                  Add files or photos
+                </MenuItem>
+              )}
               <MenuSub label="Skills" icon={<Sparkles className="size-4" />}>
                 {enabledSkills.length === 0 && <MenuLabel>No skills yet</MenuLabel>}
                 {enabledSkills.map((s) => (
@@ -454,7 +460,7 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
                 <MenuItem onSelect={() => navigate({ name: 'skills' })}>Manage skills…</MenuItem>
               </MenuSub>
               <MenuSub label="Tools" icon={<Wrench className="size-4" />}>
-                {runnerOn && (
+                {chatMode && runnerOn && (
                   <MenuCheckItem
                     checked={settings.toolSources.includes(CODE)}
                     description="Runs Python and bash in a sandbox"

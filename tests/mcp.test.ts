@@ -338,7 +338,7 @@ describe('as tools in a reply', () => {
     id = fixture('Codenames').id
     await manager.connect(id)
   })
-  const ctx = (sources: string[]) => ({ skills: false, web: false, sources, workspace: null })
+  const ctx = (sources: string[]) => ({ mode: 'chat' as const, skills: false, web: false, sources, workspace: null })
   const call = (name: string, args: Record<string, unknown> = {}) => ({ function: { name, arguments: args } })
 
   it("offers a server's tools only in chats that switched it on, minus tools set to Off", () => {
@@ -408,7 +408,7 @@ describe('as tools in a reply', () => {
 })
 
 describe('a tool that changes after it was allowed', () => {
-  const ctx = (sources: string[]) => ({ skills: false, web: false, sources, workspace: null })
+  const ctx = (sources: string[]) => ({ mode: 'chat' as const, skills: false, web: false, sources, workspace: null })
   const call = (name: string) => ({ function: { name, arguments: {} } })
 
   it('asks again: Always allow and Allow for this chat are dropped, and unchanged tools keep theirs', async () => {

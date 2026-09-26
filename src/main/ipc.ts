@@ -48,7 +48,8 @@ import {
   resetEnvironments,
   stageWorkspaceFile,
   workspaceFile,
-  workspacePath
+  workspacePath,
+  workspaceFor
 } from './runner/workspace'
 import { getSettings, setApiKey, updateSettings } from './settings'
 import { getAccountUsage, invalidateAccountUsage, lastRawUsage } from './usage/account'
@@ -155,10 +156,11 @@ const impl: Impl = {
     delete: async (id) => {
       // Let replies in the project's chats finish saving before their rows go.
       await stopAll((conversationId) => getConversation(conversationId)?.projectId === id)
-      const chats = listConversations({ projectId: id, limit: 100_000 }).map((c) => c.id)
+      // Which folders are theirs is known from their rows: taken before the rows go.
+      const workspaces = listConversations({ projectId: id, limit: 100_000 }).map((c) => workspaceFor(c.id))
       await removeFiles(deleteProject(id))
       // Never throws: folders that can't go now are left for the next start's sweep.
-      await Promise.all(chats.map(removeWorkspace))
+      await Promise.all(workspaces.map(removeWorkspace))
     },
     files: async (id) => listProjectFiles(id),
     addFiles: async (id, sources) => {
@@ -198,8 +200,10 @@ const impl: Impl = {
     delete: async (id) => {
       // Wait for a reply in progress to stop and save, so it never writes to a deleted chat.
       await stop(id, { quiet: true })
+      // Which folder is the chat's is known from its row: taken before the row goes.
+      const workspace = workspaceFor(id)
       await removeFiles(deleteConversation(id))
-      await removeWorkspace(id)
+      await removeWorkspace(workspace)
     },
     search: async (q) => search(q)
   },

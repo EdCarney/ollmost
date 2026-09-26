@@ -160,6 +160,14 @@ app.whenReady().then(async () => {
     return app.exit(1)
   }
   initPaths(dataDir)
+  // The sandbox library anchors its always-denied paths (.git/hooks, .git/config, shell rc files, .vscode and more)
+  // at the working directory, so launched from the Dock they cover every folder and from `electron-vite dev` or a
+  // terminal only the project. Ollmost never relies on its cwd.
+  try {
+    process.chdir('/')
+  } catch (err) {
+    console.warn("Ollmost: couldn't change its working directory to /:", err)
+  }
   // A move from the old app finishes here: its database renamed before it opens, the rest once it has.
   const migrating = migrationPending(paths.data, paths.db)
   if (migrating) {
