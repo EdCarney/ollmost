@@ -1408,7 +1408,8 @@ const evilSvg = (port) =>
     // the schema is taken out first, or they'd fail on it. A new schema migration means updating this too.
     const KILN_DB_VERSION = 8
     const version = db.prepare('PRAGMA user_version').get().user_version
-    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 3, `database version ${version}`)
+    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 4, `database version ${version}`)
+    db.exec('ALTER TABLE conversations DROP COLUMN network')
     db.exec('DROP INDEX conversations_mode; ALTER TABLE conversations DROP COLUMN root; ALTER TABLE conversations DROP COLUMN mode')
     db.exec(`PRAGMA user_version = ${KILN_DB_VERSION}`)
     db.close()

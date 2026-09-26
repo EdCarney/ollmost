@@ -56,7 +56,8 @@ function readCall(args: Record<string, unknown>, via: string | null): { language
   return { language, code: code ?? '' }
 }
 
-const firstLine = (code: string) =>
+/** The first line of a program or command that isn't blank or a comment, for its card. */
+export const firstLine = (code: string): string =>
   code
     .split('\n')
     .map((l) => l.trim())
@@ -67,9 +68,10 @@ let runs = 0
 
 /**
  * Folders code may read inside the hidden ones (see policyFor): skills and tool folders on PATH. Not Ollmost's runner
- * folder: a run reads only the Python environment it uses, never another chat's.
+ * folder: a run reads only the Python environment it uses, never another chat's. A code session's commands read these
+ * too (src/main/code/tools.ts).
  */
-async function readableFolders(): Promise<string[]> {
+export async function readableFolders(): Promise<string[]> {
   const skills = [...new Set((await listSkills()).map((s) => s.dir))]
   return [...skills, ...foldersOnPathInside(await childPath(), [homedir(), ...PRIVATE_ROOTS])]
 }

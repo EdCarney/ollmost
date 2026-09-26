@@ -7,6 +7,8 @@ import {
   basePrompt,
   chatInstructionsPrompt,
   codePrompt,
+  type CodeSessionPromptInput,
+  codeSessionPrompt,
   documentBlock,
   loadedSkillsPrompt,
   mcpPrompt,
@@ -58,6 +60,8 @@ export interface AssembleInput {
   mcpServers?: readonly string[]
   /** The code runner, when run_code is on offer. */
   codeRunner?: { pypi: boolean; timeoutSec: number; uploads: readonly string[] } | null
+  /** A code session: its prompt replaces the chat's (basePrompt and the code runner's), and there are no artifacts. */
+  codeSession?: CodeSessionPromptInput | null
   /** Roughly what the tool definitions add to every request; history gets less room by that much. */
   toolTokens?: number
   /**
@@ -94,9 +98,10 @@ export function promptBudget(contextLength: number | null): number {
 }
 
 export function buildSystemPrompt(input: AssembleInput): string {
-  const parts = [basePrompt({ userName: input.userName, model: input.model, date: input.date, web: input.web, grants: input.grants })]
+  const identity = { userName: input.userName, model: input.model, date: input.date, web: input.web, grants: input.grants }
+  const parts = [input.codeSession ? codeSessionPrompt({ ...input.codeSession, ...identity }) : basePrompt(identity)]
   if (input.web === 'on') parts.push(webPrompt())
-  if (input.codeRunner) parts.push(codePrompt(input.codeRunner))
+  if (input.codeRunner && !input.codeSession) parts.push(codePrompt(input.codeRunner))
   if (input.mcpServers?.length) parts.push(mcpPrompt(input.mcpServers))
   if (input.preferences.trim()) parts.push(preferencesPrompt(input.preferences))
   if (input.project) parts.push(projectPrompt(input.project))

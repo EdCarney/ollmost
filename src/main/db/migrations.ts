@@ -190,5 +190,9 @@ export const MIGRATIONS: string[] = [
   ALTER TABLE conversations ADD COLUMN mode TEXT NOT NULL DEFAULT 'chat';
   ALTER TABLE conversations ADD COLUMN root TEXT;
   CREATE INDEX conversations_mode ON conversations(mode, updated_at DESC);
+  `,
+  /* sql */ `
+  -- A code session's network preset (CodeNetwork in src/shared/types.ts): what its commands may reach.
+  ALTER TABLE conversations ADD COLUMN network TEXT NOT NULL DEFAULT 'none';
   `
 ]

@@ -19,9 +19,19 @@ export interface TurnPolicy {
   artifacts: boolean
 }
 
-/** The policy for one reply. `artifacts` is whether the settings and the model allow them at all. */
-export function turnPolicy(input: { mode: TurnMode; sources: readonly string[]; artifacts: boolean; maxToolRounds?: number }): TurnPolicy {
-  const usual = input.mode === 'code' ? CODE_TOOL_ROUNDS : input.sources.length ? TOOL_SOURCE_ROUNDS : DEFAULT_TOOL_ROUNDS
+/**
+ * The policy for one reply. `artifacts` is whether the settings and the model allow them at all; `codeRounds` is the
+ * Settings value for a code session (CODE_TOOL_ROUNDS when there's none).
+ */
+export function turnPolicy(input: {
+  mode: TurnMode
+  sources: readonly string[]
+  artifacts: boolean
+  maxToolRounds?: number
+  codeRounds?: number
+}): TurnPolicy {
+  const usual =
+    input.mode === 'code' ? (input.codeRounds ?? CODE_TOOL_ROUNDS) : input.sources.length ? TOOL_SOURCE_ROUNDS : DEFAULT_TOOL_ROUNDS
   return {
     mode: input.mode,
     maxRounds: Math.max(1, input.maxToolRounds ?? usual),

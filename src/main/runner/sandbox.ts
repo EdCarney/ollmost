@@ -40,7 +40,7 @@ export const OLLMOST_DIR = '.ollmost'
  * every folder above it, so code can't swap the folder, or any folder above it, for a link (#71): writes Ollmost makes
  * there outside the sandbox would follow it. It needn't exist.
  */
-const pin = (folder: string) => join(folder, '.pinned')
+export const pin = (folder: string): string => join(folder, '.pinned')
 
 /**
  * Paths are real ones (no links in them): Seatbelt matches the real path, and the runtime can only resolve a path that

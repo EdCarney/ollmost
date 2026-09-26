@@ -26,6 +26,9 @@ export interface ProjectFile {
 /** What the user picked in the composer. Mapped per model by `toOllamaThink`. */
 export type ThinkSetting = 'off' | 'on' | 'low' | 'medium' | 'high'
 
+/** What a code session's commands may reach: nothing, package registries, or those and the git hosts. */
+export type CodeNetwork = 'none' | 'registries' | 'registries-git'
+
 export interface Conversation {
   id: ID
   projectId: ID | null
@@ -46,6 +49,8 @@ export interface Conversation {
   mode: 'chat' | 'code'
   /** A code session's folder, by its real path; null for a chat. */
   root: string | null
+  /** What a code session's commands may reach on the network; 'none' for a chat. */
+  network: CodeNetwork
   pinned: boolean
   createdAt: number
   updatedAt: number
@@ -524,6 +529,11 @@ export interface Settings {
    * whether code may download Python packages from PyPI, and how long a run may take.
    */
   runner: { mode: 'off' | 'ask' | 'allow'; defaultOn: boolean; pypi: boolean; timeoutSec: number }
+  /**
+   * Code sessions (a model working in a folder of the user's): whether its edits and its commands ask first, how long
+   * a command may run, how many tool calls a reply may make, and the network preset new sessions start with.
+   */
+  code: { edits: 'ask' | 'allow'; commands: 'ask' | 'allow'; timeoutSec: number; maxRounds: number; defaultNetwork: CodeNetwork }
   /** Record every request for the debugger window. */
   debug: { record: boolean }
   /** Hover cards on links; `previews` fetches page title/image from this Mac (off by default for privacy). */
