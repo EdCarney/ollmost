@@ -142,12 +142,21 @@ npm run build && npm run e2e   # live: needs Ollama running; uses a throwaway da
 `npm test` needs no Ollama: `tests/ollamaMock.ts` is a stand-in daemon that streams scripted NDJSON. The client and reply-loop tests use it to cover split lines, dropped and stalled streams, error chunks, Stop, tool rounds and saving partial replies. CI (`.github/workflows/ci.yml`) runs the typecheck, lint, format check and unit tests on every pull request.
 
 The e2e run checks:
-- streaming and auto-titles
-- the artifact sandbox, which blocks network requests and access to the app
+- streaming, auto-titles, and that IPC only answers Ollmost's own windows
+- the artifact sandbox, which renders HTML and blocks network requests and access to the app
 - manual and automatic skills
 - vision attachments
 - project knowledge
-- theme persistence
+- the chat cost chip and account quota, including pace and a dated reset
+- theme and dark-mode persistence, including dark-only themes and themes that follow the mode
+- tool calls against a mock model: an invented tool gets one explanation then is withdrawn, and web search/fetch works end to end, including gpt-oss-style aliases and citations
+- the debugger: every request in a turn, its overview, prompt anatomy, exact request JSON, and replay
+- link hover cards: the real destination, a warning when the link text names another domain, and opt-in previews
+- MCP servers: adding one in Settings, per-chat and per-tool approval, secrets kept out of the renderer, importing another app's config, and stopping servers on quit
+- a live model using an MCP tool it can only answer with
+- the code runner: sandboxed execution, reading uploads, the files a run writes, a skill's script, and refusing to open anything unsafe
+- a live model using the code runner for something it can't do reliably in its head
+- coming from Kiln: migrating data on first launch, waiting for Kiln to quit, and the one-time notice
 
 Screenshots go to `e2e/shots/`. Set `OLLMOST_DEBUG=1` to log every request Ollmost sends to Ollama to `debug.log` in the data folder, along with the PATH Ollmost gives processes it starts. Apps opened from the Dock get a bare PATH, so Ollmost reads the one your login shell sets up.
 
