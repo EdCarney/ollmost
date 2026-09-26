@@ -8,14 +8,15 @@
   - The review offers a plugin's MCP servers (decision 11, C4).
   - Commands move to [#90](https://github.com/EdCarney/ollmost/issues/90).
   - Proxy support isn't part of this work.
+  - GitHub only, and nothing requires `git` to be installed.
 
 ## Goal
 
-Ollmost can browse and install skills from the same catalogs Claude Code uses: Claude **plugin marketplaces**. A marketplace is a `.claude-plugin/marketplace.json` in a git repository (or at a URL) that lists plugins and where to fetch each one. A plugin can carry skills (`SKILL.md` folders), plus commands, agents, hooks and MCP servers. Ollmost installs only a plugin's skills.
+Ollmost can browse and install skills from the same catalogs Claude Code uses: Claude **plugin marketplaces**. A marketplace is a `.claude-plugin/marketplace.json` in a git repository that lists plugins and where to fetch each one. A plugin can carry skills (`SKILL.md` folders), plus commands, agents, hooks and MCP servers. Ollmost installs only a plugin's skills.
 
 After this change:
 
-- You add a marketplace by typing `owner/repo`, a GitHub URL, a link to a `marketplace.json`, or a local folder. Anthropic's three public marketplaces can be added with one click; nothing is added until you do so.
+- You add a marketplace by typing `owner/repo` or a GitHub URL. A local folder also works, for writing a marketplace and for tests. Anthropic's three public marketplaces can be added with one click; nothing is added until you do so.
 - Skills → **Browse** lists every plugin in your marketplaces, searchable, with its description, author, category and whether it's installed.
 - **Review** downloads a plugin and shows exactly what would be installed: each skill's instructions, its files, what Ollmost will ignore, its license, and roughly how many tokens it adds to each request. **Install** then makes it permanent; **Discard** removes the download.
 - An installed plugin's skills work like any other skill: they're listed under Skills, turned on per chat with `/` or the + menu, and loaded by the model with `load_skill`. They're read-only, with **Duplicate to edit** as today.
@@ -30,7 +31,10 @@ After this change:
 - **Commands.** Tracked in [#90](https://github.com/EdCarney/ollmost/issues/90), which starts with built-in commands such as `/compact` and takes plugin commands after.
 - **Agents and output styles.**
 - **Proxies and company certificates.** Downloads use global `fetch`, as Ollmost's requests to ollama.com do today. A network that needs a proxy or inspects TLS isn't supported here, as it isn't for those.
-- **Git hosts other than GitHub** (open question 1).
+- **Marketplaces and plugins hosted anywhere but GitHub, and anything that needs `git` installed.**
+  - Azure DevOps, GitLab, Bitbucket and self-hosted servers share no download URL with GitHub; fetching from them means running `git`.
+  - Plugins from those hosts are listed as unavailable.
+  - A marketplace that's only a link to a `marketplace.json` on another site isn't accepted.
 - **Publishing** to a marketplace.
 
 ## Background: what's in the catalogs
@@ -62,7 +66,7 @@ Across the 303 skills whose files are in those repos:
 1. **Plugin is the unit of install; skill is the unit of use.** You install or remove whole plugins, and turn their skills on or off one by one (the existing switch).
 2. **Review before install, and before every update.** Nothing lands in the skills list without you seeing what it is.
 3. **No automatic updates, no background network.** Ollmost fetches only when you add, refresh, review or update. The Browse tab refreshes a marketplace fetched more than 24 hours ago when you open it.
-4. **GitHub only, without the GitHub API.** Downloads use `codeload.github.com` archives, and branch names are turned into commits through git's own HTTP protocol. Neither counts against GitHub's 60-requests-an-hour API limit. A GitHub token is optional, for private repositories.
+4. **GitHub only, without the GitHub API, and never `git`.** Downloads use `codeload.github.com` archives, and branch names are turned into commits through git's own HTTP protocol, read as plain HTTPS. Neither counts against GitHub's 60-requests-an-hour API limit. A GitHub token is optional, for private repositories. *Agreed: nothing requires `git` to be installed.*
 5. **Keep the whole plugin folder**, minus `.git` and `node_modules`, and minus everything that isn't a declared skill when the plugin *is* the repository root (decision 5 in Trade-offs).
 6. **Skill names are `plugin:skill`**, the way Claude Code names plugin skills. A bare `skill` still resolves when only one enabled marketplace skill has that name.
 7. **Ids are fixed at install**: `market:<marketplace>/<plugin>:<skill>`. Chats store skill ids, so a later rename in the catalog never orphans them.
@@ -77,7 +81,7 @@ Across the 303 skills whose files are in those repos:
 
 | Path in the data folder | What | Who writes it |
 | --- | --- | --- |
-| `marketplaces/<name>/` | A GitHub marketplace's snapshot: the repository at `commit`, minus `.git` and `node_modules`. A URL marketplace keeps only `marketplace.json` here; a local folder marketplace has nothing here. | add, refresh |
+| `marketplaces/<name>/` | A GitHub marketplace's snapshot: the repository at `commit`, minus `.git` and `node_modules`. A local folder marketplace has nothing here. | add, refresh |
 | `plugins/<marketplace>/<plugin>/` | An installed plugin's files | install, update |
 | `plugins/<marketplace>/<plugin>/.ollmost-install.json` | Its install record (A2) | install, update |
 | `plugins/.staging/<random>/` | Downloads under review, and the old copy during an update | review, update |
@@ -118,7 +122,8 @@ interface InstallRecord {
 interface StoredMarketplace {
   /** From marketplace.json. Unique, and the folder name. */
   name: string
-  source: { kind: 'github'; repo: string; ref: string | null } | { kind: 'url'; url: string } | { kind: 'directory'; path: string }
+  /** `path`: where marketplace.json is in the repository; null for the default, `.claude-plugin/marketplace.json`. */
+  source: { kind: 'github'; repo: string; ref: string | null; path: string | null } | { kind: 'directory'; path: string }
   /** github: the snapshot's commit. */
   commit: string | null
   fetchedAt: number | null
@@ -185,14 +190,14 @@ For code runs, `readableFolders()` (`src/main/runner/provider.ts`) adds each plu
 | --- | --- |
 | `owner/repo`, `owner/repo@ref`, `owner/repo#ref` | `github` |
 | `https://github.com/owner/repo`, with or without `.git`, `/tree/<ref>` | `github` |
-| Any other `https://` URL | `url`: a link to a `marketplace.json` |
-| An absolute path, or **Choose folder…** | `directory` |
+| A link to the file itself: `https://github.com/owner/repo/blob/<ref>/<path>` or `https://raw.githubusercontent.com/owner/repo/<ref>/<path>` | `github`, with `ref` and `path` |
+| An absolute path, or **Choose folder…** | `directory`: read in place, for writing a marketplace and for tests |
+| Anything else | Refused: "Ollmost can add marketplaces from GitHub only." |
 
 - **Anthropic's marketplaces.** Until they're added, the Browse tab's empty state and Manage marketplaces list three one-click entries: `anthropics/claude-plugins-official`, `anthropics/knowledge-work-plugins` and `anthropics/skills`.
 - **What `marketplace.json` must have.** It's validated like Claude Code's required fields: `name`, `owner.name`, `plugins[]`. Each entry is validated on its own, so one bad entry is listed with its reason instead of failing the marketplace.
 - **Keys Ollmost reads:** `name`, `description` (or `metadata.description`), `metadata.pluginRoot` and `renames`.
 - **Entry fields Ollmost reads:** `name`, `displayName`, `description`, `author`, `homepage`, `repository`, `license`, `category`, `tags`, `keywords`, `version`, `strict`, `skills` and `source`. Everything else is ignored.
-- **Relative paths in a `url` marketplace can't resolve:** Ollmost has only the JSON file. As in Claude Code, those entries show "This plugin's files aren't available from a link to its catalog."
 
 ### B2. Plugin sources
 
@@ -202,7 +207,7 @@ For code runs, `readableFolders()` (`src/main/runner/provider.ts`) adds each plu
 | `github` (`repo`, `ref`, `sha`) | yes | GitHub archive |
 | `url` whose host is `github.com` | yes | GitHub archive |
 | `git-subdir` whose `url` is on `github.com` or `owner/repo` | yes | GitHub archive, keeping only `path` |
-| `url` / `git-subdir` on another host | no | "Ollmost can install from GitHub only, for now." Open question 1 |
+| `url` / `git-subdir` on another host | no | "Ollmost can install from GitHub only." Needs `git` (non-goal) |
 | `archive` (a zip over HTTPS) | no | Needs a zip reader; no catalog above uses it |
 | `npm` | no | |
 | `command` | never | It runs a shell command on your Mac |
@@ -445,7 +450,7 @@ A skill that passed review can still tell the model to fetch `https://collector.
    - **The claude.ai directory:** the same catalog as the Claude app, but it has no public API, needs your claude.ai session, and could break at any release.
    - **Reading Claude Code's `~/.claude/plugins/`:** a tiny change, but it needs Claude Code installed and signed in, has no browsing, and ties Ollmost to Claude Code's internal folder layout. It remains a cheap follow-up alongside this.
 2. **How to download.**
-   - **`git` (sparse clone):** works with any host. But it isn't on every Mac: `/usr/bin/git` is a stub that asks to install the Command Line Tools when they're missing. And by `src/main/code/git.ts`'s rule it may only run inside the sandbox, where your git config and credential helpers aren't available (open question 1).
+   - **`git` (sparse clone):** works with any host, but it isn't on every Mac (`/usr/bin/git` is a stub that asks to install the Command Line Tools). By `src/main/code/git.ts`'s rule it could only run inside the sandbox, where your git config and credential helpers aren't available, so private repositories would need a token per host anyway. Rejected in review: nothing may require `git`.
    - **The GitHub REST API (trees plus raw files):** fetches only the files it needs, but it costs one or more API requests per plugin against 60 an hour, shared by everyone behind the same address.
    - **`codeload` archives plus git's ref list (chosen):** one request per download, with no API allowance used. It downloads the whole repository when only a subfolder is wanted (`git-subdir`), which costs bandwidth but not disk, since other entries are skipped unwritten. The 100 MB cap bounds it.
 3. **How to unpack.**
@@ -465,7 +470,7 @@ A skill that passed review can still tell the model to fetch `https://collector.
 ## Testing
 
 - **Unit (Vitest, both CI jobs):**
-  - **`sources.ts`:** a table of inputs → sources and entries → install plans, including reserved names, `metadata.pluginRoot` bare names, `..` and backslashes, `url` marketplaces with relative entries, and each unsupported type with its message.
+  - **`sources.ts`:** a table of inputs → sources and entries → install plans, including reserved names, `metadata.pluginRoot` bare names, `..` and backslashes, non-GitHub URLs refused, `blob` and `raw.githubusercontent.com` links, and each unsupported type with its message.
   - **`catalog.ts`:**
     - A fixture shaped like `anthropics/skills`: `source: "./"`, `strict: false`, and a `skills` list, where `document-skills` must get exactly 4 of the 19 skills.
     - A fixture shaped like `claude-plugins-official`: sha-pinned `git-subdir`, plus `renames`.
@@ -513,20 +518,13 @@ The work splits into five pull requests. Each builds on the one before.
 
 ## Open questions
 
-1. **Other git hosts in v1.** Azure DevOps, GitLab, Bitbucket and self-hosted servers have no download URL shared with GitHub, so Ollmost would run `git` to fetch from them.
-   - **Nothing is bundled.** Ollmost uses a `git` that's already installed. It finds one without triggering macOS's install prompt: `xcode-select -p` succeeds, or a `git` other than `/usr/bin/git` is on your login shell's PATH. When there's none, it says "Install Git to add marketplaces from <host>."
-   - **It runs sandboxed**, per `src/main/code/git.ts`:
-     - network only to that host, and writes only to the staging folder;
-     - `--no-recurse-submodules`, `-c core.symlinks=false`, `-c protocol.file.allow=never`, and a sparse, blob-less clone for `git-subdir`;
-     - the result goes through B4's rules like any archive.
-   - **The catch is private repositories.** The sandbox hides your home folder, so your git config and credential helpers (for example, Git Credential Manager for Azure DevOps) aren't available. A private repository on another host would need a token per host, like the GitHub one, sent with `-c http.extraHeader`.
-   - **In this work, or a follow-up?** GitHub covers every plugin in Anthropic's catalogs; other hosts matter for a team's own catalog.
+None at the moment. The review's answers are recorded under Status.
 
 ## Sources
 
 - **Claude Code docs:**
   - [Create a marketplace](https://code.claude.com/docs/en/plugin-marketplaces)
-  - [Marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference): source types, reserved names, `strict`, and relative paths in `url` marketplaces
+  - [Marketplace reference](https://code.claude.com/docs/en/plugins/marketplace-reference): source types, reserved names, `strict`
   - [Plugin loading reference](https://code.claude.com/docs/en/plugins/loading): versions, the cache layout, synced plugins
   - [Publish and distribute a plugin](https://code.claude.com/docs/en/plugins/publish): Anthropic's directory and how to submit to it
   - [Skills](https://code.claude.com/docs/en/skills): frontmatter fields, variables, plugin skill names
