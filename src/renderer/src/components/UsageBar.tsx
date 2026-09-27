@@ -144,9 +144,10 @@ export function AccountQuota() {
   // Ollmost's own figure is summed over the account's period when that's known, so the two spend lines compare.
   const period = account ? spendPeriod(account) : null
   const since = period?.since ?? null
+  const until = period?.until ?? null
   useEffect(() => {
-    if (open) void api.usage.summary(30, since ?? undefined).then(setLocal)
-  }, [open, since])
+    if (open) void api.usage.summary(30, since ?? undefined, until).then(setLocal)
+  }, [open, since, until])
 
   if (!settings?.usage.showInHeader) return null
   const w = headlineWindow(account, settings.usage.headerWindow)

@@ -182,23 +182,25 @@ describe('code sessions', () => {
 })
 
 describe('usage summary', () => {
-  it('sums from a given moment when asked, and over the last days otherwise', () => {
-    const event = {
-      conversationId: null,
-      messageId: null,
-      model: 'gpt-oss:120b',
-      kind: 'chat' as const,
-      completionTokens: 10,
-      estimated: false
-    }
+  it('sums between the given moments when asked, and over the last days otherwise', () => {
+    // A model of this test's own, so its rows are told from any other test's.
+    const model = 'summary-test-model'
+    const event = { conversationId: null, messageId: null, model, kind: 'chat' as const, completionTokens: 10, estimated: false }
+    const mine = (s: ReturnType<typeof usageSummary>) => s.byModel.find((m) => m.model === model)
     insertUsageEvent({ ...event, promptTokens: 100, costUsd: 1 })
     insertUsageEvent({ ...event, promptTokens: 200, costUsd: 2 })
-    const since = Date.now() - 5 * 86_400_000
-    // Backdate the first event to before the period.
-    getDb()
-      .prepare('UPDATE usage_events SET created_at = ? WHERE prompt_tokens = 100')
-      .run(since - 60_000)
-    expect(usageSummary(30).total).toMatchObject({ requests: 2, promptTokens: 300, costUsd: 3 })
-    expect(usageSummary(30, since).total).toMatchObject({ requests: 1, promptTokens: 200, costUsd: 2 })
+    insertUsageEvent({ ...event, promptTokens: 400, costUsd: 4 })
+    const day = 86_400_000
+    const since = Date.now() - 5 * day
+    const until = Date.now() - 2 * day
+    // Date the rows: one before the period, one inside it, one after it.
+    const date = (promptTokens: number, at: number) =>
+      getDb().prepare('UPDATE usage_events SET created_at = ? WHERE model = ? AND prompt_tokens = ?').run(at, model, promptTokens)
+    date(100, since - 60_000)
+    date(200, since + 60_000)
+    date(400, until + 60_000)
+    expect(mine(usageSummary(30))).toMatchObject({ requests: 3, promptTokens: 700, costUsd: 7 })
+    expect(mine(usageSummary(30, since))).toMatchObject({ requests: 2, promptTokens: 600, costUsd: 6 })
+    expect(mine(usageSummary(30, since, until))).toMatchObject({ requests: 1, promptTokens: 200, costUsd: 2 })
   })
 })

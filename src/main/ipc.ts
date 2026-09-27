@@ -323,7 +323,7 @@ const impl: Impl = {
 
   usage: {
     account: (refresh) => getAccountUsage(refresh),
-    summary: async (days, since) => usageSummary(days, since),
+    summary: async (days, since, until) => usageSummary(days, since, until),
     raw: async () => lastRawUsage(),
     prices: async () => getPriceTable(),
     refreshPrices: () => refreshPrices(true)

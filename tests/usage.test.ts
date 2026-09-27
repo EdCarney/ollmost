@@ -246,10 +246,14 @@ describe('the period Ollmost sums its own estimate over, to sit beside the accou
   const credits = { cost: 6.66, label: 'This month', source: 'credits' as const, pool: 60, periodStart: null, periodEnd: null, models: [] }
 
   it('uses the monthly window\u2019s current period on a credit plan whose reset day is known', () => {
-    expect(spendPeriod({ ...base, windows: [monthly({})], spend: credits })).toEqual({ since: now - 20 * DAY, label: 'this month' })
+    expect(spendPeriod({ ...base, windows: [monthly({})], spend: credits })).toEqual({
+      since: now - 20 * DAY,
+      until: null,
+      label: 'this month'
+    })
   })
 
-  it('uses the activity period Ollama reports on a legacy plan', () => {
+  it('uses the activity period Ollama reports on a legacy plan, to its end when that has passed', () => {
     const spend = {
       ...credits,
       source: 'activity' as const,
@@ -258,10 +262,21 @@ describe('the period Ollmost sums its own estimate over, to sit beside the accou
       periodStart: now - 28 * DAY,
       periodEnd: now
     }
-    expect(spendPeriod({ ...base, windows: [], spend })).toEqual({ since: now - 28 * DAY, label: 'last 4 weeks' })
+    expect(spendPeriod({ ...base, windows: [], spend })).toEqual({ since: now - 28 * DAY, until: now, label: 'last 4 weeks' })
+    const stale = { ...spend, periodStart: now - 40 * DAY, periodEnd: now - 12 * DAY }
+    expect(spendPeriod({ ...base, windows: [], spend: stale })).toEqual({
+      since: now - 40 * DAY,
+      until: now - 12 * DAY,
+      label: 'last 4 weeks'
+    })
+    expect(spendPeriod({ ...base, windows: [], spend: { ...spend, periodEnd: null } })).toEqual({
+      since: now - 28 * DAY,
+      until: null,
+      label: 'last 4 weeks'
+    })
   })
 
-  it('has no period when the reset day is unknown, when there is no spend line, or when the period would be empty', () => {
+  it('has no period when the reset day is unknown, when there is no spend line, or when the activity period has no start', () => {
     expect(spendPeriod({ ...base, windows: [monthly({ resetAt: null, resetSource: null })], spend: credits })).toBeNull()
     expect(spendPeriod({ ...base, windows: [monthly({})], spend: null })).toBeNull()
     expect(spendPeriod({ ...base, windows: [], spend: { ...credits, source: 'activity', periodStart: null } })).toBeNull()
