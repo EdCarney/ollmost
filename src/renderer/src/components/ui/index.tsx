@@ -2,8 +2,17 @@ import * as Dialog from '@radix-ui/react-dialog'
 import * as Dropdown from '@radix-ui/react-dropdown-menu'
 import * as Popover from '@radix-ui/react-popover'
 import * as RTooltip from '@radix-ui/react-tooltip'
-import { Check, ChevronRight, LoaderCircle, X } from 'lucide-react'
-import { type ButtonHTMLAttributes, forwardRef, type InputHTMLAttributes, type ReactNode, type TextareaHTMLAttributes } from 'react'
+import { Check, ChevronDown, ChevronRight, ChevronUp, LoaderCircle, X } from 'lucide-react'
+import {
+  type ButtonHTMLAttributes,
+  forwardRef,
+  type InputHTMLAttributes,
+  type ReactNode,
+  type TextareaHTMLAttributes,
+  useLayoutEffect,
+  useRef,
+  useState
+} from 'react'
 import { cn } from '@/lib/format'
 
 // ---- Buttons --------------------------------------------------------------
@@ -176,7 +185,23 @@ export function MenuCheckItem({
   )
 }
 
-export function MenuSub({ label, icon, children }: { label: ReactNode; icon?: ReactNode; children: ReactNode }) {
+/**
+ * A submenu that fits the window: its list scrolls when it's taller than the height Radix says is free (moved up
+ * or down to fit, 8 px from the window's edges), a fade and a chevron mark whichever edge hides more, it's no
+ * wider than 440 px or the room beside its trigger (so a long description truncates instead of widening every
+ * row), and `footer` (an action like "Manage skills…") stays put below the list.
+ */
+export function MenuSub({
+  label,
+  icon,
+  children,
+  footer
+}: {
+  label: ReactNode
+  icon?: ReactNode
+  children: ReactNode
+  footer?: ReactNode
+}) {
   return (
     <Dropdown.Sub>
       <Dropdown.SubTrigger className={cn(item, 'data-[state=open]:bg-hover')}>
@@ -185,13 +210,65 @@ export function MenuSub({ label, icon, children }: { label: ReactNode; icon?: Re
         <ChevronRight className="size-4 text-subtle" />
       </Dropdown.SubTrigger>
       <Dropdown.Portal>
-        <Dropdown.SubContent sideOffset={4} className={cn(surface, 'max-h-[60vh] overflow-y-auto')}>
-          {children}
+        <Dropdown.SubContent
+          sideOffset={4}
+          collisionPadding={8}
+          className={cn(
+            surface,
+            'flex max-h-[var(--radix-dropdown-menu-content-available-height)] max-w-[min(440px,var(--radix-dropdown-menu-content-available-width))] flex-col p-0'
+          )}
+        >
+          <MenuScroll>{children}</MenuScroll>
+          {footer && <div className="shrink-0 border-t border-line p-1">{footer}</div>}
         </Dropdown.SubContent>
       </Dropdown.Portal>
     </Dropdown.Sub>
   )
 }
+
+/** A menu's scrolling list, with a cue at each edge that hides more items. */
+function MenuScroll({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  const [more, setMore] = useState({ above: false, below: false })
+  useLayoutEffect(() => {
+    const el = ref.current
+    if (!el) return
+    const update = () => {
+      const above = el.scrollTop > 1
+      const below = el.scrollTop + el.clientHeight < el.scrollHeight - 1
+      setMore((m) => (m.above === above && m.below === below ? m : { above, below }))
+    }
+    update()
+    el.addEventListener('scroll', update, { passive: true })
+    const watch = new ResizeObserver(update)
+    watch.observe(el)
+    return () => {
+      el.removeEventListener('scroll', update)
+      watch.disconnect()
+    }
+  }, [])
+  return (
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div ref={ref} className="min-h-0 flex-1 overflow-y-auto p-1">
+        {children}
+      </div>
+      {more.above && <MoreCue edge="top" />}
+      {more.below && <MoreCue edge="bottom" />}
+    </div>
+  )
+}
+
+const MoreCue = ({ edge }: { edge: 'top' | 'bottom' }) => (
+  <div
+    data-scroll-cue={edge}
+    className={cn(
+      'pointer-events-none absolute inset-x-0 flex h-7 justify-center from-panel to-transparent',
+      edge === 'top' ? 'top-0 items-start bg-linear-to-b pt-0.5' : 'bottom-0 items-end bg-linear-to-t pb-0.5'
+    )}
+  >
+    {edge === 'top' ? <ChevronUp className="size-3.5 text-subtle" /> : <ChevronDown className="size-3.5 text-subtle" />}
+  </div>
+)
 
 export const MenuSeparator = () => <Dropdown.Separator className="my-1 h-px bg-line" />
 export const MenuLabel = ({ children }: { children: ReactNode }) => (
