@@ -20,5 +20,6 @@ export function applyPiece(segments: LiveThinking[], piece: Piece, now: number):
   const { round } = piece
   if (last && last.at === round.at && last.index === round.index && last.ms === null)
     return [...segments.slice(0, -1), { ...last, text: last.text + piece.thinking }]
-  return [...segments, { text: piece.thinking, at: round.at, index: round.index, ms: null, startedAt: now }]
+  // A new round's thinking ends the earlier one if nothing else did: only one card is ever live.
+  return [...endLiveThinking(segments, now), { text: piece.thinking, at: round.at, index: round.index, ms: null, startedAt: now }]
 }

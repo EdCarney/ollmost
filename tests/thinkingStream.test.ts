@@ -25,9 +25,9 @@ describe('a stream’s thinking segments', () => {
     expect(applyPiece([seg('Plan', 0, 0, null)], { content: '' }, 2000)).toEqual([seg('Plan', 0, 0, null)])
   })
 
-  it('starts a new segment for the next round, even before the earlier one ended', () => {
+  it('starts a new segment for the next round, ending the earlier one if nothing else did', () => {
     const s = applyPiece([seg('Plan', 0, 0, null)], { thinking: 'Got it', round: { at: 13, index: 1 } }, 3000)
-    expect(s).toEqual([seg('Plan', 0, 0, null), seg('Got it', 13, 1, null, 3000)])
+    expect(s).toEqual([seg('Plan', 0, 0, 2000), seg('Got it', 13, 1, null, 3000)])
   })
 
   it('ends the live segment when a call is made, whether or not any text followed', () => {
