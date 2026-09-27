@@ -133,9 +133,14 @@ export function DebugApp() {
                 key={k}
                 onClick={() => toggleKind(k)}
                 aria-pressed={kinds.has(k)}
-                className={cn('rounded-md px-2 py-1 capitalize', kinds.has(k) ? 'bg-panel text-fg shadow-sm' : 'text-subtle hover:text-fg')}
+                className={cn(
+                  'rounded-md px-2 py-1',
+                  // Not capitalized by CSS: it would read "Sub-Agent".
+                  k !== 'delegate' && 'capitalize',
+                  kinds.has(k) ? 'bg-panel text-fg shadow-sm' : 'text-subtle hover:text-fg'
+                )}
               >
-                {k}
+                {k === 'delegate' ? 'Sub-agent' : k}
               </button>
             ))}
           </div>

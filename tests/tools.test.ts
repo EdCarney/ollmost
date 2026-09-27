@@ -292,6 +292,20 @@ describe('asking first', () => {
     expect(settleToolEvent(waiting)).toEqual({ tool: 'notes__delete', args: {}, ok: false, pending: false, summary: 'notes (not run)' })
   })
 
+  it('settles a sub-agent waiting on one of its calls as stopped: it ran, only that call did not', () => {
+    const waiting: ToolEvent = { tool: 'notes__delete', args: {}, ok: true, pending: true, awaiting: true, summary: 'notes' }
+    const child = { task: 'Tidy.', events: [waiting], result: '', rounds: 1 }
+    const parent: ToolEvent = { tool: 'delegate', args: {}, ok: true, pending: true, awaiting: true, summary: 'Tidy.', child }
+    expect(settleToolEvent(parent)).toEqual({
+      tool: 'delegate',
+      args: {},
+      ok: false,
+      pending: false,
+      summary: 'Tidy. (stopped)',
+      child: { ...child, events: [{ tool: 'notes__delete', args: {}, ok: false, pending: false, summary: 'notes (not run)' }] }
+    })
+  })
+
   it("labels each call's trace with where it goes", () => {
     register(fake('mcp', ['notes__read'], { endpoint: ({ name }) => `mcp://notes/${name.split('__')[1]}` }))
     const c = ctx({ web: true, skills: true })

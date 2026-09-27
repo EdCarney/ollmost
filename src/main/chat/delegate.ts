@@ -3,22 +3,21 @@
 // on the parent's tool event, for the transcript (#97).
 import { contextOptions, effectiveContext } from '@shared/context'
 import { resolveThinkProfile, toOllamaThink } from '@shared/thinking'
+import { childId } from '@shared/toolEvents'
 import type { MessageStats, ToolEvent } from '@shared/types'
 import type { ChatBody, OllamaTool } from '../ollama/client'
 import { getModelInfo } from '../ollama/models'
 import { getSettings } from '../settings'
 import { assemble, promptBudget } from './assemble'
+import { TOOL_RESULT_CHARS } from './results'
 import { runRounds, toolsTokens } from './rounds'
 import { type ResolvedCall, type RunContext, type ToolContext, toolGrants, type ToolProvider, type ToolResult, toolsFor } from './tools'
 
-/** As much of a child's reply as the parent gets; a longer one is cut with a mark. */
+/** As much of a child's reply as the parent gets (less when its call has less room); a longer one is cut with a mark. */
 export const DELEGATE_RESULT_CHARS = 12_000
 const SUMMARY_CHARS = 60
 const RECORD_CHARS = 500
 const CUT_MARK = '\n\n[… the sub-agent’s reply was cut here]'
-
-/** What a child's traces and approvals are keyed by: its parent's message and the delegate call's index there. */
-export const childId = (messageId: string, index: number): string => `${messageId}#${index}`
 
 const DELEGATE_TOOL: OllamaTool = {
   type: 'function',
@@ -55,7 +54,7 @@ const summaryOf = (task: string): string => {
   const line = task.trim().split('\n')[0]
   return line.length > SUMMARY_CHARS ? `${line.slice(0, SUMMARY_CHARS - 1)}…` : line
 }
-const cut = (s: string): string => (s.length > DELEGATE_RESULT_CHARS ? s.slice(0, DELEGATE_RESULT_CHARS) + CUT_MARK : s)
+const cut = (s: string, max: number): string => (s.length > max ? s.slice(0, max) + CUT_MARK : s)
 
 export const delegateTools: ToolProvider = {
   id: 'delegate',
@@ -106,6 +105,8 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   const content = context ? `<task>\n${task}\n</task>\n\n<context>\n${context}\n</context>` : `<task>\n${task}\n</task>`
   const assembled = assemble({
     ...reply.prompt,
+    // The user isn't reading a sub-agent's request (its prompt says so), so it isn't told who it's talking with.
+    userName: '',
     date: new Date(),
     preferences: '',
     artifacts: { enabled: false, allowCdn: false },
@@ -180,13 +181,21 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   if (out.error)
     return {
       content: `The sub-agent failed: ${out.error}`,
-      event: { tool: 'delegate', args: call.args, ok: false, summary: `${summary} · failed`, child: { ...child, result: '' } }
+      event: {
+        tool: 'delegate',
+        args: call.args,
+        ok: false,
+        summary: `${summary} · failed`,
+        child: { ...child, result: '', error: out.error }
+      }
     }
   let text = out.content.trim()
   if (stats.toolRoundLimit)
     text = `${text}\n\n[The sub-agent stopped at its limit of ${stats.toolRoundLimit} requests; this is what it had so far.]`.trim()
   if (!text) text = '[The sub-agent gave no answer.]'
-  const result = cut(text)
+  // No longer than this call's share of the parent's room (the parent's value, not the child's cleared one), mark and
+  // all, so runTool doesn't cut it again and the card shows exactly what the parent got.
+  const result = cut(text, Math.min(DELEGATE_RESULT_CHARS, (ctx.maxResultChars ?? TOOL_RESULT_CHARS) - CUT_MARK.length))
   const calls = out.toolEvents.length
   return {
     content: result,

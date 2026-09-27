@@ -2312,7 +2312,7 @@ describe('sub-agents', () => {
   })
 
   it('an approval inside the child is keyed by the child’s id and stored on the chat', async () => {
-    const { childId } = await import('../src/main/chat/delegate')
+    const { childId } = await import('../src/shared/toolEvents')
     const { runs, off } = registerWipe()
     try {
       chat = (b, res, n) => {
@@ -2396,7 +2396,8 @@ describe('sub-agents', () => {
     })
     service.markInterruptedReplies()
     const [event] = getMessage(cut.id)!.toolEvents
-    expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false })
+    // The sub-agent ran, so it stopped; only the call it was waiting on never ran.
+    expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: 'Wipe the note. (stopped)' })
     expect(event.awaiting).toBeUndefined()
     expect(event.child!.events).toEqual([{ tool: 'notes__wipe', args: {}, ok: false, pending: false, summary: 'wiping (not run)' }])
   })
@@ -2439,6 +2440,30 @@ describe('sub-agents', () => {
     expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
   })
 
+  it('cuts a child’s reply to the room its call has, so the card shows what the parent got', async () => {
+    const { runTool } = await import('../src/main/chat/tools')
+    const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: '', model: 'llama3.2' })
+    chat = reply('word '.repeat(3_000).trim())
+    const result = await runTool(
+      { function: { name: 'delegate', arguments: { task: 'Write at length.' } } },
+      {
+        mode: 'chat',
+        skills: false,
+        web: true,
+        sources: [],
+        workspace: null,
+        reply: parentReply(c.id, m.id),
+        callIndex: 0,
+        signal: new AbortController().signal,
+        maxResultChars: 2_000
+      }
+    )
+    expect(result.content.length).toBeLessThanOrEqual(2_000)
+    expect(result.content).toMatch(/\[… the sub-agent’s reply was cut here\]$/)
+    expect(result.event.child!.result).toBe(result.content)
+  })
+
   it('a child whose request fails gives the parent a failure, with its calls settled', async () => {
     chat = (b, res, n) => {
       if (isChild(b))
@@ -2453,8 +2478,30 @@ describe('sub-agents', () => {
     expect(event).toMatchObject({ tool: 'delegate', ok: false, summary: 'Search, then fail. · failed' })
     expect(event.child!.events).toEqual([expect.objectContaining({ tool: 'web_search', ok: true })])
     expect(event.child!.events.some((e) => e.pending || e.awaiting)).toBe(false)
-    expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toMatch(/^The sub-agent failed: /)
+    // The reason is kept on the child, for its card, and is what the parent was told.
+    expect(event.child!.error).toBeTruthy()
+    expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(`The sub-agent failed: ${event.child!.error}`)
     expect(listTraces(r.conversation.id).every((t) => t.status !== 'running')).toBe(true)
+  })
+
+  it('a child’s prompt doesn’t name the user, who isn’t reading it', async () => {
+    updateSettings({ userName: 'Ada' })
+    try {
+      chat = (b, res, n) =>
+        isChild(b)
+          ? reply('Done.')(b, res, n)
+          : hasToolResult(b)
+            ? reply('ok')(b, res, n)
+            : void res.writeHead(200).end(delegateCall('Look.'))
+      const r = start('look')
+      await doneEvent(r.conversation.id)
+      const system = (b: Record<string, unknown>) => String((b.messages as Array<{ content: string }>)[0].content)
+      expect(system(chatCalls[0])).toContain('You are talking with Ada.')
+      expect(system(chatCalls.find(isChild)!)).not.toContain('Ada')
+      expect(system(chatCalls.find(isChild)!)).not.toContain('talking with')
+    } finally {
+      updateSettings({ userName: '' })
+    }
   })
 
   it('two delegations in one round run in order', async () => {

@@ -1,5 +1,6 @@
 import { RefreshCw, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { withChildEvents } from '@shared/toolEvents'
 import type { ChangeStatus, CodeChanges, CodeDiff, Message, ToolEvent } from '@shared/types'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/format'
@@ -45,7 +46,10 @@ interface FallbackRow {
   diff: string
 }
 
-/** This session's edit_file and write_file calls, most recent first, one row per distinct path (the latest wins). */
+/**
+ * This session's edit_file and write_file calls, its sub-agents' included, most recent first, one row per distinct
+ * path (the latest wins).
+ */
 function useFallbackRows(sessionId: string): FallbackRow[] {
   const messages = useChat((s) => (s.conversation?.id === sessionId ? s.messages : NO_MESSAGES))
   // Keyed on the live stream's events and which message they belong to, not the stream object itself, which is a
@@ -57,8 +61,8 @@ function useFallbackRows(sessionId: string): FallbackRow[] {
     const finished: ToolEvent[] = []
     for (const m of messages) {
       const events = streamMessageId === m.id && streamEvents ? streamEvents : m.toolEvents
-      for (const e of events) {
-        if (e && (e.tool === 'edit_file' || e.tool === 'write_file') && e.ok && !e.pending) finished.push(e)
+      for (const e of withChildEvents(events)) {
+        if ((e.tool === 'edit_file' || e.tool === 'write_file') && e.ok && !e.pending) finished.push(e)
       }
     }
     const byPath = new Map<string, FallbackRow>()

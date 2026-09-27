@@ -147,8 +147,9 @@ export interface ToolEvent {
   files?: Array<{ path: string; size: number }>
   /** What edit_file or write_file changed, as a unified diff, for its card and for the approval that asks first. */
   diff?: string
-  /** A sub-agent's run (the delegate tool): its task, its own tool calls, and the reply it returned. */
-  child?: { task: string; context?: string; events: ToolEvent[]; result: string; rounds: number }
+  /** A sub-agent's run (the delegate tool): its task, its own tool calls, and the reply it returned (or, when its
+   *  request failed, why). */
+  child?: { task: string; context?: string; events: ToolEvent[]; result: string; rounds: number; error?: string }
 }
 
 /** Your answer to a tool call that asked first. */

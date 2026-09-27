@@ -508,7 +508,7 @@ export function ToolGroup({
     <div data-testid="tool-group" className="my-3 flex flex-wrap gap-1.5 first:mt-0">
       {shown.map(({ event: e, index }) =>
         e.tool === 'delegate' && depth === 0 ? (
-          <DelegateCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} />
+          <DelegateCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} scope={scope} />
         ) : e.awaiting ? (
           <ApprovalCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} scope={scope} child={child} />
         ) : e.tool === 'run_code' ? (
