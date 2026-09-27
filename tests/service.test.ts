@@ -31,7 +31,7 @@ const ollama: MockOllama = await startMockOllama()
 process.env.OLLMOST_WEB_URL = ollama.url
 
 const { all, openDatabase } = await import('../src/main/db/index')
-const { updateSettings, setApiKey } = await import('../src/main/settings')
+const { updateSettings, setApiKey, getSettings } = await import('../src/main/settings')
 const service = await import('../src/main/chat/service')
 const { listTraces } = await import('../src/main/debug/traces')
 const {
@@ -48,7 +48,7 @@ const {
 const { registerToolProvider } = await import('../src/main/chat/tools')
 const { runRounds } = await import('../src/main/chat/rounds')
 const { getModelInfo } = await import('../src/main/ollama/models')
-const { conversationUsage } = await import('../src/main/db/usage')
+const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
 const approvals = await import('../src/main/chat/approvals')
 const mcpConfig = await import('../src/main/mcp/config')
 const mcpManager = await import('../src/main/mcp/manager')
@@ -1686,6 +1686,39 @@ describe('markInterruptedReplies', () => {
     // Checkpoints skip search indexing; marking the reply indexes the text it kept.
     expect(search('so far').map((h) => h.conversationId)).toContain(c.id)
     expect(getMessage(finished.id)!.error).toBeNull()
+  })
+})
+
+describe('sub-agent settings and usage', () => {
+  it('defaults sub-agents to on, capped at 20 rounds', () => {
+    expect(getSettings().delegate).toEqual({ enabled: true, maxRounds: 20 })
+  })
+
+  it('counts a sub-agent’s rows in the chat’s totals but not as its context', () => {
+    const c = createConversation({ projectId: null, model: 'm', think: null, skills: [], mode: 'chat' })
+    insertUsageEvent({
+      conversationId: c.id,
+      messageId: null,
+      model: 'm',
+      kind: 'chat',
+      promptTokens: 100,
+      completionTokens: 10,
+      costUsd: null,
+      estimated: false
+    })
+    insertUsageEvent({
+      conversationId: c.id,
+      messageId: null,
+      model: 'm',
+      kind: 'delegate',
+      promptTokens: 5000,
+      completionTokens: 50,
+      costUsd: null,
+      estimated: false
+    })
+    const u = conversationUsage(c.id)
+    expect(u.promptTokens + u.completionTokens).toBe(5160)
+    expect(u.lastContextTokens).toBe(110)
   })
 })
 
