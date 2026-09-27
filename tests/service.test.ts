@@ -746,7 +746,7 @@ describe('/compact', () => {
     }
   })
 
-  it('refuses a reply, an edit or a second compaction while one runs, and saves nothing if the chat changed under it', async () => {
+  it('refuses a reply or a second compaction while one runs', async () => {
     chat = reply('an answer')
     const r = start('q1')
     await doneEvent(r.conversation.id)
