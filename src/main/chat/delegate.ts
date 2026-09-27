@@ -9,16 +9,7 @@ import { getModelInfo } from '../ollama/models'
 import { getSettings } from '../settings'
 import { assemble, promptBudget } from './assemble'
 import { runRounds, toolsTokens } from './rounds'
-import {
-  type ResolvedCall,
-  type RunContext,
-  settleToolEvent,
-  type ToolContext,
-  toolGrants,
-  type ToolProvider,
-  type ToolResult,
-  toolsFor
-} from './tools'
+import { type ResolvedCall, type RunContext, type ToolContext, toolGrants, type ToolProvider, type ToolResult, toolsFor } from './tools'
 
 /** As much of a child's reply as the parent gets; a longer one is cut with a mark. */
 export const DELEGATE_RESULT_CHARS = 12_000
@@ -93,13 +84,14 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   })
   if (!task) return fail('delegate needs a task', 'delegate needs a task: say what to do and what to return.')
   const reply = ctx.reply
-  if (!reply || ctx.callIndex === undefined) return fail('delegate is not available here')
+  // A child runs on the reply's stop signal: without one, nothing could stop it.
+  const signal = ctx.signal
+  if (!reply || ctx.callIndex === undefined || !signal) return fail('delegate is not available here')
 
   const settings = getSettings()
   const model = await getModelInfo(reply.model)
   const profile = resolveThinkProfile(reply.model, model.capabilities, model.overrides.think)
   const numCtx = effectiveContext(model, settings.localNumCtx)
-  const signal = ctx.signal ?? new AbortController().signal
   // The child's context is the parent's, less what only the parent may do (its grants are worked out again).
   const { grants: _grants, ...parent } = ctx
   const childCtx: ToolContext = {
@@ -138,6 +130,8 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   }
 
   const events: ToolEvent[] = []
+  // Requests made so far: a round that calls tools reports its usage before its calls run.
+  let rounds = 0
   const summary = summaryOf(task)
   // Everything the parent's card shows while the child runs: its calls, and whether one waits for the user.
   const report = () =>
@@ -147,7 +141,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
       ok: true,
       summary,
       awaiting: events.some((e) => e.awaiting) || undefined,
-      child: { task, context, events: [...events], result: '', rounds: 0 }
+      child: { task, context, events: [...events], result: '', rounds }
     })
   const stats: MessageStats = { promptTokens: 0, completionTokens: 0 }
   const out = await runRounds({
@@ -169,20 +163,17 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
       events[index] = event
       report()
     },
-    onUsage: () => {},
+    onUsage: () => {
+      rounds++
+    },
     onLoadedSkill: () => {},
     checkpoint: () => {}
   })
   const child = { task, context, events: out.toolEvents, rounds: out.rounds }
   if (signal.aborted) {
-    // Leave the settled child on the parent's event, then unwind like any stopped tool.
-    ctx.progress?.({
-      tool: 'delegate',
-      args: call.args,
-      ok: false,
-      summary,
-      child: { ...child, events: out.toolEvents.map(settleToolEvent), result: '' }
-    })
+    // Leave the whole child on the parent's event, no longer waiting, then unwind like any stopped tool (saving the
+    // reply settles the child's calls with it).
+    ctx.progress?.({ tool: 'delegate', args: call.args, ok: false, summary, child: { ...child, result: '' } })
     throw signal.reason instanceof Error ? signal.reason : new Error('Stopped by you')
   }
   if (out.error)

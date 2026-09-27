@@ -215,9 +215,10 @@ const preview = (content: string) => (content.length > PREVIEW_CHARS ? `${conten
 
 /**
  * A call the reply stopped on: one still running shows as stopped, not spinning forever; one still waiting for an
- * answer never ran.
+ * answer never ran. A sub-agent's own calls settle with it, so none is left asking a question nobody can answer.
  */
-export function settleToolEvent(e: ToolEvent): ToolEvent {
+export function settleToolEvent(event: ToolEvent): ToolEvent {
+  const e = event.child ? { ...event, child: { ...event.child, events: event.child.events.map(settleToolEvent) } } : event
   if (e.awaiting) {
     const { awaiting: _awaiting, everyTime: _everyTime, ...rest } = e
     return { ...rest, pending: false, ok: false, summary: `${e.summary} (not run)` }

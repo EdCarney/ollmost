@@ -1,4 +1,4 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import type { ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
@@ -2122,6 +2122,32 @@ describe('sub-agents', () => {
   const offeredIn = (b: Record<string, unknown>) => ((b.tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
   const toolEventsIn = (conversationId: string) =>
     events.filter((e): e is Extract<ChatEvent, { type: 'tool' }> => e.type === 'tool' && e.conversationId === conversationId)
+  const toolMessageIn = (b: Record<string, unknown>) =>
+    (b.messages as Array<{ role: string; content: string }>).find((m) => m.role === 'tool')!.content
+  /** The reply a delegate call belongs to, as generate() describes it. */
+  const parentReply = (conversationId: string, messageId: string): ToolContext['reply'] => ({
+    conversationId,
+    messageId,
+    model: 'llama3.2',
+    think: null,
+    maxRounds: 10,
+    prompt: { userName: '', model: 'llama3.2', contextLength: 8192, web: 'on', skillIndex: [] }
+  })
+  /** A tool that acts on this Mac: it asks first, and can be allowed for the chat. */
+  const registerWipe = () => {
+    const runs: string[] = []
+    const off = registerToolProvider({
+      id: 'wipe-test',
+      tools: () => [{ type: 'function', function: { name: 'notes__wipe', description: 'Wipe a note', parameters: { type: 'object' } } }],
+      pending: ({ name, args }) => ({ tool: name, args, ok: true, pending: true, summary: 'wiping' }),
+      run: async ({ name, args }) => {
+        runs.push(name)
+        return { content: 'Wiped.', event: { tool: name, args, ok: true, summary: 'wiped' } }
+      },
+      approval: () => 'ask'
+    })
+    return { runs, off }
+  }
 
   beforeEach(() => setApiKey('test-key')) // web tools on, so delegate is offered
 
@@ -2174,23 +2200,16 @@ describe('sub-agents', () => {
     expect(traces.filter((t) => t.kind === 'delegate')).toHaveLength(2)
     expect(traces.every((t) => t.status !== 'running')).toBe(true)
     // Live: the parent's event was re-emitted with the child's search while it ran.
-    const live = toolEventsIn(r.conversation.id)
-    expect(live.some((e) => e.event.pending && e.event.child?.events.some((c) => c.tool === 'web_search'))).toBe(true)
+    const live = toolEventsIn(r.conversation.id).find((e) => e.event.pending && e.event.child?.events.some((c) => c.tool === 'web_search'))
+    // Its search came from the child's first request.
+    expect(live?.event.child?.rounds).toBe(1)
   })
 
   it('is offered beside another tool, and never to a child or outside a reply', async () => {
     const { delegateTools } = await import('../src/main/chat/delegate')
-    const parent: ToolContext['reply'] = {
-      conversationId: 'c',
-      messageId: 'm',
-      model: 'llama3.2',
-      think: null,
-      maxRounds: 10,
-      prompt: { userName: '', model: 'llama3.2', contextLength: 8192, web: 'on', skillIndex: [] }
-    }
     const offered = (over: Partial<ToolContext>) =>
       delegateTools
-        .tools({ mode: 'chat', skills: false, web: false, sources: [], workspace: null, reply: parent, ...over })
+        .tools({ mode: 'chat', skills: false, web: false, sources: [], workspace: null, reply: parentReply('c', 'm'), ...over })
         .map((t) => t.function.name)
     expect(offered({ web: true })).toEqual(['delegate'])
     // Skills alone give a sub-agent nothing to do.
@@ -2260,18 +2279,7 @@ describe('sub-agents', () => {
 
   it('an approval inside the child is keyed by the child’s id and stored on the chat', async () => {
     const { childId } = await import('../src/main/chat/delegate')
-    // A tool that acts on this Mac: it asks first, and can be allowed for the chat.
-    const runs: string[] = []
-    const off = registerToolProvider({
-      id: 'wipe-test',
-      tools: () => [{ type: 'function', function: { name: 'notes__wipe', description: 'Wipe a note', parameters: { type: 'object' } } }],
-      pending: ({ name, args }) => ({ tool: name, args, ok: true, pending: true, summary: 'wiping' }),
-      run: async ({ name, args }) => {
-        runs.push(name)
-        return { content: 'Wiped.', event: { tool: name, args, ok: true, summary: 'wiped' } }
-      },
-      approval: () => 'ask'
-    })
+    const { runs, off } = registerWipe()
     try {
       chat = (b, res, n) => {
         if (isChild(b)) return hasToolResult(b) ? reply('Wiped it.')(b, res, n) : void res.writeHead(200).end(toolCall('notes__wipe', {}))
@@ -2319,6 +2327,102 @@ describe('sub-agents', () => {
     expect(listTraces(r.conversation.id).find((t) => t.kind === 'delegate')?.status).toBe('aborted')
   })
 
+  it('Stop while a child’s call waits for approval settles the call and the parent’s question', async () => {
+    const { off } = registerWipe()
+    try {
+      chat = (b, res) => void res.writeHead(200).end(isChild(b) ? toolCall('notes__wipe', {}) : delegateCall('Wipe the note.'))
+      const r = start('wipe it')
+      await waitFor(() => toolEventsIn(r.conversation.id).find((e) => e.event.awaiting))
+      await service.stop(r.conversation.id)
+      const [event] = getMessage(r.assistantMessageId)!.toolEvents
+      expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: 'Wipe the note. (stopped)' })
+      expect(event.awaiting).toBeUndefined()
+      // The call that waited never ran.
+      expect(event.child!.events).toEqual([
+        { tool: 'notes__wipe', args: {}, ok: false, pending: false, summary: 'wiping (not run)', at: 0 }
+      ])
+      expect(approvals.waitingCount()).toBe(0)
+      expect(listTraces(r.conversation.id).every((t) => t.status !== 'running')).toBe(true)
+    } finally {
+      off()
+    }
+  })
+
+  it('settles a child’s waiting call in a reply Ollmost closed on', () => {
+    const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+    const user = insertMessage({ conversationId: c.id, parentId: null, role: 'user', content: 'wipe it' })
+    const cut = insertMessage({ conversationId: c.id, parentId: user.id, role: 'assistant', content: '' })
+    // A checkpoint saved the child's question, then the app died.
+    const waiting = { tool: 'notes__wipe', args: {}, ok: true, pending: true, awaiting: true, summary: 'wiping' }
+    const child = { task: 'Wipe the note.', events: [waiting], result: '', rounds: 1 }
+    updateMessage(cut.id, {
+      toolEvents: [
+        { tool: 'delegate', args: { task: 'Wipe the note.' }, ok: true, pending: true, awaiting: true, summary: 'Wipe the note.', child }
+      ]
+    })
+    service.markInterruptedReplies()
+    const [event] = getMessage(cut.id)!.toolEvents
+    expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false })
+    expect(event.awaiting).toBeUndefined()
+    expect(event.child!.events).toEqual([{ tool: 'notes__wipe', args: {}, ok: false, pending: false, summary: 'wiping (not run)' }])
+  })
+
+  it('refuses to run a child that nothing could stop', async () => {
+    const { delegateTools } = await import('../src/main/chat/delegate')
+    const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: '', model: 'llama3.2' })
+    chat = reply('A child answered.')
+    const result = await delegateTools.run(
+      { provider: delegateTools, name: 'delegate', via: null, args: { task: 'Look it up.' } },
+      {
+        mode: 'chat',
+        skills: false,
+        web: true,
+        sources: [],
+        workspace: null,
+        reply: parentReply(c.id, m.id),
+        callIndex: 0,
+        grants: new Set()
+      }
+    )
+    expect(result.event).toMatchObject({ tool: 'delegate', ok: false })
+    expect(chatCalls).toHaveLength(0)
+  })
+
+  it('cuts a child’s long reply, with a mark, before the parent gets it', async () => {
+    const { DELEGATE_RESULT_CHARS } = await import('../src/main/chat/delegate')
+    const long = 'word '.repeat(3_000).trim()
+    chat = (b, res, n) =>
+      isChild(b)
+        ? reply(long)(b, res, n)
+        : hasToolResult(b)
+          ? reply('ok')(b, res, n)
+          : void res.writeHead(200).end(delegateCall('Write at length.'))
+    const r = start('long')
+    const done = await doneEvent(r.conversation.id)
+    const result = done.message.toolEvents[0].child!.result
+    expect(result).toBe(`${long.slice(0, DELEGATE_RESULT_CHARS)}\n\n[… the sub-agent’s reply was cut here]`)
+    expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
+  })
+
+  it('a child whose request fails gives the parent a failure, with its calls settled', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b))
+        return void (hasToolResult(b) ? res.writeHead(500).end('boom') : res.writeHead(200).end(toolCall('web_search', { query: 'x' })))
+      return hasToolResult(b) ? reply('It failed.')(b, res, n) : void res.writeHead(200).end(delegateCall('Search, then fail.'))
+    }
+    web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] }))
+    const r = start('fail')
+    const done = await doneEvent(r.conversation.id)
+    expect(done.message.error).toBeNull()
+    const [event] = done.message.toolEvents
+    expect(event).toMatchObject({ tool: 'delegate', ok: false, summary: 'Search, then fail. · failed' })
+    expect(event.child!.events).toEqual([expect.objectContaining({ tool: 'web_search', ok: true })])
+    expect(event.child!.events.some((e) => e.pending || e.awaiting)).toBe(false)
+    expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toMatch(/^The sub-agent failed: /)
+    expect(listTraces(r.conversation.id).every((t) => t.status !== 'running')).toBe(true)
+  })
+
   it('two delegations in one round run in order', async () => {
     const order: string[] = []
     chat = (b, res, n) => {
@@ -2353,10 +2457,6 @@ describe('sub-agents', () => {
 
   // A code session needs the macOS sandbox, as the session tests above do.
   it.runIf(process.platform === 'darwin')('a child in plan mode gets no write tools', async () => {
-    const { paths } = await import('../src/main/paths')
-    const { mkdtempSync, realpathSync, writeFileSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
-    const { join } = await import('node:path')
     const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
