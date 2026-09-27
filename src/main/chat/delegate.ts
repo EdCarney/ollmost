@@ -4,10 +4,10 @@
 import { contextOptions, effectiveContext } from '@shared/context'
 import { resolveThinkProfile, toOllamaThink } from '@shared/thinking'
 import { childId } from '@shared/toolEvents'
-import type { MessageStats, ToolEvent } from '@shared/types'
+import type { MessageStats, Settings, ToolEvent } from '@shared/types'
 import type { ChatBody, OllamaTool } from '../ollama/client'
 import { getModelInfo } from '../ollama/models'
-import { getSettings } from '../settings'
+import { DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
 import { assemble, promptBudget } from './assemble'
 import { TOOL_RESULT_CHARS } from './results'
 import { runRounds, toolsTokens } from './rounds'
@@ -18,6 +18,8 @@ export const DELEGATE_RESULT_CHARS = 12_000
 const SUMMARY_CHARS = 60
 const RECORD_CHARS = 500
 const CUT_MARK = '\n\n[… the sub-agent’s reply was cut here]'
+/** The most sub-agents one reply may run at the same time, whatever the setting says. */
+const MAX_AT_ONCE = 5
 
 const DELEGATE_TOOL: OllamaTool = {
   type: 'function',
@@ -49,6 +51,15 @@ function offered(ctx: ToolContext): boolean {
   return !!toolsFor({ ...ctx, child: true, skills: false })?.length
 }
 
+/**
+ * How many sub-agents one reply may run at the same time: the setting as a whole number from 1 to 5 (settings aren't
+ * checked over IPC), or the default when there's no number (a settings file saved before the setting existed).
+ */
+export function subAgentsAtOnce(settings: Settings['delegate']): number {
+  const n: unknown = settings.parallel
+  return typeof n === 'number' && Number.isFinite(n) ? Math.min(MAX_AT_ONCE, Math.max(1, Math.floor(n))) : DEFAULT_SUB_AGENTS_AT_ONCE
+}
+
 const optional = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
 const summaryOf = (task: string): string => {
   const line = task.trim().split('\n')[0]
@@ -66,6 +77,8 @@ export const delegateTools: ToolProvider = {
   },
   // The child's own calls ask as they would in the parent; a task that needs nothing approved asks nothing.
   approval: () => 'auto',
+  // Several delegated together run at the same time, each on its own card, asking there for what it needs.
+  parallel: true,
   run: (call, ctx) => runChild(call, ctx),
   replay: (e) =>
     e.tool === 'delegate' && e.child?.result
@@ -154,6 +167,8 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
     body,
     budget: promptBudget(numCtx),
     maxRounds: Math.max(1, Math.min(settings.delegate.maxRounds, reply.maxRounds)),
+    // A child has no delegate of its own, so nothing of its runs beside anything else.
+    parallel: 1,
     toolContext: childCtx,
     signal,
     stats,

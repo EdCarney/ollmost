@@ -6,6 +6,9 @@ import { deleteSetting, readSetting, writeSetting } from './db/kv'
 
 type StoredSettings = Omit<Settings, 'connection'> & { connection: Omit<Settings['connection'], 'hasApiKey'> }
 
+/** How many sub-agents one reply may run at the same time, unless the user sets it (or their settings file has none). */
+export const DEFAULT_SUB_AGENTS_AT_ONCE = 3
+
 const DEFAULTS: StoredSettings = {
   userName: '',
   preferences: '',
@@ -20,7 +23,7 @@ const DEFAULTS: StoredSettings = {
   web: { enabled: true },
   runner: { mode: 'ask', defaultOn: false, pypi: false, timeoutSec: 120 },
   code: { edits: 'ask', commands: 'ask', timeoutSec: 300, maxRounds: 60, defaultNetwork: 'none' },
-  delegate: { enabled: true, maxRounds: 20 },
+  delegate: { enabled: true, maxRounds: 20, parallel: DEFAULT_SUB_AGENTS_AT_ONCE },
   debug: { record: true },
   links: { previews: false },
   usage: { showInHeader: true, headerWindow: 'auto', anchors: {}, monthlyDay: null, poolUsd: null }

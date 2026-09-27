@@ -576,6 +576,13 @@ const DELEGATE_LIMITS = [
   { value: '40', label: '40' }
 ]
 
+const DELEGATE_AT_ONCE = [
+  { value: '1', label: '1' },
+  { value: '2', label: '2' },
+  { value: '3', label: '3' },
+  { value: '5', label: '5' }
+]
+
 function SubAgentsSection() {
   const { settings, updateSettings } = useApp()
   if (!settings) return null
@@ -585,7 +592,7 @@ function SubAgentsSection() {
   return (
     <Section
       title="Sub-agents"
-      description="Lets a model hand a task to a sub-agent: a fresh reply with the same tools, which does the task and returns only its result, so a long piece of research or a survey of many files doesn't fill the chat. A sub-agent asks for the same approvals, runs one task at a time, and its requests count toward the chat's usage."
+      description="Lets a model hand a task to a sub-agent: a fresh reply with the same tools, which does the task and returns only its result, so a long piece of research or a survey of many files doesn't fill the chat. A sub-agent asks for the same approvals and its requests count toward the chat's usage; one reply can run several at the same time."
     >
       <Row label="Sub-agents">
         <Switch label="Sub-agents" checked={d.enabled} onChange={(enabled) => updateDelegate({ enabled })} />
@@ -599,6 +606,17 @@ function SubAgentsSection() {
           value={String(d.maxRounds)}
           options={DELEGATE_LIMITS}
           onChange={(v) => updateDelegate({ maxRounds: Number(v) })}
+        />
+      </Row>
+      <Row
+        label="Sub-agents at once"
+        hint="How many sub-agents one reply may run at the same time. 1 runs them one after another. A local model serves them from one Ollama, which may queue some."
+      >
+        <Segmented
+          label="Sub-agents at once"
+          value={String(d.parallel)}
+          options={DELEGATE_AT_ONCE}
+          onChange={(v) => updateDelegate({ parallel: Number(v) })}
         />
       </Row>
     </Section>

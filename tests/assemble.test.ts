@@ -138,6 +138,23 @@ describe('assemble', () => {
     expect(child).not.toContain('<sub_agents>')
   })
 
+  it('tells a reply that may delegate whether its sub-agents run at the same time', () => {
+    const together = buildSystemPrompt({ ...base, subAgents: true, subAgentsAtOnce: 3 })
+    expect(together).toContain('run at the same time, up to 3 at once')
+    expect(together).toMatch(/separate files/)
+    expect(together).not.toContain('runs one task at a time')
+    // One at a time, or unsaid: the words it had before sub-agents could run together.
+    for (const one of [
+      buildSystemPrompt({ ...base, subAgents: true, subAgentsAtOnce: 1 }),
+      buildSystemPrompt({ ...base, subAgents: true })
+    ]) {
+      expect(one).toContain(
+        'The sub-agent asks the user for the same approvals you would, runs one task at a time, and keeps nothing between tasks.'
+      )
+      expect(one).not.toContain('at the same time')
+    }
+  })
+
   it('drops the oldest turns when history exceeds the context window', () => {
     const long = 'x'.repeat(40_000) // ~10k tokens each
     const history = [turn('user', long), turn('assistant', long), turn('user', long), turn('assistant', long), turn('user', 'latest')]
