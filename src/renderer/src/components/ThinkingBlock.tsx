@@ -6,11 +6,14 @@ import { cn, formatDuration } from '@/lib/format'
 /** A round's thinking: open while it's live (unless the reader closed it), collapsed once it ends (unless opened). */
 export function ThinkingBlock({ thinking, active, durationMs }: { thinking: string; active: boolean; durationMs: number | null }) {
   const [toggled, setToggled] = useState<boolean | null>(null)
-  const open = toggled ?? active
+  // Open by itself once there's live thinking to show; the stand-in before any arrives stays a line.
+  const open = toggled ?? (active && !!thinking)
   const box = useRef<HTMLDivElement>(null)
-  // Live text grows past the box: keep its end in view, as the transcript does.
+  // Live text grows past the box: keep its end in view, as the transcript does, unless the reader scrolled up.
+  const stuck = useRef(true)
   useEffect(() => {
-    if (open && active && box.current) box.current.scrollTop = box.current.scrollHeight
+    const el = box.current
+    if (open && active && stuck.current && el) el.scrollTop = el.scrollHeight
   }, [thinking, open, active])
   if (!thinking && !active) return null
   return (
@@ -29,6 +32,10 @@ export function ThinkingBlock({ thinking, active, durationMs }: { thinking: stri
       {open && (
         <div
           ref={box}
+          onScroll={(e) => {
+            const el = e.currentTarget
+            stuck.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
+          }}
           className="selectable mt-1.5 max-h-96 overflow-y-auto whitespace-pre-wrap border-l-2 border-line pl-3.5 font-ui text-[13px] leading-relaxed text-muted"
         >
           {normalizeSpaces(thinking) || '…'}
