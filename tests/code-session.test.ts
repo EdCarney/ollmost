@@ -53,7 +53,7 @@ describe('the policy for a session’s commands', () => {
     network: 'none'
   })
 
-  it('writes only the root and the scratch, pinning both, and never the git hooks, config or submodules', () => {
+  it('writes only the root and the scratch, pinning both, and never the git hooks, configs, worktrees or submodules', () => {
     expect(p.filesystem.allowWrite).toEqual(['/Users/me/repo', '/data/runner/sessions/s'])
     expect(p.filesystem.denyWrite).toEqual([
       '/private/tmp/claude',
@@ -61,8 +61,13 @@ describe('the policy for a session’s commands', () => {
       '/data/runner/sessions/s/.pinned',
       '/Users/me/repo/.git/hooks',
       '/Users/me/repo/.git/config',
+      '/Users/me/repo/.git/commondir',
+      '/Users/me/repo/.git/config.worktree',
+      '/Users/me/repo/.git/worktrees',
       '/Users/me/repo/.git/modules',
-      '/Users/me/repo/.gitmodules'
+      '/Users/me/repo/.gitmodules',
+      '/Users/me/repo/*/.git',
+      '/Users/me/repo/*/**/.git'
     ])
   })
 

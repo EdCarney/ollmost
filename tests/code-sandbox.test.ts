@@ -52,6 +52,8 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
   mkdirSync(join(root, '.git', 'hooks'), { recursive: true })
   // A submodule's git folder, as git would leave it: the sandbox denies writing there, not only creating it.
   mkdirSync(join(root, '.git', 'modules', 'sub'), { recursive: true })
+  // A linked worktree's folder likewise: its commondir and config.worktree point git at another config.
+  mkdirSync(join(root, '.git', 'worktrees', 'x'), { recursive: true })
   writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n')
   writeFileSync(join(root, 'README.md'), 'theirs')
   for (const dir of ['home', 'tmp']) mkdirSync(join(scratch, dir), { recursive: true })
@@ -143,12 +145,16 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
     expect(existsSync(join(spare, 'f'))).toBe(false)
   }, 120_000)
 
-  it('leaves the git hooks, config, submodules and .gitconfig read-only, while git’s own state can change', async () => {
+  it('leaves the git hooks, configs, worktrees, submodules, any .git below the folder and .gitconfig read-only, while git’s own state can change', async () => {
     for (const file of [
       '.git/hooks/pre-commit',
       '.git/config',
+      '.git/commondir',
+      '.git/config.worktree',
+      '.git/worktrees/x/commondir',
       '.git/modules/sub/config',
       '.gitmodules',
+      'sub/.git',
       '.vscode/settings.json',
       `${join(scratch, 'home')}/.gitconfig`
     ]) {
@@ -157,6 +163,12 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
       expect(r.output, file).toMatch(/Operation not permitted/)
       expect(existsSync(join(root, file)), file).toBe(false)
     }
+    // A .git folder at any depth below the folder is refused too (a populated submodule needs one), in any spelling:
+    // the disk doesn't tell .GIT from .git, and neither must the deny.
+    expect((await command('mkdir -p deep/er/.git')).code).not.toBe(0)
+    expect(existsSync(join(root, 'deep', 'er', '.git'))).toBe(false)
+    expect((await command('mkdir -p sub/.GIT')).code).not.toBe(0)
+    expect(existsSync(join(root, 'sub', '.GIT'))).toBe(false)
     expect((await command('echo "ref: refs/heads/other" > .git/HEAD && cat .git/HEAD')).output.trim()).toBe('ref: refs/heads/other')
     writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n')
   }, 120_000)
