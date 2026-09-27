@@ -10,7 +10,7 @@ import { useTheme } from '@/theme/useTheme'
 import { kindLabel, ms, StatusIcon } from './bits'
 import { TraceView } from './TraceView'
 
-const KINDS: TraceKind[] = ['chat', 'tool', 'title', 'replay']
+const KINDS: TraceKind[] = ['chat', 'tool', 'title', 'compact', 'replay']
 
 function initialConversation(): string | null {
   const match = window.location.hash.match(/[?&]c=([^&]+)/)

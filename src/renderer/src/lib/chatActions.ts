@@ -62,3 +62,24 @@ export async function editMessage(message: Message, content: string, messages: M
     reportError(err)
   }
 }
+
+/** A slash command sent from a chat's composer: it runs once, and never becomes a message. */
+export async function runCommand(conversationId: string, cmd: { name: string; args: string; model: string }): Promise<boolean> {
+  try {
+    switch (cmd.name) {
+      case 'compact': {
+        const conversation = await api.chat.compact(conversationId, { focus: cmd.args, model: cmd.model })
+        useChat.getState().setConversation(conversation)
+        const c = conversation.compaction
+        if (c) useApp.getState().toast(`Compacted ${c.messages} ${c.messages === 1 ? 'message' : 'messages'} into a summary.`)
+        return true
+      }
+      default:
+        // A command listed without a handler is a bug, not a silent no-op.
+        throw new Error(`/${cmd.name} isn't wired up yet.`)
+    }
+  } catch (err) {
+    reportError(err)
+    return false
+  }
+}

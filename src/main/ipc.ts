@@ -9,7 +9,7 @@ import { openWith } from '@shared/workspace'
 import { BUILTIN_THEMES } from '@shared/themes'
 import type { ThemeDef } from '@shared/types'
 import { decide } from './chat/approvals'
-import { edit, isReplyingIn, regenerate, send, stop, stopAll } from './chat/service'
+import { compact, edit, isReplyingIn, regenerate, send, stop, stopAll } from './chat/service'
 import { changes, diff, stopPanelRuns } from './code/changes'
 import { readBranch } from './code/git'
 import { addArtifactVersion, getArtifact, listAllArtifacts, listArtifacts } from './db/artifacts'
@@ -258,6 +258,7 @@ const impl: Impl = {
     send: async (req) => send(req),
     regenerate: (id, opts) => regenerate(id, opts),
     edit: (messageId, content, opts) => edit(messageId, content, opts),
+    compact: (id, opts) => compact(id, opts),
     stop: async (id) => stop(id),
     decide: async (id, messageId, index, decision) => decide(id, messageId, index, decision)
   },

@@ -1,5 +1,6 @@
-import { ArrowUp, FileText, Paperclip, Plus, Sparkles, Square, SquareTerminal, TriangleAlert, Wrench, X } from 'lucide-react'
+import { ArrowUp, FileText, Paperclip, Plus, Sparkles, Square, SquareTerminal, Terminal, TriangleAlert, Wrench, X } from 'lucide-react'
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { type Command, COMMANDS, parseCommand } from '@shared/commands'
 import { normalizeThinkSetting } from '@shared/thinking'
 import type { Conversation, FileSource, McpServer, McpStatus, Skill, ThinkSetting } from '@shared/types'
 import { api } from '@/lib/api'
@@ -100,6 +101,9 @@ async function toSources(files: File[]): Promise<FileSource[]> {
 
 const SLASH_RE = /(^|\s)\/([a-z0-9-]*)$/i
 
+/** One row of the "/" picker. */
+type SlashMatch = { kind: 'command'; command: Command } | { kind: 'skill'; skill: Skill }
+
 interface Props {
   conversation: Conversation | null
   /**
@@ -109,6 +113,8 @@ interface Props {
   draftKey?: string
   streaming: boolean
   onSubmit: (input: ComposerSubmit) => Promise<boolean>
+  /** A slash command sent (see src/shared/commands.ts): it runs once, never as a message. Absent where none can run yet. */
+  onCommand?: (cmd: { name: string; args: string; model: string }) => Promise<boolean>
   onStop?: () => void
   placeholder?: string
   autoFocus?: boolean
@@ -117,7 +123,18 @@ interface Props {
   mode?: 'chat' | 'code'
 }
 
-export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, placeholder, autoFocus, large, mode = 'chat' }: Props) {
+export function Composer({
+  conversation,
+  draftKey,
+  streaming,
+  onSubmit,
+  onCommand,
+  onStop,
+  placeholder,
+  autoFocus,
+  large,
+  mode = 'chat'
+}: Props) {
   const { models, skills: allSkills, navigate, mcpServers, mcpStatus, settings: appSettings } = useApp()
   const runnerOn = !!appSettings && appSettings.runner.mode !== 'off'
   const chatMode = mode === 'chat'
@@ -132,7 +149,7 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
     [key, updateDraft]
   )
   const [dragging, setDragging] = useState(false)
-  const [slash, setSlash] = useState<{ query: string; index: number } | null>(null)
+  const [slash, setSlash] = useState<{ query: string; index: number; atStart: boolean } | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const textRef = useRef<HTMLTextAreaElement>(null)
 
@@ -248,15 +265,39 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
     if (autoFocus) textRef.current?.focus()
   }, [autoFocus, conversation?.id])
 
-  const slashMatches = useMemo(() => {
+  // What "/" offers: commands (run once when sent) above skills (applied to every reply), one list for the keys.
+  const slashMatches = useMemo<SlashMatch[]>(() => {
     if (!slash) return []
     const q = slash.query.toLowerCase()
-    return enabledSkills.filter((s) => s.name.toLowerCase().includes(q) && !settings.skills.includes(s.id)).slice(0, 8)
+    // A command runs only from the start of the text, so that's the only place it's offered; skills go anywhere.
+    const commands = slash.atStart
+      ? COMMANDS.filter((c) => c.name.startsWith(q)).map((command): SlashMatch => ({ kind: 'command', command }))
+      : []
+    const skills = enabledSkills
+      .filter((s) => s.name.toLowerCase().includes(q) && !settings.skills.includes(s.id))
+      .slice(0, 8)
+      .map((skill): SlashMatch => ({ kind: 'skill', skill }))
+    return [...commands, ...skills]
   }, [slash, enabledSkills, settings.skills])
 
   const updateSlash = (value: string, caret: number) => {
     const m = SLASH_RE.exec(value.slice(0, caret))
-    setSlash(m && enabledSkills.length ? { query: m[2], index: 0 } : null)
+    setSlash(m ? { query: m[2], index: 0, atStart: m.index === 0 && m[1] === '' } : null)
+  }
+
+  const choose = (match: SlashMatch) => (match.kind === 'skill' ? chooseSkill(match.skill) : chooseCommand(match.command))
+
+  /** Put "/name " in the text; the command runs when sent. */
+  const chooseCommand = (command: Command) => {
+    const el = textRef.current!
+    const caret = el.selectionStart
+    const before = text.slice(0, caret).replace(SLASH_RE, (_m, lead: string) => `${lead}/${command.name} `)
+    setText(before + text.slice(caret))
+    setSlash(null)
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(before.length, before.length)
+    })
   }
 
   const chooseSkill = (skill: Skill) => {
@@ -276,6 +317,18 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
     if (!canSend || !settings.model) return
     setSubmitting(true)
     try {
+      const command = parseCommand(text)
+      if (command) {
+        if (!onCommand) {
+          useApp.getState().toast(`Nothing to ${command.name} yet: send a message first.`, 'error')
+          return
+        }
+        if (await onCommand({ ...command, model: settings.model })) {
+          setText('')
+          settings.resetDraft()
+        }
+        return
+      }
       const ok = await onSubmit({
         content: text.trim(),
         attachmentIds: pending.flatMap((p) => (p.attachment ? [p.attachment.id] : [])),
@@ -304,7 +357,7 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
       }
       if (e.key === 'Enter' || e.key === 'Tab') {
         e.preventDefault()
-        chooseSkill(slashMatches[slash.index])
+        choose(slashMatches[slash.index])
         return
       }
       if (e.key === 'Escape') {
@@ -322,22 +375,34 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
     <div className="relative">
       {slash && slashMatches.length > 0 && (
         <div className="absolute bottom-full left-0 z-30 mb-2 w-[360px] rounded-ollmost border border-line bg-panel p-1 shadow-[0_8px_30px_rgba(0,0,0,0.12)]">
-          <div className="px-2 pb-1 pt-1.5 text-xs font-medium text-subtle">Skills</div>
-          {slashMatches.map((s, i) => (
-            <button
-              key={s.id}
-              onMouseDown={(e) => {
-                e.preventDefault()
-                chooseSkill(s)
-              }}
-              className={cn('flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left', i === slash.index && 'bg-hover')}
-            >
-              <Sparkles className="mt-0.5 size-4 shrink-0 text-accent" />
-              <span className="min-w-0">
-                <span className="block text-sm">/{s.name}</span>
-                <span className="block truncate text-xs text-subtle">{s.description}</span>
-              </span>
-            </button>
+          {slashMatches.map((match, i) => (
+            <div key={match.kind === 'skill' ? `s:${match.skill.id}` : `c:${match.command.name}`}>
+              {(i === 0 || slashMatches[i - 1].kind !== match.kind) && (
+                <div className="px-2 pb-1 pt-1.5 text-xs font-medium text-subtle">{match.kind === 'command' ? 'Commands' : 'Skills'}</div>
+              )}
+              <button
+                onMouseDown={(e) => {
+                  e.preventDefault()
+                  choose(match)
+                }}
+                className={cn('flex w-full items-start gap-2 rounded-md px-2 py-1.5 text-left', i === slash.index && 'bg-hover')}
+              >
+                {match.kind === 'command' ? (
+                  <Terminal className="mt-0.5 size-4 shrink-0 text-accent" />
+                ) : (
+                  <Sparkles className="mt-0.5 size-4 shrink-0 text-accent" />
+                )}
+                <span className="min-w-0">
+                  <span className="block text-sm">
+                    /{match.kind === 'command' ? match.command.name : match.skill.name}
+                    {match.kind === 'command' && <span className="text-subtle"> {match.command.hint}</span>}
+                  </span>
+                  <span className="block truncate text-xs text-subtle">
+                    {match.kind === 'command' ? match.command.description : match.skill.description}
+                  </span>
+                </span>
+              </button>
+            </div>
           ))}
         </div>
       )}

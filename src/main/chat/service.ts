@@ -8,6 +8,7 @@ import { EVENT_CHANNELS } from '@shared/ipc'
 import { resolveThinkProfile, toOllamaThink } from '@shared/thinking'
 import type {
   ChatEvent,
+  Compaction,
   Conversation,
   Message,
   MessageStats,
@@ -29,6 +30,7 @@ import {
   insertMessage,
   linkAttachments,
   listMessages,
+  setCompaction,
   unfinishedReplyIds,
   updateConversation,
   updateMessage
@@ -106,8 +108,12 @@ function emit(event: ChatEvent): void {
   for (const win of BrowserWindow.getAllWindows()) win.webContents.send(EVENT_CHANNELS.chat, event)
 }
 
+/** Chats a /compact is summarizing: nothing else may change them until it ends. */
+const compacting = new Set<string>()
+
 function assertIdle(conversationId: string): void {
   if (active.has(conversationId)) throw new Error('Ollmost is still responding in this chat.')
+  if (compacting.has(conversationId)) throw new Error('Ollmost is still compacting this chat.')
 }
 
 export function send(req: SendRequest, reply: ReplyOptions = {}): SendResult {
@@ -150,6 +156,7 @@ export async function regenerate(
   const lastUserIndex = messages.findLastIndex((m) => m.role === 'user')
   if (lastUserIndex < 0) throw new Error('Nothing to retry')
   await dropAfter(conversationId, messages, lastUserIndex)
+  uncompactFrom(conversationId, messages[lastUserIndex])
   const conversation = updateConversation(conversationId, { model: opts.model, think: opts.think, touch: true })
   return startAssistant(conversation, messages[lastUserIndex], opts.model, opts.think, reply)
 }
@@ -169,6 +176,7 @@ export async function edit(
     messages,
     messages.findIndex((m) => m.id === messageId)
   )
+  uncompactFrom(original.conversationId, original)
   const user = updateMessage(messageId, { content })
   const conversation = updateConversation(original.conversationId, { model: opts.model, think: opts.think, touch: true })
   return startAssistant(conversation, user, opts.model, opts.think, reply)
@@ -427,8 +435,12 @@ async function generate(
       .filter((r) => running.has(r.server.id))
       .map((r) => r.server.name)
 
+    // After a /compact, the request replays the summary in the system prompt and only the messages that followed.
+    const compaction = conversation.compaction
     const history = await Promise.all(
-      messages.filter((m) => m.id !== messageId && !(m.role === 'assistant' && !m.content)).map((m) => toTurn(m, vision))
+      messages
+        .filter((m) => m.id !== messageId && !(m.role === 'assistant' && !m.content) && (!compaction || m.createdAt > compaction.upTo))
+        .map((m) => toTurn(m, vision))
     )
 
     const assembled = assemble({
@@ -451,7 +463,8 @@ async function generate(
       skillIndex,
       selectedSkills: await load(selectedIds),
       loadedSkills: await load(loadedIds),
-      history
+      history,
+      compaction: compaction ? { summary: compaction.summary, messages: compaction.messages } : null
     })
     if (assembled.droppedTurns) stats.truncatedHistory = assembled.droppedTurns
 
@@ -770,17 +783,179 @@ function fallbackTitle(text: string): string {
   return words.length > 50 ? `${words.slice(0, 50)}…` : words || 'Untitled chat'
 }
 
+const COMPACT_PROMPT = `You compact a chat's history for the assistant that will carry it on. Write a summary of the conversation given that a later reply can rely on in place of the messages themselves: what the user wanted, what was decided, found or produced, the names, numbers, code and file names that matter, what is still open, and preferences the user stated. When a summary so far is given, fold it in: the result stands for all of it. Write plain prose in the past tense, with no preamble and no headings unless the conversation has clearly separate threads. Keep it under 500 words. Say nothing the conversation didn't.`
+const COMPACT_INSTRUCTION = 'Summarize the conversation above, as instructed. Answer with the summary only.'
+/** Room a summary request leaves in the window for the summary itself. */
+const COMPACT_REPLY_TOKENS = 1500
+
+/** Messages a /compact leaves as they are: the last two exchanges, so the model keeps the immediate context verbatim. */
+export const COMPACT_KEEPS = 4
+
+/** A message's substance in one line, for a title or a summary: its prose, artifacts by title. */
+const proseOf = (content: string): string =>
+  parseMessage(content)
+    .map((s) => (s.kind === 'text' ? s.text : `[artifact: ${s.title}]`))
+    .join(' ')
+
+/** A tool call's arguments in brief: strings cut short, the rest as JSON. */
+function argsBrief(args: Record<string, unknown>): string {
+  const inner = Object.entries(args)
+    .map(([k, v]) => `${k}: ${typeof v === 'string' ? JSON.stringify(v.length > 80 ? `${v.slice(0, 80)}…` : v) : JSON.stringify(v)}`)
+    .join(', ')
+  return inner ? `(${inner})` : ''
+}
+
+/**
+ * A message as a transcript line for the summary: who said it, its prose, what was attached, and what tools it
+ * called and got back in brief (in a code session most of the substance is in the calls).
+ */
+function transcriptLine(m: Message): string {
+  const parts = [proseOf(m.content)]
+  for (const a of m.attachments) parts.push(`[attached: ${a.name}]`)
+  for (const e of m.toolEvents) parts.push(`[${e.tool}${argsBrief(e.args)}${e.summary ? ` → ${e.summary}` : ''}]`)
+  return `${m.role === 'user' ? 'User' : 'Assistant'}: ${parts.filter(Boolean).join(' ').slice(0, 8000)}`
+}
+
+/** A chat's /compact summary is stale once a message it covers is edited or retried: the summary stood for it. */
+function uncompactFrom(conversationId: string, from: Message): void {
+  const c = getConversation(conversationId)?.compaction
+  if (c && from.createdAt <= c.upTo) setCompaction(conversationId, null)
+}
+
+/**
+ * /compact: summarize every message but the last exchanges with the chat's model, and keep the summary on the chat
+ * so later replies replay it instead of those messages (which stay in the transcript). The request is sized to the
+ * model's window: a longer history is summarized in pieces, each folding the summary so far in, which is also how
+ * a second compaction folds the earlier summary in with what followed it.
+ */
+export async function compact(conversationId: string, opts: { focus: string; model: string }): Promise<Conversation> {
+  assertIdle(conversationId)
+  const conversation = getConversation(conversationId)
+  if (!conversation) throw new Error('Chat not found')
+  const earlier = conversation.compaction
+  const all = listMessages(conversationId).filter((m) => m.role === 'user' || m.content)
+  const since = earlier ? all.filter((m) => m.createdAt > earlier.upTo) : all
+  // Keep the last exchanges whole: the cut moves back to a question, so no answer stays without it.
+  let cut = since.length - COMPACT_KEEPS
+  while (cut > 0 && since[cut].role !== 'user') cut--
+  const older = since.slice(0, Math.max(0, cut))
+  if (older.length < 2)
+    throw new Error(`Nothing to compact yet: the last exchanges stay as they are, and there's less than an exchange before them.`)
+  compacting.add(conversationId)
+  try {
+    const info = await getModelInfo(opts.model)
+    const profile = resolveThinkProfile(opts.model, info.capabilities, info.overrides.think)
+    const settings = getSettings()
+    const focus = opts.focus.trim()
+    const system = focus ? `${COMPACT_PROMPT}\n\nAbove all, keep what the user asked for: ${focus}` : COMPACT_PROMPT
+    const body = (transcript: string): ChatBody => ({
+      model: opts.model,
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: transcript }
+      ],
+      think: profile.kind === 'levels' ? 'low' : profile.kind === 'toggle' ? false : undefined,
+      options: { temperature: 0.3, ...contextOptions(info, settings.localNumCtx) }
+    })
+    // A model with a tiny window still gets a piece worth summarizing rather than one message cut to nothing.
+    const budget = Math.max(
+      2000,
+      promptBudget(effectiveContext(info, settings.localNumCtx)) - estimateTokens(system) - COMPACT_REPLY_TOKENS
+    )
+    const lines = older.map(transcriptLine)
+    let summary = earlier?.summary ?? null
+    let i = 0
+    while (i < lines.length) {
+      // The chat may go while the model works; nothing else can change it (assertIdle), but a delete can.
+      if (!getConversation(conversationId)) throw new Error('The chat was deleted while it was being compacted.')
+      const head = summary ? `<summary_so_far>\n${summary}\n</summary_so_far>\n\n` : ''
+      let used = estimateTokens(head) + estimateTokens(COMPACT_INSTRUCTION) + 40
+      const piece: string[] = []
+      while (i < lines.length) {
+        const cost = estimateTokens(lines[i]) + 2
+        if (piece.length && used + cost > budget) break
+        // A single message larger than the whole budget is cut to what fits rather than left out.
+        piece.push(used + cost > budget ? lines[i].slice(0, Math.max(200, (budget - used) * CHARS_PER_TOKEN)) : lines[i])
+        used += cost
+        i++
+      }
+      const transcript = `${head}<conversation>\n${piece.join('\n\n')}\n</conversation>\n\n${COMPACT_INSTRUCTION}`
+      summary = await summarizeOnce(conversationId, opts.model, body(transcript), transcript, piece.length)
+    }
+    if (!getConversation(conversationId)) throw new Error('The chat was deleted while it was being compacted.')
+    const compaction: Compaction = {
+      summary: summary!,
+      upTo: older[older.length - 1].createdAt,
+      messages: (earlier?.messages ?? 0) + older.length,
+      at: Date.now()
+    }
+    return setCompaction(conversationId, compaction)
+  } finally {
+    compacting.delete(conversationId)
+  }
+}
+
+/** One summary request: traced, billed, its answer cleaned of thinking; an empty answer is an error. */
+async function summarizeOnce(
+  conversationId: string,
+  modelName: string,
+  body: ChatBody,
+  transcript: string,
+  count: number
+): Promise<string> {
+  const trace = startTrace({
+    kind: 'compact',
+    conversationId,
+    messageId: null,
+    model: modelName,
+    endpoint: endpointFor('/api/chat'),
+    request: { ...body, stream: false },
+    summary: 'Compacting…'
+  })
+  try {
+    const res = await chatOnce(body, { timeoutMs: 5 * 60_000 })
+    trace.firstByte()
+    const summary = (res.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+    const promptTokens = res.prompt_eval_count ?? estimateTokens(transcript)
+    const completionTokens = res.eval_count ?? estimateTokens(summary)
+    const costUsd = requestCost(modelName, promptTokens, completionTokens)
+    // Spent tokens are kept even for a chat deleted meanwhile (with no chat to bill them to), and the chat's usage
+    // chip moves after each piece, so a later failure leaves it right.
+    const chat = getConversation(conversationId)
+    insertUsageEvent({
+      conversationId: chat ? conversationId : null,
+      messageId: null,
+      model: modelName,
+      kind: 'compact',
+      promptTokens,
+      completionTokens,
+      costUsd,
+      estimated: res.eval_count === undefined
+    })
+    if (chat) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
+    if (!summary) throw new Error('The model gave no summary; nothing was compacted.')
+    const { message: _m, ...finalStats } = res
+    trace.finish({
+      status: 'ok',
+      response: { content: summary, final: finalStats },
+      promptTokens,
+      completionTokens,
+      costUsd,
+      summary: `Compacted ${count} messages`
+    })
+    return summary
+  } catch (err) {
+    trace.finish({ status: 'error', response: { error: errorMessage(err) }, summary: `Error: ${errorMessage(err)}` })
+    throw err
+  }
+}
+
 async function generateTitle(conversationId: string, chatModel: string): Promise<void> {
   const messages = listMessages(conversationId)
   const firstUser = messages.find((m) => m.role === 'user')
   const transcript = messages
     .slice(0, 2)
-    .map((m) => {
-      const prose = parseMessage(m.content)
-        .map((s) => (s.kind === 'text' ? s.text : `[artifact: ${s.title}]`))
-        .join(' ')
-      return `${m.role === 'user' ? 'User' : 'Assistant'}: ${prose.slice(0, 1500)}`
-    })
+    .map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${proseOf(m.content).slice(0, 1500)}`)
     .join('\n\n')
 
   let title = ''

@@ -101,6 +101,21 @@ describe('assemble', () => {
     expect(assemble(base).messages[0].content).not.toMatch(/code_runner/)
   })
 
+  it('puts a compaction summary in the system prompt, after the chat’s own instructions, framed as a summary', () => {
+    const { messages } = assemble({
+      ...base,
+      chatInstructions: 'Answer tersely.',
+      compaction: { summary: 'The user is planning a trip to Lisbon in May; hotels were compared.', messages: 12 },
+      history: [turn('user', 'so which hotel?')]
+    })
+    const sys = messages[0].content
+    expect(sys.indexOf('<chat_instructions>')).toBeLessThan(sys.indexOf('<earlier_conversation messages="12">'))
+    expect(sys).toContain('The user is planning a trip to Lisbon in May; hotels were compared.')
+    expect(sys).toMatch(/summar/i)
+    expect(messages.slice(1).map((m) => m.content)).toEqual(['so which hotel?'])
+    expect(assemble(base).messages[0].content).not.toContain('<earlier_conversation')
+  })
+
   it('drops the oldest turns when history exceeds the context window', () => {
     const long = 'x'.repeat(40_000) // ~10k tokens each
     const history = [turn('user', long), turn('assistant', long), turn('user', long), turn('assistant', long), turn('user', 'latest')]

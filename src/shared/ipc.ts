@@ -124,6 +124,11 @@ export interface OllmostApi {
     /** Replace a user message's text, drop everything after it, and re-run. */
     edit(messageId: ID, content: string, opts: { model: string; think: ThinkSetting | null }): Promise<SendResult>
     stop(conversationId: ID): Promise<void>
+    /**
+     * /compact: summarize the chat's older turns with `model` (the composer's), keeping the last few as they are;
+     * later replies replay the summary instead. `focus` is what the user asked to keep. Returns the updated chat.
+     */
+    compact(conversationId: ID, opts: { focus: string; model: string }): Promise<Conversation>
     /** Answer a tool call that's waiting for approval: its reply's id and the call's index in its tool events. */
     decide(conversationId: ID, messageId: ID, index: number, decision: ToolDecision): Promise<void>
   }
@@ -274,7 +279,7 @@ export const INVOKE_CHANNELS = {
   models: ['list', 'info', 'setOverrides'],
   projects: ['list', 'get', 'create', 'update', 'delete', 'files', 'addFiles', 'removeFile'],
   conversations: ['list', 'get', 'update', 'delete', 'search'],
-  chat: ['send', 'regenerate', 'edit', 'stop', 'decide'],
+  chat: ['send', 'regenerate', 'edit', 'stop', 'compact', 'decide'],
   attachments: ['ingest', 'pick', 'remove'],
   artifacts: ['list', 'stage', 'save', 'createFromBlock'],
   skills: ['list', 'get', 'save', 'delete', 'duplicate', 'setEnabled', 'reveal'],
