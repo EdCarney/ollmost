@@ -319,7 +319,9 @@ export function Composer({
           return
         }
         if (await onCommand({ ...command, model: settings.model })) {
-          setText('')
+          // A command can run for minutes (/compact), and the composer stays editable: clear the draft only if it
+          // still holds the command, so whatever was typed meanwhile is kept.
+          updateDraft(key, (d) => (d.text === text ? { ...d, text: '' } : d))
           settings.resetDraft()
         }
         return
@@ -474,6 +476,8 @@ export function Composer({
           }}
           onKeyDown={onKeyDown}
           onPaste={(e) => {
+            // A code session has no attachments: a pasted file is refused like a dropped one, and any text with it pastes.
+            if (!chatMode) return
             const files = [...e.clipboardData.files]
             if (files.length) {
               e.preventDefault()

@@ -312,7 +312,7 @@ export function CodeSessionView({ id }: { id: string }) {
                     }}
                   />
                 )}
-                {compaction && compactedAfter === m.id && <CompactionDivider compaction={compaction} />}
+                {compaction && compactedAfter === m.id && <CompactionDivider compaction={compaction} conversationId={id} />}
               </Fragment>
             ))}
             {current?.stage === 'plan' && !!current.plan && !stream && (

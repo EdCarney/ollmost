@@ -151,8 +151,11 @@ try {
   await win.waitForTimeout(200)
   const opened = (await win.locator('[data-testid="compaction"]').innerText()).trim()
   check('the summary can be read', opened.length > divider.length + 20, opened.slice(divider.length, divider.length + 60))
-  check('the compacted messages stay in the transcript', (await win.locator('.prose-ollmost').count()) === 3)
   await win.screenshot({ path: join(SHOTS, 'compact.png') })
+  // Closed again: the open summary is Markdown too, so it would count as a reply below.
+  await win.locator('[data-testid="compaction"] button').click()
+  await win.waitForTimeout(200)
+  check('the compacted messages stay in the transcript', (await win.locator('.prose-ollmost').count()) === 3)
 
   // 1c. Retry right after /compact: the last reply is covered by the summary, so it asks first; Cancel changes nothing.
   await win.click('button[aria-label="Retry"]')
@@ -1642,6 +1645,11 @@ const evilSvg = (port) =>
       if (req.url === '/api/tags') return json({ models: [{ name: 'mock-tools:latest' }] })
       if (req.url === '/api/show')
         return json({ capabilities: ['completion', 'tools'], model_info: { 'mock.context_length': 32768 }, details: {} })
+      // A /compact summary takes a moment, so the next message can be typed while it runs, and comes in Markdown, as
+      // models often write it whatever the prompt asks.
+      const summary = '**Goal:** greet in French.\n\n- Read README.md.\n- Changed Hello to Bonjour.'
+      if (!body.stream && String(body.messages[0]?.content).startsWith('You compact'))
+        return setTimeout(() => json({ message: { role: 'assistant', content: summary }, done: true }), 2000)
       if (!body.stream) return json({ message: { role: 'assistant', content: 'Mock title' }, done: true })
       const toolNames = (body.tools ?? []).map((t) => t.function.name)
       const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
@@ -1679,6 +1687,25 @@ const evilSvg = (port) =>
       await win.waitForSelector('textarea')
       await win.waitForTimeout(1500)
 
+      // 0. A file pasted or dropped on Home's composer (a chat's) is attached; the same on a session's, below, isn't.
+      const attached = () => win.locator('button[aria-label="Remove attachment"]').count()
+      const offerFiles = () =>
+        win.locator('textarea').evaluate((el) => {
+          const data = (name) => {
+            const d = new DataTransfer()
+            d.items.add(new File(['A file for the composer'], name, { type: 'text/plain' }))
+            return d
+          }
+          el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data('pasted.txt'), bubbles: true, cancelable: true }))
+          const dropped = data('dropped.txt')
+          for (const type of ['dragenter', 'dragover', 'drop'])
+            el.dispatchEvent(new DragEvent(type, { dataTransfer: dropped, bubbles: true, cancelable: true }))
+        })
+      await offerFiles()
+      await win.waitForTimeout(1500)
+      const inChat = await attached()
+      check('a chat’s composer attaches a pasted and a dropped file', inChat === 2, `${inChat} attached`)
+
       // 1. Open the folder from the sidebar's Code pane.
       await win.getByRole('button', { name: 'Code', exact: true }).click()
       await stubOpenDialog(app, [repo])
@@ -1692,6 +1719,12 @@ const evilSvg = (port) =>
           /No network/.test(networkChip),
         networkChip
       )
+
+      // 1b. A session has no attachments: its composer refuses a pasted file as it does a dropped one.
+      await offerFiles()
+      await win.waitForTimeout(1500)
+      const inSession = await attached()
+      check('a code session’s composer attaches neither a pasted nor a dropped file', inSession === 0, `${inSession} attached`)
 
       // 2. Send a message that reads, then asks to edit, the file.
       const card = win.locator('[data-testid="approval-card"]')
@@ -1828,6 +1861,28 @@ const evilSvg = (port) =>
         (await win.locator('[data-testid="stage-chip"]').getAttribute('aria-label')) === 'Stage: Work'
       )
       await win.waitForFunction(() => !document.querySelector('button[aria-label="Stop"]'), null, { timeout: 120000 })
+
+      // 6c. /compact: the composer stays editable while it runs, and what was typed meanwhile is kept when it ends.
+      await win.fill('textarea', '/compact')
+      await win.click('button[aria-label="Send"]')
+      await win.waitForTimeout(300)
+      await win.fill('textarea', 'Now say it in Spanish')
+      await win.waitForSelector('[data-testid="compaction"]', { timeout: 20000 })
+      await win.waitForTimeout(300)
+      const afterCompact = await win.inputValue('textarea')
+      check('text typed while /compact runs is still in the composer when it ends', afterCompact === 'Now say it in Spanish', afterCompact)
+      await win.fill('textarea', '')
+      // Opened from its divider, the summary reads as Markdown: bold and a list, not ** and - characters.
+      const divider = win.locator('[data-testid="compaction"]')
+      await divider.locator('button').click()
+      await win.waitForTimeout(200)
+      const summaryText = await divider.innerText()
+      check(
+        'the summary opened from its divider is rendered as Markdown',
+        (await divider.locator('strong').count()) === 1 && (await divider.locator('li').count()) === 2 && !summaryText.includes('**'),
+        summaryText.replace(/\n/g, ' ').slice(0, 100)
+      )
+      await divider.locator('button').click()
 
       // 7. Deleting the session leaves the folder exactly as it was. The panel stays open: the title's menu must be
       // reachable beside it.

@@ -2,9 +2,10 @@ import { ChevronRight, Layers } from 'lucide-react'
 import { useState } from 'react'
 import type { Compaction } from '@shared/types'
 import { cn, relativeTime } from '@/lib/format'
+import { Markdown } from './Markdown'
 
 /** Marks where a /compact summary ends: later replies replay the summary instead of the messages above it. */
-export function CompactionDivider({ compaction }: { compaction: Compaction }) {
+export function CompactionDivider({ compaction, conversationId }: { compaction: Compaction; conversationId: string }) {
   const [open, setOpen] = useState(false)
   return (
     <div className="my-2 text-[13px] text-muted" data-testid="compaction">
@@ -26,7 +27,8 @@ export function CompactionDivider({ compaction }: { compaction: Compaction }) {
       </div>
       {open && (
         <div className="selectable mx-auto mt-2 max-w-[640px] rounded-ollmost border border-line bg-panel px-4 py-3">
-          <div className="whitespace-pre-wrap leading-relaxed">{compaction.summary}</div>
+          {/* Model text, like a reply: models often write it in Markdown whatever the prompt asks. */}
+          <Markdown text={compaction.summary} conversationId={conversationId} />
           <div className="mt-3 border-t border-line pt-3 text-xs text-subtle">
             Files attached to a summarized message are no longer sent to the model. Editing or retrying a message asks first when it would
             delete later messages or clear this summary.
