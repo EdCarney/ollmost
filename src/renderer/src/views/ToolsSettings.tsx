@@ -495,11 +495,19 @@ const ASK_ALLOW: Array<{ value: 'ask' | 'allow'; label: string }> = [
 ]
 const COMMAND_LIMITS = [60, 300, 600, 1800].map((sec) => ({ value: String(sec), label: sec < 300 ? `${sec} s` : `${sec / 60} min` }))
 const ROUNDS = [30, 60, 100].map((n) => ({ value: String(n), label: String(n) }))
-const NETWORKS: Array<{ value: CodeNetwork; label: string }> = [
+/** The three network presets, with the labels this settings page shows; also used by CodeSessionView's chip. */
+export const NETWORKS: Array<{ value: CodeNetwork; label: string }> = [
   { value: 'none', label: 'None' },
   { value: 'registries', label: 'Package registries' },
   { value: 'registries-git', label: 'Registries + git hosts' }
 ]
+
+/** A short form of each preset's label, for CodeSessionView's compact chip. */
+export const NETWORK_SHORT_LABEL: Record<CodeNetwork, string> = {
+  none: 'No network',
+  registries: 'Registries',
+  'registries-git': 'Registries + git'
+}
 
 function CodeSessionsSection() {
   const { settings, updateSettings } = useApp()

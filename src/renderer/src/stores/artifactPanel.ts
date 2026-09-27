@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Artifact } from '@shared/types'
+import { useChangesPanel } from './changesPanel'
 
 interface PanelState {
   open: boolean
@@ -29,8 +30,14 @@ export const useArtifactPanel = create<PanelState>((set, get) => ({
   tab: 'preview',
   width: Math.round(window.innerWidth * 0.45),
 
-  openArtifact: (artifactId, version = null) => set({ open: true, artifactId, version, live: null, tab: 'preview' }),
-  openLive: (messageId, identifier) => set({ open: true, live: { messageId, identifier }, artifactId: null, version: null }),
+  openArtifact: (artifactId, version = null) => {
+    useChangesPanel.getState().close()
+    set({ open: true, artifactId, version, live: null, tab: 'preview' })
+  },
+  openLive: (messageId, identifier) => {
+    useChangesPanel.getState().close()
+    set({ open: true, live: { messageId, identifier }, artifactId: null, version: null })
+  },
   settleLive: (messageId, artifacts) => {
     const { live } = get()
     if (!live || live.messageId !== messageId) return
