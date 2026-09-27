@@ -1239,6 +1239,82 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
   }, 120_000)
 
   // #88: a code session's reply works in the user's folder with run_command, under the session's prompt.
+  it('offers only reading in plan mode, and the approved plan once the user starts working', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    expect(session).toMatchObject({ stage: 'work', plan: null })
+    expect(service.setStage(session.id, 'plan')).toMatchObject({ stage: 'plan', plan: null })
+    const plan = 'Plan: 1. Read README.md. 2. Change the greeting. 3. Run the tests.'
+    chat = reply(plan)
+    const r = service.send({ ...sendBody(session.id), content: 'plan a greeting change' })
+    await doneEvent(r.conversation.id)
+    const offered = (calls: number) => ((chatCalls[calls].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
+    expect(offered(0)).toEqual(['read_file', 'list_files', 'search_files'])
+    const system = (chatCalls[0].messages as Array<{ content: string }>)[0].content
+    expect(system).toMatch(/<plan_mode>/)
+    expect(system).not.toMatch(/<approved_plan>/)
+    // Starting work keeps the plan the model wrote, and the next reply has every tool and the plan in front of it.
+    await waitFor(() => !service.isReplying())
+    expect(service.setStage(session.id, 'work')).toMatchObject({ stage: 'work', plan })
+    chat = reply('Doing it.')
+    events.length = 0
+    const next = service.send({ ...sendBody(session.id), content: 'go ahead' })
+    await doneEvent(next.conversation.id)
+    expect(offered(1)).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command'])
+    const later = (chatCalls[1].messages as Array<{ content: string }>)[0].content
+    expect(later).toMatch(/<approved_plan>[\s\S]*Change the greeting[\s\S]*<\/approved_plan>/)
+    expect(later).not.toMatch(/<plan_mode>/)
+    // Back to planning drops the approved plan: a new one will come.
+    await waitFor(() => !service.isReplying())
+    expect(service.setStage(session.id, 'plan')).toMatchObject({ stage: 'plan', plan: null })
+  })
+
+  it('refuses an edit the model attempts in plan mode', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync, writeFileSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    writeFileSync(join(folder, 'README.md'), 'Hello\n')
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    service.setStage(session.id, 'plan')
+    chat = (b, res, n) =>
+      n === 1
+        ? void res.writeHead(200).end(toolCall('edit_file', { path: 'README.md', old_string: 'Hello', new_string: 'Bonjour' }))
+        : reply('I cannot edit in plan mode.')(b, res, n)
+    const r = service.send({ ...sendBody(session.id), content: 'just do it' })
+    const done = await doneEvent(r.conversation.id)
+    expect(readFileSync(join(folder, 'README.md'), 'utf8')).toBe('Hello\n')
+    expect(done.message.toolEvents[0]).toMatchObject({ tool: 'edit_file', ok: false })
+    expect(events.some((e) => e.type === 'tool' && e.conversationId === r.conversation.id && !!e.event.awaiting)).toBe(false)
+  })
+
   it('runs a command in a session’s folder after asking, and remembers Allow for this session', async () => {
     const { paths } = await import('../src/main/paths')
     const { mkdtempSync, realpathSync, writeFileSync, existsSync } = await import('node:fs')

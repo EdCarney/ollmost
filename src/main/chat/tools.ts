@@ -26,6 +26,8 @@ export interface ToolContext {
   privateFiles?: boolean
   /** The folder code runs in, when this reply may run code (see runner/workspace.ts); null otherwise. */
   workspace: Workspace | null
+  /** A code session's stage: in `plan` only the reading tools are offered (see Conversation.stage). */
+  stage?: 'plan' | 'work'
   /** The reply's stop signal: long-running tools are cancelled with it. */
   signal?: AbortSignal
   /**

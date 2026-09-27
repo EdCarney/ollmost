@@ -323,7 +323,9 @@ describe('what a session’s reply is told', () => {
         network: 'registries',
         timeoutSec: 300,
         instructions: { name: 'CLAUDE.md', text: 'Run npm test before finishing.' },
-        branch: 'main'
+        branch: 'main',
+        stage: 'work',
+        plan: null
       }
     }).messages[0].content
     expect(sys).toMatch(
@@ -343,8 +345,10 @@ describe('what a session’s reply is told', () => {
   })
 
   it('says when there is no instructions file, no repository and no network', () => {
-    const sys = assemble({ ...base, codeSession: { root: '/r', network: 'none', timeoutSec: 60, instructions: null, branch: null } })
-      .messages[0].content
+    const sys = assemble({
+      ...base,
+      codeSession: { root: '/r', network: 'none', timeoutSec: 60, instructions: null, branch: null, stage: 'work', plan: null }
+    }).messages[0].content
     expect(sys).not.toMatch(/project_instructions/)
     expect(sys).toMatch(/not a repository/)
     expect(sys).toMatch(/Network access: none: nothing can be downloaded/)

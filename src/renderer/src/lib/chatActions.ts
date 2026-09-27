@@ -83,3 +83,29 @@ export async function runCommand(conversationId: string, cmd: { name: string; ar
     return false
   }
 }
+
+/** A code session's stage (plan or work), kept on the chat; starting work keeps the model's last reply as the plan. */
+export async function setStage(conversationId: string, stage: 'plan' | 'work'): Promise<boolean> {
+  try {
+    useChat.getState().setConversation(await api.conversations.update(conversationId, { stage }))
+    return true
+  } catch (err) {
+    reportError(err)
+    return false
+  }
+}
+
+/** Approve the plan: start work and ask the model to carry it out, as a normal follow-up in the session. */
+export async function approvePlan(conversationId: string): Promise<void> {
+  if (!(await setStage(conversationId, 'work'))) return
+  const { conversation } = useChat.getState()
+  if (!conversation?.model || conversation.id !== conversationId) return
+  await sendMessage(conversationId, null, {
+    content: 'Carry out the plan above.',
+    attachmentIds: [],
+    model: conversation.model,
+    think: conversation.think,
+    skills: conversation.skills,
+    toolSources: conversation.toolSources
+  })
+}

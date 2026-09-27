@@ -1589,6 +1589,52 @@ const evilSvg = (port) =>
       check('selecting the row shows its diff', (await panel.innerText()).includes('+Bonjour from the fixture'))
       await win.screenshot({ path: join(SHOTS, 'code-changes.png') })
 
+      // 6b. Plan mode: the model reads and searches but can't edit or run until the plan is approved.
+      await win.click('[data-testid="stage-chip"]')
+      await win.getByRole('menuitem', { name: 'Plan', exact: true }).click()
+      await win.waitForTimeout(300)
+      check(
+        'the stage chip switches to Plan',
+        (await win.locator('[data-testid="stage-chip"]').getAttribute('aria-label')) === 'Stage: Plan'
+      )
+      const requestsBefore = sessionChats.length
+      const plan = await send(win, 'Plan a French greeting')
+      const planRequest = sessionChats[requestsBefore]
+      // Only the session's own tools are stage-bound; the skills tools ride along whatever the stage.
+      const codeToolsIn = (names) =>
+        (names ?? []).filter((n) => ['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command'].includes(n))
+      check(
+        'in plan mode the model is offered only the reading tools',
+        JSON.stringify(codeToolsIn(planRequest?.toolNames)) === JSON.stringify(['read_file', 'list_files', 'search_files']),
+        JSON.stringify(planRequest?.toolNames)
+      )
+      check('and told how to plan', /<plan_mode>/.test(planRequest?.system ?? ''))
+      const startWorking = win.getByRole('button', { name: 'Start working' })
+      check('a Start working card follows the plan', await startWorking.isVisible(), plan.slice(0, 40))
+      await startWorking.click()
+      await win.waitForFunction(
+        () => !document.querySelector('button[aria-label="Stop"]') && !!document.querySelector('.prose-ollmost'),
+        null,
+        { timeout: 120000 }
+      )
+      await win
+        .waitForFunction((n) => document.querySelectorAll('.prose-ollmost').length > n, (await win.locator('.prose-ollmost').count()) - 1, {
+          timeout: 120000
+        })
+        .catch(() => {})
+      await win.waitForTimeout(800)
+      const workRequest = sessionChats[requestsBefore + 1]
+      check(
+        'starting work offers every tool again and puts the approved plan in front of the model',
+        codeToolsIn(workRequest?.toolNames).length === 6 && /<approved_plan>[\s\S]*Plain answer\./.test(workRequest?.system ?? ''),
+        JSON.stringify(workRequest?.toolNames)
+      )
+      check(
+        'the stage chip reads Work again',
+        (await win.locator('[data-testid="stage-chip"]').getAttribute('aria-label')) === 'Stage: Work'
+      )
+      await win.waitForFunction(() => !document.querySelector('button[aria-label="Stop"]'), null, { timeout: 120000 })
+
       // 7. Deleting the session leaves the folder exactly as it was. The panel stays open: the title's menu must be
       // reachable beside it.
       await win
@@ -1727,7 +1773,8 @@ const evilSvg = (port) =>
     // the schema is taken out first, or they'd fail on it. A new schema migration means updating this too.
     const KILN_DB_VERSION = 8
     const version = db.prepare('PRAGMA user_version').get().user_version
-    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 6, `database version ${version}`)
+    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 7, `database version ${version}`)
+    db.exec('ALTER TABLE conversations DROP COLUMN plan; ALTER TABLE conversations DROP COLUMN stage')
     db.exec('ALTER TABLE conversations DROP COLUMN compaction')
     db.exec('ALTER TABLE messages DROP COLUMN thinking_segments')
     db.exec('ALTER TABLE conversations DROP COLUMN network')

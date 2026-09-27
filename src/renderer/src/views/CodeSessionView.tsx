@@ -3,11 +3,13 @@ import {
   Bug,
   Check,
   ChevronDown,
+  ClipboardList,
   FileDiff,
   FolderClosed,
   GitBranch,
   Globe,
   GlobeLock,
+  Hammer,
   ScrollText,
   TriangleAlert
 } from 'lucide-react'
@@ -16,6 +18,7 @@ import type { CodeNetwork } from '@shared/types'
 import { Composer } from '@/components/Composer'
 import { ConversationMenu } from '@/components/ConversationMenu'
 import { CompactionDivider } from '@/components/CompactionDivider'
+import { PlanCard } from '@/components/PlanCard'
 import { AssistantMessage, UserMessage } from '@/components/Messages'
 import { TopBar } from '@/components/TopBar'
 import { ChatCost } from '@/components/UsageBar'
@@ -33,7 +36,7 @@ import {
   Tooltip
 } from '@/components/ui'
 import { api } from '@/lib/api'
-import { continueReply, editMessage, retryLast, runCommand, sendMessage } from '@/lib/chatActions'
+import { approvePlan, continueReply, editMessage, retryLast, runCommand, sendMessage, setStage } from '@/lib/chatActions'
 import { folderName } from '@/lib/codeActions'
 import { reportError } from '@/stores/app'
 import { useChangesPanel } from '@/stores/changesPanel'
@@ -205,6 +208,37 @@ export function CodeSessionView({ id }: { id: string }) {
                   </MenuLabel>
                 </MenuContent>
               </Menu>
+              <Menu>
+                <MenuTrigger asChild>
+                  <button
+                    data-testid="stage-chip"
+                    aria-label={current.stage === 'plan' ? 'Stage: Plan' : 'Stage: Work'}
+                    className="flex min-w-8 shrink-[3] items-center gap-1 rounded-md px-1.5 py-1 text-[13px] text-muted hover:bg-hover hover:text-fg"
+                  >
+                    {current.stage === 'plan' ? <ClipboardList className="size-3.5 shrink-0" /> : <Hammer className="size-3.5 shrink-0" />}
+                    <span className={`truncate${changesOpen ? ' hidden' : ''}`}>{current.stage === 'plan' ? 'Plan' : 'Work'}</span>
+                  </button>
+                </MenuTrigger>
+                <MenuContent align="start" className="max-w-[280px]">
+                  <MenuItem
+                    icon={current.stage === 'plan' ? <Check className="size-4 text-accent" /> : null}
+                    onSelect={() => void setStage(id, 'plan')}
+                  >
+                    Plan
+                  </MenuItem>
+                  <MenuItem
+                    icon={current.stage === 'work' ? <Check className="size-4 text-accent" /> : null}
+                    onSelect={() => void setStage(id, 'work')}
+                  >
+                    Work
+                  </MenuItem>
+                  <MenuSeparator />
+                  <MenuLabel>
+                    In plan mode the model reads and searches the folder and writes a plan; edits and commands are withheld until you start
+                    working, which keeps its last reply as the plan.
+                  </MenuLabel>
+                </MenuContent>
+              </Menu>
               <span className="text-subtle">/</span>
             </>
           )}
@@ -274,6 +308,14 @@ export function CodeSessionView({ id }: { id: string }) {
                 {compaction && compactedAfter === m.id && <CompactionDivider compaction={compaction} />}
               </Fragment>
             ))}
+            {current?.stage === 'plan' && !stream && messages.at(-1)?.role === 'assistant' && !!messages.at(-1)?.content.trim() && (
+              <PlanCard
+                onStart={() => {
+                  pinned.current = true
+                  void approvePlan(id)
+                }}
+              />
+            )}
           </div>
         )}
       </div>
@@ -295,6 +337,7 @@ export function CodeSessionView({ id }: { id: string }) {
             streaming={!!stream}
             autoFocus
             mode="code"
+            placeholder={current?.stage === 'plan' ? 'Ask for a plan…' : undefined}
             onStop={() => api.chat.stop(id)}
             onCommand={(cmd) => runCommand(id, cmd)}
             onSubmit={async (input) => {

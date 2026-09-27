@@ -9,7 +9,7 @@ import { openWith } from '@shared/workspace'
 import { BUILTIN_THEMES } from '@shared/themes'
 import type { ThemeDef } from '@shared/types'
 import { decide } from './chat/approvals'
-import { compact, edit, isReplyingIn, regenerate, send, stop, stopAll } from './chat/service'
+import { compact, edit, isReplyingIn, regenerate, send, setStage, stop, stopAll } from './chat/service'
 import { changes, diff, stopPanelRuns } from './code/changes'
 import { readBranch } from './code/git'
 import { addArtifactVersion, getArtifact, listAllArtifacts, listArtifacts } from './db/artifacts'
@@ -240,7 +240,11 @@ const impl: Impl = {
       const conversation = getConversation(id)
       return conversation ? { conversation, messages: listMessages(id), artifacts: listArtifacts(id), usage: conversationUsage(id) } : null
     },
-    update: async (id, patch) => updateConversation(id, patch),
+    update: async (id, { stage, ...patch }) => {
+      // The stage is the reply service's: starting work keeps the plan; the rest of the patch is a plain update.
+      if (stage !== undefined) setStage(id, stage)
+      return Object.keys(patch).length ? updateConversation(id, patch) : getConversation(id)!
+    },
     delete: async (id) => {
       // Wait for a reply in progress to stop and save, so it never writes to a deleted chat.
       await stop(id, { quiet: true })

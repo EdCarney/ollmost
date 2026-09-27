@@ -183,6 +183,24 @@ export async function edit(
 }
 
 /**
+ * A code session's stage. Starting work keeps the model's last reply as the approved plan, which the next reply is
+ * given; going back to planning drops it, since a new plan will come.
+ */
+export function setStage(conversationId: string, stage: 'plan' | 'work'): Conversation {
+  assertIdle(conversationId)
+  const c = getConversation(conversationId)
+  if (!c) throw new Error('Chat not found')
+  if (c.mode !== 'code') throw new Error('Only a code session has a plan mode.')
+  const plan =
+    stage === 'plan'
+      ? null
+      : c.stage === 'plan'
+        ? (listMessages(conversationId).findLast((m) => m.role === 'assistant' && m.content.trim())?.content ?? c.plan)
+        : c.plan
+  return updateConversation(conversationId, { stage, plan })
+}
+
+/**
  * Stop a reply and wait until what it produced has been saved. Pass `quiet` when stopping for a delete or
  * a quit; a plain Stop still lets a new chat get its title.
  */
@@ -419,6 +437,7 @@ async function generate(
     const messages = listMessages(conversationId)
     const toolContext: ToolContext = {
       mode: policy.mode,
+      stage: conversation.stage,
       skills: skillIndex.length > 0,
       web: web === 'on',
       sources,
@@ -454,7 +473,7 @@ async function generate(
       grants: [...grants],
       mcpServers: servers,
       codeRunner,
-      codeSession,
+      codeSession: codeSession ? { ...codeSession, stage: conversation.stage, plan: conversation.plan } : null,
       toolTokens: toolsTokens(tools),
       pastTools: toolsCapable,
       project: project ? { name: project.name, instructions: project.instructions } : null,

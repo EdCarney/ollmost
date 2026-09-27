@@ -223,3 +223,15 @@ describe('a message’s thinking segments', () => {
     expect(getMessage(m.id)?.thinkingSegments).toEqual(segments)
   })
 })
+
+describe('a code session’s stage', () => {
+  it('starts in working mode with no plan, and keeps a stage and a plan when set', () => {
+    const c = session('/Users/me/repo')
+    expect(c).toMatchObject({ stage: 'work', plan: null })
+    expect(updateConversation(c.id, { stage: 'plan' })).toMatchObject({ stage: 'plan', plan: null })
+    expect(updateConversation(c.id, { stage: 'work', plan: 'Read, then edit.' })).toMatchObject({ stage: 'work', plan: 'Read, then edit.' })
+    // A patch that says nothing about them leaves them alone.
+    expect(updateConversation(c.id, { title: 'Renamed' })).toMatchObject({ stage: 'work', plan: 'Read, then edit.' })
+    expect(updateConversation(c.id, { plan: null })).toMatchObject({ plan: null })
+  })
+})
