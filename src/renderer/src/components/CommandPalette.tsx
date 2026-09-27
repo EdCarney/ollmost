@@ -54,7 +54,9 @@ export function CommandPalette() {
   }, [searchOpen, setPreviewSettings])
 
   useEffect(() => {
-    setIndex(0)
+    // A choice list opens on the value in force; typing, or the command list, starts at the top.
+    const current = choosing && !query ? choosing.choices?.findIndex((c) => c.value === choosing.current) : -1
+    setIndex(Math.max(0, current ?? -1))
     if (choosing || !query.trim()) return setHits([])
     const t = setTimeout(() => api.conversations.search(query).then(setHits), 120)
     return () => clearTimeout(t)
@@ -147,8 +149,6 @@ export function CommandPalette() {
     if (command.choices) {
       setChoosing(command)
       setQuery('')
-      const at = command.choices.findIndex((c) => c.value === command.current)
-      setIndex(Math.max(0, at))
       return
     }
     rememberCommand(command.id)

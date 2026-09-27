@@ -393,9 +393,11 @@ await second.win.screenshot({ path: join(SHOTS, 'home-nord-dark.png') })
     '⌘K lists commands: typing "them" offers Theme',
     (await w.locator('[data-testid="palette-rows"] button', { hasText: 'Theme' }).count()) > 0
   )
+  const before = await canvas()
   await w.keyboard.press('Enter')
   await w.waitForSelector('input[placeholder="Choose…"]')
-  const before = await canvas()
+  await w.waitForTimeout(300)
+  check('the choices open on the theme in force, changing nothing', (await canvas()) === before, `${await canvas()} (saved ${before})`)
   await w.locator('input[placeholder="Choose…"]').fill('nord')
   await w.waitForTimeout(400)
   const previewed = await canvas()
