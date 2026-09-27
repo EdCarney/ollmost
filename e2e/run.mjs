@@ -601,9 +601,29 @@ const fakeOllama = createServer(async (req, res) => {
   }
   const toolNames = (body.tools ?? []).map((t) => t.function.name)
   const toolResults = body.messages.filter((m) => m.role === 'tool').map((m) => m.content)
+  const lastUser = body.messages.filter((m) => m.role === 'user').at(-1)?.content ?? ''
+  const isChild = String(body.messages[0].content).includes('<sub_agent>')
   mockChats.push({ toolNames, toolResults, system: body.messages[0].content })
   let message
-  if (toolNames.includes('web_search')) {
+  // A delegated task: the parent hands it off, the child (its system prompt holds <sub_agent>) searches for the
+  // codeword, and each then answers once it has a tool result.
+  if (lastUser === 'Delegate: find the codeword' && toolResults.length === 0) {
+    message = {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ function: { name: 'delegate', arguments: { task: 'Search the web for the Ollmost codeword and reply with it.' } } }]
+    }
+  } else if (isChild && toolResults.length === 0) {
+    message = {
+      role: 'assistant',
+      content: '',
+      tool_calls: [{ function: { name: 'web_search', arguments: { query: 'Ollmost codeword' } } }]
+    }
+  } else if (isChild) {
+    message = { role: 'assistant', content: 'The codeword is OLLMOST-DELEGATE-OK.' }
+  } else if (lastUser === 'Delegate: find the codeword') {
+    message = { role: 'assistant', content: 'The sub-agent reports: OLLMOST-DELEGATE-OK.' }
+  } else if (toolNames.includes('web_search')) {
     message =
       toolResults.length === 0
         ? {
@@ -888,6 +908,37 @@ writeFileSync(
       urls.length === 2 && urls.every((u) => u === pageUrl) && closedAfterClick,
       `${urls.length} opens, closed=${closedAfterClick}`
     )
+
+    // 14. A sub-agent (the delegate tool): a fresh reply with the same tools, shown as its own card with its
+    // task and calls, whose requests the debugger lists as a Sub-agent turn.
+    await newChat(win)
+    const delegated = await send(win, 'Delegate: find the codeword')
+    check('a delegated task is answered from the sub-agent’s result', /OLLMOST-DELEGATE-OK/.test(delegated), delegated.slice(0, 80))
+    const delegateCard = win.locator('[data-testid="delegate-card"]').first()
+    check(
+      'the sub-agent card names the task and its calls',
+      /Sub-agent · Search the web/.test(await delegateCard.innerText()),
+      await delegateCard.innerText()
+    )
+    await delegateCard.locator('button').first().click()
+    await win.waitForSelector('[data-testid="delegate-card"] [data-testid="tool-group"]')
+    const inside = await delegateCard.innerText()
+    check(
+      'opened, it shows the child’s search and its result',
+      /Searched the web/.test(inside) && /The codeword is OLLMOST-DELEGATE-OK/.test(inside),
+      inside.slice(0, 120)
+    )
+    // The debugger lists the child's requests as their own Sub-agent turn.
+    const [dbg2] = await Promise.all([app.waitForEvent('window'), win.click('button[aria-label^="Open debugger"]')])
+    await dbg2.waitForSelector('text=Sub-agent · ', { timeout: 10000 })
+    check(
+      'the debugger lists the sub-agent’s requests as a Sub-agent turn',
+      await dbg2
+        .getByText(/Sub-agent · /)
+        .first()
+        .isVisible()
+    )
+    await dbg2.close()
   } catch (err) {
     check('tool runs completed without errors', false, err.message.split('\n')[0])
     await win.screenshot({ path: join(SHOTS, 'tools-failure.png') }).catch(() => {})
