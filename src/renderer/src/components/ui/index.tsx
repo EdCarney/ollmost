@@ -106,7 +106,7 @@ export const TooltipProvider = RTooltip.Provider
 
 // ---- Menus ----------------------------------------------------------------
 
-// A floating panel's look, without padding: a submenu hands its spacing to the list and footer inside it, and
+// A floating panel's look, without padding: a submenu or a popover hands its spacing to the sections inside it, and
 // cn() doesn't merge classes, so a p-0 added after surface's p-1 would lose to it (Tailwind emits p-1 later).
 const panel = 'z-50 min-w-[200px] rounded-ollmost border border-line bg-panel text-sm text-fg shadow-[0_8px_30px_rgba(0,0,0,0.12)]'
 const surface = `${panel} p-1`
@@ -305,7 +305,7 @@ export function PopoverContent({
         sideOffset={6}
         collisionPadding={12}
         onOpenAutoFocus={onOpenAutoFocus}
-        className={cn(surface, 'p-0', className)}
+        className={cn(panel, className)}
       >
         {children}
       </Popover.Content>
