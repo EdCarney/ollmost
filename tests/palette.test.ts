@@ -60,5 +60,16 @@ describe('ranking commands', () => {
     expect(rankCommands('new theme', cmds, [])).toEqual([])
     // A query that is only filler still matches by its own letters.
     expect(rankCommands('the', cmds, []).map((c) => c.id)).toEqual(['theme'])
+    // Punctuation on its own, as in the issue's "open Settings → Tools", is not a word.
+    expect(rankCommands('open settings → theme', cmds, []).map((c) => c.id)).toEqual([])
+    expect(rankCommands('change → theme', cmds, []).map((c) => c.id)).toEqual(['theme'])
+  })
+
+  it('ranks letters scattered through a title below a keyword that starts with the query', () => {
+    const list = [
+      { id: 'mode', title: 'Appearance mode', keywords: ['light', 'dark'] },
+      { id: 'tools', title: 'Settings › Tools', keywords: ['code runner', 'mcp'] }
+    ]
+    expect(rankCommands('code', list, []).map((c) => c.id)).toEqual(['tools', 'mode'])
   })
 })

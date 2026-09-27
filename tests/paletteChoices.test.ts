@@ -19,6 +19,20 @@ describe('the settings the palette offers choices for', () => {
       const values = c.choices.map((x) => x.value)
       expect(values, c.title).toContain(c.current)
     }
+    // A saved value off the list (a width off the grid, a theme or model no longer there) is added with its own patch.
+    const odd = settingsCommands(
+      { ...settings, appearance: { ...appearance, chatWidth: 768, themeId: 'gone' }, defaultModel: 'old-model:7b' } as Settings,
+      themes,
+      models
+    )
+    const byId = Object.fromEntries(odd.map((c) => [c.id, c]))
+    expect(byId['chat-width'].choices.find((x) => x.value === '768')?.patch).toEqual({ appearance: { chatWidth: 768 } })
+    expect(byId['theme'].choices.find((x) => x.value === 'gone')?.patch).toEqual({ appearance: { themeId: 'gone' } })
+    expect(byId['default-model'].choices.find((x) => x.value === 'old-model:7b')).toMatchObject({
+      label: 'old-model:7b',
+      patch: { defaultModel: 'old-model:7b' }
+    })
+    expect(byId['default-model'].current).toBe('old-model:7b')
   })
 
   it('offers "Last used" for the default model, marks cloud models, and steps the chat width like the slider', () => {
