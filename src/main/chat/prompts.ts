@@ -113,7 +113,7 @@ This session is in plan mode: you can read files, list and search the folder, bu
         ? `
 
 <approved_plan>
-The user approved this plan (written in plan mode) and started work. Carry it out; where you depart from it, say so and why.
+The user approved this plan, written in plan mode, and started work. The conversation shows how far it has got; the user's latest message comes first, and where you depart from the plan, say so and why.
 ${opts.plan.trim()}
 </approved_plan>`
         : ''

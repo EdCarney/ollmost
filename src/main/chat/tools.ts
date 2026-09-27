@@ -47,6 +47,8 @@ export interface ToolResult {
   loadedSkillId?: string
   /** The model called a tool Ollmost doesn't provide (often a web or code tool it saw in training). */
   unknown?: boolean
+  /** The tool exists but this reply may not use it (a write in a session's plan mode): refused with the reason. */
+  withheld?: boolean
 }
 
 /** How a call is approved: it runs, it asks (and can be allowed for the chat), or it asks each time. */

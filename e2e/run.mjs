@@ -1621,6 +1621,7 @@ const evilSvg = (port) =>
         'the stage chip switches to Plan',
         (await win.locator('[data-testid="stage-chip"]').getAttribute('aria-label')) === 'Stage: Plan'
       )
+      check('no Start working card before a plan is written', (await win.getByRole('button', { name: 'Start working' }).count()) === 0)
       const requestsBefore = sessionChats.length
       const plan = await send(win, 'Plan a French greeting')
       const planRequest = sessionChats[requestsBefore]
