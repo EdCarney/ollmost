@@ -16,6 +16,7 @@ import {
   declinedResult,
   noteAllowedForChat,
   pendingEvent,
+  runsInParallel,
   runTool,
   type ToolContext,
   toolEndpoint,
@@ -50,6 +51,11 @@ export interface RoundsInput {
   body: ChatBody
   budget: number
   maxRounds: number
+  /**
+   * How many of the calls a round makes in a row to a tool that allows it (sub-agents) may run at once. 1, or unset,
+   * runs every call one at a time, in order.
+   */
+  parallel?: number
   toolContext: ToolContext
   signal: AbortSignal
   /** Totals the rounds add to (tokens, cost, the reasons the reply ended). */
@@ -90,6 +96,7 @@ export interface RoundsResult {
  */
 export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
   const { body, budget, maxRounds, toolContext, conversationId, modelName, model } = input
+  const parallel = input.parallel ?? 1
   const stats = input.stats
   let content = ''
   let thinking = ''
@@ -265,13 +272,9 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
       let callsLeft = calls.length
       let onlyUnknown = true
       let onlyWithheld = true
-      for (const call of calls) {
-        const index = toolEvents.length
-        // `at` places the call in the reply's text, where the UI shows it.
-        const pending = { ...(await pendingEvent(call, toolContext)), at: content.length }
-        toolEvents.push(pending)
-        input.onToolEvent(index, pending)
 
+      // One call, once its card shows: ask first where it needs to, run it with its share of the room, show its result.
+      const runCall = async ({ call, index, pending }: ShownCall, maxResultChars: number): Promise<ToolResult> => {
         // A tool that acts on this Mac or the user's accounts waits for their answer (unless allowed for this chat).
         // Stop, deleting the chat and quitting abort the wait, and the call never runs.
         let decision: ToolDecision | 'auto' = 'auto'
@@ -312,7 +315,6 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
           // A report that comes after the call has finished is ignored: it would put back a running card.
           let settled = false
           try {
-            const maxResultChars = Math.min(TOOL_RESULT_CHARS, Math.max(MIN_RESULT_CHARS, Math.floor(roomChars / callsLeft)))
             result = await runTool(call, {
               ...toolContext,
               maxResultChars,
@@ -341,17 +343,43 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         })
         roomChars -= result.content.length
         callsLeft--
-        if (result.unknown) triedUnknown.push(call.function.name)
-        else onlyUnknown = false
-        if (!result.withheld) onlyWithheld = false
         toolEvents[index] = { ...result.event, at: pending.at }
         input.onToolEvent(index, toolEvents[index])
         if (result.loadedSkillId) input.onLoadedSkill(result.loadedSkillId)
-        body.messages.push({ role: 'tool', content: result.content, tool_name: call.function.name })
-        const note = `[Ollmost shortened this earlier ${call.function.name} result to make room in the context window. It was: ${result.event.summary}. Call the tool again if you need it in full.]`
-        if (result.content.length > note.length) turnResults.push({ index: body.messages.length - 1, round, note })
         checkpoint()
-        // Checked only after the result is recorded, so a call that finished isn't saved as stopped.
+        return result
+      }
+
+      for (const batch of batchesOf(calls, parallel, toolContext)) {
+        // A batch's calls all show before any runs, in order, so each keeps its place: its index, its card, and a
+        // sub-agent's id.
+        const shown: ShownCall[] = []
+        for (const call of batch) {
+          const index = toolEvents.length
+          // `at` places the call in the reply's text, where the UI shows it.
+          const pending = { ...(await pendingEvent(call, toolContext)), at: content.length }
+          toolEvents.push(pending)
+          input.onToolEvent(index, pending)
+          shown.push({ call, index, pending })
+        }
+        // Each call's share of the room as it stands now: the calls still to run split it, so a batch's calls never
+        // take more than there is between them.
+        const maxResultChars = Math.min(TOOL_RESULT_CHARS, Math.max(MIN_RESULT_CHARS, Math.floor(roomChars / callsLeft)))
+        const results =
+          shown.length === 1
+            ? [await runCall(shown[0], maxResultChars)]
+            : await runTogether(shown, parallel, input.signal, (c) => runCall(c, maxResultChars))
+        // The results go to the model in call order, whichever finished first.
+        for (const [i, { call }] of shown.entries()) {
+          const result = results[i]
+          if (result.unknown) triedUnknown.push(call.function.name)
+          else onlyUnknown = false
+          if (!result.withheld) onlyWithheld = false
+          body.messages.push({ role: 'tool', content: result.content, tool_name: call.function.name })
+          const note = `[Ollmost shortened this earlier ${call.function.name} result to make room in the context window. It was: ${result.event.summary}. Call the tool again if you need it in full.]`
+          if (result.content.length > note.length) turnResults.push({ index: body.messages.length - 1, round, note })
+        }
+        // Checked only after the results are recorded, so a call that finished isn't saved as stopped.
         input.signal.throwIfAborted()
       }
       // A model reaching for tools Ollmost lacks keeps guessing names; after one explanation, take the
@@ -382,6 +410,55 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
   }
 
   return { content, thinking, thinkingSegments, toolEvents, rounds, error, evalNs, thinkStart, thinkEnd, triedUnknown }
+}
+
+/** A call the round has shown on its card, waiting to run. */
+interface ShownCall {
+  call: ToolCall
+  /** Its place in the reply's tool events. */
+  index: number
+  pending: ToolEvent
+}
+
+/**
+ * A round's calls in order, in batches: calls in a row that may run together (runsInParallel) make one batch when the
+ * reply runs more than one at once; every other call is a batch of its own.
+ */
+function batchesOf(calls: ToolCall[], parallel: number, ctx: ToolContext): ToolCall[][] {
+  const batches: Array<{ calls: ToolCall[]; together: boolean }> = []
+  for (const call of calls) {
+    const together = parallel > 1 && runsInParallel(call, ctx)
+    const last = batches.at(-1)
+    if (together && last?.together) last.calls.push(call)
+    else batches.push({ calls: [call], together })
+  }
+  return batches.map((b) => b.calls)
+}
+
+/**
+ * Run a batch's calls, `limit` at a time: as one finishes the next starts, and none starts once one has failed or the
+ * reply is stopped. Every call that started settles first (a stopped sub-agent reports what it had and closes its
+ * traces), then the first failure, which only a stop can be, is thrown. The results are in the batch's order.
+ */
+async function runTogether<T, R>(items: T[], limit: number, signal: AbortSignal, run: (item: T) => Promise<R>): Promise<R[]> {
+  const results: R[] = []
+  const failures: unknown[] = []
+  let next = 0
+  const worker = async () => {
+    while (next < items.length && !failures.length && !signal.aborted) {
+      const i = next++
+      try {
+        results[i] = await run(items[i])
+      } catch (err) {
+        failures.push(err)
+      }
+    }
+  }
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  if (failures.length) throw failures[0]
+  // A stop between two calls leaves the rest unstarted, with nothing to return (they're saved as stopped).
+  if (next < items.length) signal.throwIfAborted()
+  return results
 }
 
 /** With OLLMOST_DEBUG=1, append each request (images elided) to <userData>/debug.log. */

@@ -127,6 +127,11 @@ export interface ToolProvider {
   allowedForChat?(call: ResolvedCall): void
   /** Where a call goes, for the debugger (a web API, an MCP server). Defaults to ollmost://tools/<name>. */
   endpoint?(call: ResolvedCall): string
+  /**
+   * Calls the model makes in a row to these tools may run at the same time (sub-agents), as many at once as the reply
+   * allows. Others run one at a time, in order.
+   */
+  parallel?: true
 }
 
 // In order: a name offered by two providers belongs to the first.
@@ -254,6 +259,15 @@ export function approvalFor(call: ToolCall, ctx: ToolContext): Approval {
 export function allowKeyFor(call: ToolCall, ctx: ToolContext): string {
   const resolved = resolveCall(call, ctx)
   return (resolved && resolved.provider.allowKey?.(resolved)) ?? resolved?.name ?? call.function.name
+}
+
+/**
+ * Whether a call may run beside the calls next to it in its round: its provider allows it, and it never asks first
+ * (the reply's question would wait while the others ran).
+ */
+export function runsInParallel(call: ToolCall, ctx: ToolContext): boolean {
+  const resolved = resolveCall(call, ctx)
+  return !!resolved?.provider.parallel && (resolved.provider.approval?.(resolved, ctx) ?? 'ask') === 'auto'
 }
 
 /** Tell a call's provider that the user allowed it for the chat. */

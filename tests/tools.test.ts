@@ -21,6 +21,7 @@ const {
   registerToolProvider,
   replayCalls,
   resolveCall,
+  runsInParallel,
   runTool,
   settleToolEvent,
   toolEndpoint,
@@ -304,6 +305,17 @@ describe('asking first', () => {
       summary: 'Tidy. (stopped)',
       child: { ...child, events: [{ tool: 'notes__delete', args: {}, ok: false, pending: false, summary: 'notes (not run)' }] }
     })
+  })
+
+  it('lets a call run beside others only when its provider allows it and it never asks', () => {
+    register(fake('together', ['gather'], { parallel: true, approval: () => 'auto' }))
+    register(fake('together-asking', ['gather_asking'], { parallel: true }))
+    register(fake('alone', ['plain'], { approval: () => 'auto' }))
+    expect(runsInParallel(call('gather'), ctx())).toBe(true)
+    // A question would wait while the others ran.
+    expect(runsInParallel(call('gather_asking'), ctx())).toBe(false)
+    expect(runsInParallel(call('plain'), ctx())).toBe(false)
+    expect(runsInParallel(call('nothing_offers_this'), ctx())).toBe(false)
   })
 
   it("labels each call's trace with where it goes", () => {

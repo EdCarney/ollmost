@@ -52,7 +52,7 @@ import { errorMessage, estimateTokens } from '../util'
 import { hasPrivateFiles } from './exposure'
 import { assemble, type HistoryTurn, promptBudget } from './assemble'
 import { TITLE_PROMPT } from './prompts'
-import { delegateTools } from './delegate'
+import { delegateTools, subAgentsAtOnce } from './delegate'
 import { CHARS_PER_TOKEN, runRounds, toolsTokens } from './rounds'
 import { missingAbilities, registerToolProvider, replayCalls, settleToolEvent, type ToolContext, toolGrants, toolsFor } from './tools'
 import type { WebStatus } from './prompts'
@@ -411,6 +411,8 @@ async function generate(
     const grants = toolGrants(toolContext)
     const tools = toolsFor(toolContext)
     const maxRounds = policy.maxRounds
+    // How many sub-agents this reply may run at the same time; the prompt tells the model the same number.
+    const atOnce = subAgentsAtOnce(settings.delegate)
 
     // After a /compact, the request replays the summary in the system prompt and only the messages that followed.
     const compaction = conversation.compaction
@@ -435,6 +437,7 @@ async function generate(
       toolTokens: toolsTokens(tools),
       pastTools: toolsCapable,
       subAgents: tools?.some((t) => t.function.name === 'delegate') ?? false,
+      subAgentsAtOnce: atOnce,
       project: project ? { name: project.name, instructions: project.instructions } : null,
       chatInstructions: conversation.instructions,
       knowledge: project ? projectKnowledge(project.id) : [],
@@ -464,6 +467,7 @@ async function generate(
       body,
       budget,
       maxRounds,
+      parallel: atOnce,
       toolContext,
       signal: controller.signal,
       stats,

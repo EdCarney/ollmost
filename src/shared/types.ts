@@ -601,8 +601,11 @@ export interface Settings {
    * a command may run, how many tool calls a reply may make, and the network preset new sessions start with.
    */
   code: { edits: 'ask' | 'allow'; commands: 'ask' | 'allow'; timeoutSec: number; maxRounds: number; defaultNetwork: CodeNetwork }
-  /** Whether a model may delegate to a sub-agent (the delegate tool), and how many requests one may make. */
-  delegate: { enabled: boolean; maxRounds: number }
+  /**
+   * Whether a model may delegate to a sub-agent (the delegate tool), how many requests one may make, and how many one
+   * reply may run at the same time (1 to 5; 1 runs them one after another).
+   */
+  delegate: { enabled: boolean; maxRounds: number; parallel: number }
   /** Record every request for the debugger window. */
   debug: { record: boolean }
   /** Hover cards on links; `previews` fetches page title/image from this Mac (off by default for privacy). */
