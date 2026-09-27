@@ -8,6 +8,12 @@ export function formatContext(tokens: number | null): string {
 
 /** A token count with a unit: 999, 8.8K, 123K, 8.79M, 10.0M, 100M (two decimals below 10M, one below 100M). */
 export function formatTokens(n: number): string {
-  if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(n >= 100_000_000 ? 0 : n >= 10_000_000 ? 1 : 2)}M`
+  if (n >= 1_000_000) {
+    const m = n / 1_000_000
+    let decimals = m >= 100 ? 0 : m >= 10 ? 1 : 2
+    // Rounding can carry into the next tier (9,999,999 would read "10.00M"); then that tier's decimals apply.
+    if (decimals > 0 && Number(m.toFixed(decimals)) >= (decimals === 2 ? 10 : 100)) decimals--
+    return `${m.toFixed(decimals)}M`
+  }
   return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}K` : String(n)
 }

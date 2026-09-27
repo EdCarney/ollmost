@@ -23,4 +23,11 @@ describe('formatTokens', () => {
     expect(formatTokens(100_000_000)).toBe('100M')
     expect(formatTokens(1_234_567_890)).toBe('1235M')
   })
+
+  it('drops a decimal when rounding carries a count into the next tier', () => {
+    expect(formatTokens(9_999_999)).toBe('10.0M')
+    expect(formatTokens(9_999_500)).toBe('10.0M')
+    expect(formatTokens(99_999_999)).toBe('100M')
+    expect(formatTokens(99_950_000)).toBe('100M')
+  })
 })
