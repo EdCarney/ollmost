@@ -38,3 +38,7 @@ jobs:
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: 1
       - run: npm test
+        env:
+          # A sandboxed git run takes a few seconds on this runner and sometimes more; the panel's own 10 s limit is
+          # for a user's Mac, so lengthen it here rather than let a slow minute fail the build.
+          OLLMOST_GIT_MS: 60000
