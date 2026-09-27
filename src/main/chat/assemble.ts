@@ -16,6 +16,8 @@ import {
   projectPrompt,
   selectedSkillsPrompt,
   skillIndexPrompt,
+  subAgentPrompt,
+  subAgentsPrompt,
   type WebStatus,
   webPrompt
 } from './prompts'
@@ -81,6 +83,10 @@ export interface AssembleInput {
   history: HistoryTurn[]
   /** A /compact summary of the turns before `history` (which then holds only what followed), with how many it stands for. */
   compaction?: { summary: string; messages: number } | null
+  /** The reply may delegate tasks to sub-agents. */
+  subAgents?: boolean
+  /** This is a sub-agent's request: the task it was given. Replaces what a chat's reply gets that a task doesn't need. */
+  child?: { task: string } | null
 }
 
 export interface Assembled {
@@ -113,20 +119,26 @@ function compactionPrompt(c: { summary: string; messages: number }): string {
 export function buildSystemPrompt(input: AssembleInput): string {
   const identity = { userName: input.userName, model: input.model, date: input.date, web: input.web, grants: input.grants }
   const parts = [input.codeSession ? codeSessionPrompt({ ...input.codeSession, ...identity }) : basePrompt(identity)]
+  if (input.child) parts.push(subAgentPrompt(input.child.task))
   if (input.web === 'on') parts.push(webPrompt())
   if (input.codeRunner && !input.codeSession) parts.push(codePrompt(input.codeRunner))
   if (input.mcpServers?.length) parts.push(mcpPrompt(input.mcpServers))
-  if (input.preferences.trim()) parts.push(preferencesPrompt(input.preferences))
-  if (input.project) parts.push(projectPrompt(input.project))
-  if (input.chatInstructions.trim()) parts.push(chatInstructionsPrompt(input.chatInstructions))
-  if (input.compaction) parts.push(compactionPrompt(input.compaction))
-  if (input.knowledge.length)
-    parts.push(
-      `<project_knowledge>\nThe user added these files to the project. Use them when relevant.\n${input.knowledge
-        .map((k) => documentBlock(k.name, k.text))
-        .join('\n')}\n</project_knowledge>`
-    )
-  if (input.artifacts.enabled) parts.push(artifactsPrompt(input.artifacts.allowCdn))
+  if (input.subAgents && !input.child) parts.push(subAgentsPrompt())
+  // A sub-agent's task is all it needs of the conversation: the user's preferences, the project, the earlier
+  // conversation and the artifacts prompt would only pull it away from the task.
+  if (!input.child) {
+    if (input.preferences.trim()) parts.push(preferencesPrompt(input.preferences))
+    if (input.project) parts.push(projectPrompt(input.project))
+    if (input.chatInstructions.trim()) parts.push(chatInstructionsPrompt(input.chatInstructions))
+    if (input.compaction) parts.push(compactionPrompt(input.compaction))
+    if (input.knowledge.length)
+      parts.push(
+        `<project_knowledge>\nThe user added these files to the project. Use them when relevant.\n${input.knowledge
+          .map((k) => documentBlock(k.name, k.text))
+          .join('\n')}\n</project_knowledge>`
+      )
+    if (input.artifacts.enabled) parts.push(artifactsPrompt(input.artifacts.allowCdn))
+  }
   if (input.skillIndex.length) parts.push(skillIndexPrompt(input.skillIndex))
   if (input.loadedSkills.length) parts.push(loadedSkillsPrompt(input.loadedSkills))
   if (input.selectedSkills.length) parts.push(selectedSkillsPrompt(input.selectedSkills))

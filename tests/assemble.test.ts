@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { assemble, type AssembleInput, collapseSupersededArtifacts, type HistoryTurn } from '../src/main/chat/assemble'
+import { assemble, type AssembleInput, buildSystemPrompt, collapseSupersededArtifacts, type HistoryTurn } from '../src/main/chat/assemble'
 import { effectiveContext } from '../src/shared/context'
 
 const turn = (role: 'user' | 'assistant', content: string, extra: Partial<HistoryTurn> = {}): HistoryTurn => ({
@@ -114,6 +114,28 @@ describe('assemble', () => {
     expect(sys).toMatch(/summar/i)
     expect(messages.slice(1).map((m) => m.content)).toEqual(['so which hotel?'])
     expect(assemble(base).messages[0].content).not.toContain('<earlier_conversation')
+  })
+
+  it('tells a reply that may delegate how to write a task, and a child that it is one', () => {
+    const parent = buildSystemPrompt({ ...base, subAgents: true })
+    expect(parent).toContain('<sub_agents>')
+    expect(parent).toContain('delegate')
+    expect(buildSystemPrompt(base)).not.toContain('<sub_agents>')
+    const child = buildSystemPrompt({
+      ...base,
+      child: { task: 'Find the release date.' },
+      preferences: 'Be brief.',
+      project: { name: 'P', instructions: 'Use tabs.' },
+      knowledge: [{ name: 'k.md', text: 'secret' }],
+      artifacts: { enabled: true, allowCdn: false }
+    })
+    expect(child).toContain('<sub_agent>')
+    expect(child).toContain('Find the release date.')
+    expect(child).not.toContain('Be brief.')
+    expect(child).not.toContain('Use tabs.')
+    expect(child).not.toContain('secret')
+    expect(child).not.toContain('<artifacts')
+    expect(child).not.toContain('<sub_agents>')
   })
 
   it('drops the oldest turns when history exceeds the context window', () => {

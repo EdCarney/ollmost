@@ -428,6 +428,7 @@ async function generate(
       codeSession: codeSessionForPrompt,
       toolTokens: toolsTokens(tools),
       pastTools: toolsCapable,
+      subAgents: tools?.some((t) => t.function.name === 'delegate') ?? false,
       project: project ? { name: project.name, instructions: project.instructions } : null,
       chatInstructions: conversation.instructions,
       knowledge: project ? projectKnowledge(project.id) : [],
