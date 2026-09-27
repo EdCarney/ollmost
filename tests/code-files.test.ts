@@ -360,14 +360,14 @@ describe('edit_file and write_file', () => {
     expect(readFileSync(join(dir, 'bom.txt'))).toEqual(Buffer.from('\uFEFFbonjour\n', 'utf8'))
   })
 
-  it('previews the diff an edit or a write would make, or nothing when it can’t be made', async () => {
+  it('gives the diff an edit or a write would make, or throws what the edit would, writing nothing', async () => {
     const { dir, ws } = project({ 'a.ts': THREE })
-    expect(await files.previewEdit(ws, { path: 'a.ts', oldString: 'two', newString: '2' })).toBe(
+    expect(await files.editDiff(ws, { path: 'a.ts', oldString: 'two', newString: '2' })).toBe(
       '--- a/a.ts\n+++ b/a.ts\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three'
     )
-    expect(await files.previewEdit(ws, { path: 'a.ts', oldString: 'nope', newString: '2' })).toBeNull()
-    expect(await files.previewWrite(ws, { path: 'b.ts', content: 'b\n' })).toBe('--- /dev/null\n+++ b/b.ts\n@@ -0,0 +1,1 @@\n+b')
-    expect(await files.previewWrite(ws, { path: '.git/config', content: 'b\n' })).toBeNull()
+    await expect(files.editDiff(ws, { path: 'a.ts', oldString: 'nope', newString: '2' })).rejects.toThrow(/not found/)
+    expect(await files.writeDiff(ws, { path: 'b.ts', content: 'b\n' })).toBe('--- /dev/null\n+++ b/b.ts\n@@ -0,0 +1,1 @@\n+b')
+    await expect(files.writeDiff(ws, { path: '.git/config', content: 'b\n' })).rejects.toThrow(files.Refused)
     // Nothing was written.
     expect(text(dir, 'a.ts')).toBe(THREE)
     expect(() => statSync(join(dir, 'b.ts'))).toThrow()
@@ -548,6 +548,28 @@ describe('the file tools among a session’s tools', () => {
       summary: 'x',
       args: { pattern: 'x', glob: '*.ts' }
     })
+  })
+
+  it('answers an edit its preview couldn’t make without asking, and leaves the file alone', async () => {
+    const { dir, ws } = project({ 'a.ts': THREE })
+    const ctx = ctxFor(ws)
+    const missing = call('edit_file', { path: 'a.ts', old_string: 'nope', new_string: '2' })
+    expect(await tools.pendingEvent(missing, ctx)).not.toHaveProperty('diff')
+    expect(tools.approvalFor(missing, ctx)).toBe('auto')
+    // The file changing meanwhile doesn't get the edit through unasked: the answer is the preview's.
+    writeFileSync(join(dir, 'a.ts'), 'nope\n')
+    const r = await tools.runTool(missing, ctx)
+    expect(r.content).toMatch(/^Error: /)
+    expect(r.event).toMatchObject({ tool: 'edit_file', ok: false, summary: 'old_string not found' })
+    expect(text(dir, 'a.ts')).toBe('nope\n')
+    // Looked at afresh the next time it's called.
+    expect(await tools.pendingEvent(missing, ctx)).toHaveProperty('diff')
+    expect(tools.approvalFor(missing, ctx)).toBe('ask')
+    // A refused target likewise.
+    const denied = call('write_file', { path: '.git/config', content: 'x' })
+    expect(await tools.pendingEvent(denied, ctx)).not.toHaveProperty('diff')
+    expect(tools.approvalFor(denied, ctx)).toBe('auto')
+    expect((await tools.runTool(denied, ctx)).event).toMatchObject({ tool: 'write_file', ok: false, summary: 'read-only' })
   })
 
   it('runs each tool, giving the model the result and the reply its event', async () => {

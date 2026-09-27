@@ -70,7 +70,7 @@ export function ChatsView() {
                 {hits.map((h) => (
                   <li key={h.conversationId}>
                     <button
-                      onClick={() => navigate(conversationRoute(h.conversationId, sessions))}
+                      onClick={() => navigate(conversationRoute(h.conversationId, sessions, h.mode))}
                       className="w-full rounded-lg px-3 py-3 text-left hover:bg-hover"
                     >
                       <div className="text-sm font-medium">{h.title}</div>

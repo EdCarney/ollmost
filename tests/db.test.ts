@@ -123,6 +123,22 @@ describe('code sessions', () => {
     expect(search('wombat').map((h) => h.conversationId)).toContain(s.id)
   })
 
+  it('marks a search hit with its conversation’s mode', () => {
+    const c = chat()
+    say(c.id, 'pangolin notes')
+    const s = createConversation({
+      projectId: null,
+      model: 'm',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: '/work/pangolin',
+      title: 'pangolin'
+    })
+    expect(search('pangolin').find((h) => h.conversationId === c.id)).toMatchObject({ mode: 'chat' })
+    expect(search('pangolin').find((h) => h.conversationId === s.id)).toMatchObject({ mode: 'code' })
+  })
+
   it('change their network through a patch, and keep it through other changes', () => {
     const s = session('/work/net')
     expect(s.network).toBe('none')

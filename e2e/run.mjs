@@ -2,10 +2,20 @@
 // Usage: npm run build && npm run e2e   (needs the Ollama app running and `ollama signin` for cloud models)
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, readlinkSync, renameSync, writeFileSync } from 'node:fs'
+import {
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  renameSync,
+  writeFileSync
+} from 'node:fs'
 import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
-import { dirname, join } from 'node:path'
+import { basename, dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { fileURLToPath } from 'node:url'
 import electronPath from 'electron'
@@ -1330,6 +1340,243 @@ const evilSvg = (port) =>
     await win.screenshot({ path: join(SHOTS, 'runner-live-failure.png') }).catch(() => {})
   } finally {
     await app.close()
+  }
+}
+
+// 13c. Code sessions: a model reading, editing and running commands in a folder of the user's (never Ollmost's own),
+// with the same approvals as other tools and a Changes panel backed by git run inside the session's own sandbox.
+// Deterministic against a mock model, then live.
+{
+  let gitAvailable = true
+  try {
+    execFileSync('/usr/bin/xcode-select', ['-p'])
+  } catch {
+    gitAvailable = false
+  }
+  check('code sessions: git is available', gitAvailable)
+  if (gitAvailable) {
+    // A repository of its own, made outside Ollmost with the user's config kept out: only its local identity is set.
+    const gitHome = mkdtempSync(join(tmpdir(), 'ollmost-e2e-session-githome-'))
+    const gitEnv = { ...process.env, HOME: gitHome, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
+    const git = (args, cwd) => execFileSync('/usr/bin/git', args, { cwd, env: gitEnv })
+    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-e2e-session-')))
+    git(['init', '-q', '-b', 'main'], repo)
+    git(['config', 'user.name', 'Ollmost E2E'], repo)
+    git(['config', 'user.email', 'e2e@ollmost.test'], repo)
+    writeFileSync(join(repo, 'README.md'), 'Hello from the fixture\n')
+    writeFileSync(join(repo, '.gitignore'), 'scratch/\n')
+    git(['add', '-A'], repo)
+    git(['commit', '-q', '-m', 'Initial commit'], repo)
+
+    const sessionChats = []
+    const sessionOllama = createServer(async (req, res) => {
+      let raw = ''
+      for await (const chunk of req) raw += chunk
+      const body = raw ? JSON.parse(raw) : {}
+      const json = (obj) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(obj))
+      if (req.url === '/api/tags') return json({ models: [{ name: 'mock-tools:latest' }] })
+      if (req.url === '/api/show')
+        return json({ capabilities: ['completion', 'tools'], model_info: { 'mock.context_length': 32768 }, details: {} })
+      if (!body.stream) return json({ message: { role: 'assistant', content: 'Mock title' }, done: true })
+      const toolNames = (body.tools ?? []).map((t) => t.function.name)
+      const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
+      const results = body.messages
+        .slice(lastUser)
+        .filter((m) => m.role === 'tool')
+        .map((m) => m.content)
+      sessionChats.push({ toolNames, system: body.messages[0].content, results })
+      const call = (name, args) => ({ role: 'assistant', content: '', tool_calls: [{ function: { name, arguments: args } }] })
+      // Only a session offers edit_file, so its presence is what tells this fake apart from the other mock chats.
+      const message = !toolNames.includes('edit_file')
+        ? { role: 'assistant', content: 'Plain answer.' }
+        : results.length === 0
+          ? call('read_file', { path: 'README.md' })
+          : results.length === 1
+            ? call('edit_file', { path: 'README.md', old_string: 'Hello', new_string: 'Bonjour' })
+            : results.length === 2
+              ? call('run_command', { command: 'echo done' })
+              : { role: 'assistant', content: 'Changed the greeting and checked it.' }
+      res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+      res.write(JSON.stringify({ message, done: false }) + '\n')
+      res.end(JSON.stringify({ done: true, prompt_eval_count: 100, eval_count: 12, eval_duration: 1e8 }) + '\n')
+    })
+    await new Promise((r) => sessionOllama.listen(0, '127.0.0.1', r))
+    const sessionData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-sessions-'))
+    const app = await electron.launch({ args: [ROOT], env: { ...process.env, OLLMOST_USER_DATA: sessionData } })
+    const win = await app.firstWindow()
+    try {
+      await win.waitForSelector('textarea', { timeout: 20000 })
+      await win.evaluate(
+        (host) => window.ollmost.settings.update({ connection: { mode: 'local', host }, showCloudCatalog: false }),
+        `http://127.0.0.1:${sessionOllama.address().port}`
+      )
+      await win.reload()
+      await win.waitForSelector('textarea')
+      await win.waitForTimeout(1500)
+
+      // 1. Open the folder from the sidebar's Code pane.
+      await win.getByRole('button', { name: 'Code', exact: true }).click()
+      await stubOpenDialog(app, [repo])
+      await win.getByRole('button', { name: 'Open folder…' }).click()
+      await win.waitForSelector('[data-testid="network-chip"]', { timeout: 10000 })
+      const networkChip = await win.locator('[data-testid="network-chip"]').innerText()
+      check(
+        'opening a folder starts a session named after it, with its branch and no network access',
+        (await win.getByText(basename(repo), { exact: true }).first().isVisible()) &&
+          (await win.locator('[aria-label="Branch main"]').isVisible()) &&
+          /No network/.test(networkChip),
+        networkChip
+      )
+
+      // 2. Send a message that reads, then asks to edit, the file.
+      const card = win.locator('[data-testid="approval-card"]')
+      const idle = () => win.waitForFunction(() => !document.querySelector('button[aria-label="Stop"]'), null, { timeout: 60000 })
+      await win.fill('textarea', 'Say bonjour instead of hello')
+      await win.click('button[aria-label="Send"]')
+      await card.waitFor({ timeout: 20000 })
+      const groupText = await win.locator('[data-testid="tool-group"]').last().innerText()
+      check(
+        'the read card appears before the edit is asked for',
+        /Read\s+README\.md/.test(groupText),
+        groupText.replace(/\n/g, ' ').slice(0, 140)
+      )
+      const editAsked = await card.innerText()
+      check(
+        'the edit approval card asks to edit the file, with a diff of the change',
+        /Edit\s+README\.md\?/.test(editAsked) &&
+          editAsked.includes('-Hello from the fixture') &&
+          editAsked.includes('+Bonjour from the fixture'),
+        editAsked.replace(/\n/g, ' ').slice(0, 160)
+      )
+      await win.screenshot({ path: join(SHOTS, 'code-edit-approval.png') })
+      await card.getByRole('button', { name: 'Allow once' }).click()
+
+      // 3. The command approval card, allowed for the rest of the session.
+      await card.waitFor({ timeout: 20000 })
+      const commandAsked = await card.innerText()
+      check(
+        'the command approval card shows the command it wants to run',
+        /Run this command in the sandbox\?/.test(commandAsked) && /echo done/.test(commandAsked),
+        commandAsked.replace(/\n/g, ' ').slice(0, 120)
+      )
+      await card.getByRole('button', { name: 'Allow for this session' }).click()
+      await idle()
+      const finalReply = await win.locator('.prose-ollmost').last().innerText()
+      const commandGroup = await win.locator('[data-testid="tool-group"]').last().innerText()
+      check(
+        'the command runs and the reply ends with the scripted sentence',
+        /echo done/.test(commandGroup) && /Changed the greeting and checked it\./.test(finalReply),
+        `${commandGroup.replace(/\n/g, ' ')} | ${finalReply.slice(0, 60)}`
+      )
+
+      // 4. What the mock model actually saw in its tool results.
+      check(
+        'the model is given the numbered file, the edit result and the command exit code',
+        (sessionChats[1]?.results[0] ?? '').includes('     1\tHello from the fixture') &&
+          (sessionChats[2]?.results[1] ?? '').startsWith('Edited README.md (+1 −1).') &&
+          (sessionChats[3]?.results[2] ?? '').startsWith('Exit code 0.') &&
+          (sessionChats[3]?.results[2] ?? '').includes('done'),
+        JSON.stringify(sessionChats.map((c) => c.results.length))
+      )
+
+      // 5. The file changed on disk; nothing of Ollmost's own is left in the folder; git agrees.
+      check(
+        'the edit landed on disk, and nothing of Ollmost’s own was left in the folder',
+        readFileSync(join(repo, 'README.md'), 'utf8') === 'Bonjour from the fixture\n' &&
+          !existsSync(join(repo, '.ollmost')) &&
+          !existsSync(join(repo, 'uploads'))
+      )
+      const status = execFileSync('/usr/bin/git', ['status', '--porcelain'], { cwd: repo, env: gitEnv }).toString()
+      check('git sees only the one modified file', status === ' M README.md\n', JSON.stringify(status))
+
+      // 6. The Changes panel: git status and a diff, run inside the session's sandbox.
+      await win.click('[data-testid="changes-toggle"]')
+      const panel = win.locator('[data-testid="changes-panel"]')
+      await panel.waitFor({ timeout: 10000 })
+      const rows = panel.locator('[data-testid="changes-row"]')
+      await win.waitForFunction(() => (document.querySelectorAll('[data-testid="changes-row"]').length ?? 0) === 1, null, {
+        timeout: 10000
+      })
+      const rowText = await rows.first().innerText()
+      check('the Changes panel lists the modified file', /README\.md/.test(rowText) && /M/.test(rowText), rowText)
+      await win.waitForFunction(
+        () => document.querySelector('[data-testid="changes-toggle"]')?.parentElement?.textContent?.trim() === '1',
+        null,
+        { timeout: 10000 }
+      )
+      const badgeText = await win.evaluate(
+        () => document.querySelector('[data-testid="changes-toggle"]')?.parentElement?.textContent?.trim() ?? ''
+      )
+      check('the toggle badge counts the rows the panel shows', badgeText === '1', badgeText)
+      await rows.first().click()
+      await win.waitForFunction(
+        () => /\+Bonjour from the fixture/.test(document.querySelector('[data-testid="changes-panel"]')?.textContent ?? ''),
+        null,
+        { timeout: 10000 }
+      )
+      check('selecting the row shows its diff', (await panel.innerText()).includes('+Bonjour from the fixture'))
+      await win.screenshot({ path: join(SHOTS, 'code-changes.png') })
+
+      // 7. Deleting the session leaves the folder exactly as it was. The panel stays open: the title's menu must be
+      // reachable beside it.
+      await win
+        .getByRole('button', { name: basename(repo), exact: true })
+        .last()
+        .click()
+      await win.getByRole('menuitem', { name: 'Delete' }).click()
+      await win.getByRole('dialog').getByRole('button', { name: 'Delete' }).click()
+      await win.waitForSelector('text=No code sessions yet', { timeout: 10000 })
+      check('deleting the session removes nothing from its folder', readdirSync(repo).sort().join(' ') === '.git .gitignore README.md')
+    } catch (err) {
+      check('code sessions run completed without errors', false, err.message.split('\n')[0])
+      await win.screenshot({ path: join(SHOTS, 'code-sessions-failure.png') }).catch(() => {})
+    } finally {
+      await app.close()
+      sessionOllama.close()
+    }
+
+    // 13d. Live: a real model asks to edit a file in a session on the same repository; denying it stops there.
+    if (process.env.OLLMOST_E2E_MODEL) {
+      const liveData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-sessions-live-'))
+      const liveApp = await electron.launch({ args: [ROOT], env: { ...process.env, OLLMOST_USER_DATA: liveData } })
+      const liveWin = await liveApp.firstWindow()
+      try {
+        await liveWin.waitForSelector('textarea', { timeout: 20000 })
+        await liveWin.waitForTimeout(1500)
+        await pickModel(liveWin, CHAT_MODEL)
+        await liveWin.getByRole('button', { name: 'Code', exact: true }).click()
+        await stubOpenDialog(liveApp, [repo])
+        await liveWin.getByRole('button', { name: 'Open folder…' }).click()
+        await liveWin.waitForSelector('[data-testid="network-chip"]', { timeout: 10000 })
+        await liveWin.fill('textarea', 'Change the greeting line of README.md to say Goodbye')
+        await liveWin.click('button[aria-label="Send"]')
+        const liveCard = liveWin.locator('[data-testid="approval-card"]')
+        // The model may look around or run a command first: allow those until it asks to edit.
+        let liveAsked = ''
+        for (let i = 0; i < 6; i++) {
+          await liveCard.waitFor({ timeout: 180000 })
+          liveAsked = await liveCard.innerText()
+          if (/(Edit|Write)\s+README\.md\?/.test(liveAsked)) break
+          await liveCard.getByRole('button', { name: 'Allow once' }).click()
+          await liveCard.waitFor({ state: 'detached', timeout: 60000 })
+        }
+        check(
+          `${CHAT_MODEL} asks to edit a file in a code session, with a diff`,
+          /(Edit|Write)\s+README\.md\?/.test(liveAsked) && /@@/.test(liveAsked),
+          liveAsked.replace(/\n/g, ' ').slice(0, 140)
+        )
+        await liveWin.screenshot({ path: join(SHOTS, 'code-session-live.png') })
+        if (await liveCard.count()) await liveCard.getByRole('button', { name: 'Deny' }).click()
+        await liveWin.waitForFunction(() => !document.querySelector('button[aria-label="Stop"]'), null, { timeout: 240000 })
+      } catch (err) {
+        check('live code session run completed without errors', false, err.message.split('\n')[0])
+        await liveWin.screenshot({ path: join(SHOTS, 'code-session-live-failure.png') }).catch(() => {})
+      } finally {
+        await liveApp.close()
+      }
+    } else {
+      console.log('SKIP  code sessions: live edit check (set OLLMOST_E2E_MODEL to run it)')
+    }
   }
 }
 

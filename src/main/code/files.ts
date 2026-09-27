@@ -102,7 +102,7 @@ const inside = (path: string, root: string): boolean => path === root || path.st
  * Where `given` is, inside the folder at `root` (a real path), or a refusal. The deepest part that exists is taken by
  * its real path and must be inside the folder; what's below it doesn't exist yet.
  */
-async function locate(root: string, given: unknown): Promise<Located> {
+export async function locate(root: string, given: unknown): Promise<Located> {
   if (typeof given !== 'string' || !given.trim()) throw new Refused('no path', 'Give the path of a file, relative to the folder.')
   if (given.includes('\0')) throw new Refused('bad path', 'The path has a NUL character in it.')
   const full = resolve(root, given)
@@ -526,16 +526,16 @@ export const editFile = (ws: Workspace, args: EditArgs): Promise<Change> =>
 export const writeFile = (ws: Workspace, args: WriteArgs): Promise<Change> =>
   readyForSession(ws, async (root) => apply(await planWrite(root, args)))
 
-/** The diff edit_file would make, for the approval that asks first; null when the edit can't be made (the call will say why). */
-export const previewEdit = (ws: Workspace, args: EditArgs): Promise<string | null> =>
+/** The diff edit_file would make, for the approval that asks first. Throws what the edit would. */
+export const editDiff = (ws: Workspace, args: EditArgs): Promise<string> =>
   readyForSession(ws, async (root) => {
     const plan = await planEdit(root, args)
     return unifiedDiff(plan.located.rel, plan.before, plan.after).diff
-  }).catch(() => null)
+  })
 
-/** The diff write_file would make, as previewEdit. */
-export const previewWrite = (ws: Workspace, args: WriteArgs): Promise<string | null> =>
+/** The diff write_file would make, as editDiff. */
+export const writeDiff = (ws: Workspace, args: WriteArgs): Promise<string> =>
   readyForSession(ws, async (root) => {
     const plan = await planWrite(root, args)
     return unifiedDiff(plan.located.rel, plan.before, plan.after).diff
-  }).catch(() => null)
+  })

@@ -53,7 +53,7 @@ describe('the policy for a session’s commands', () => {
     network: 'none'
   })
 
-  it('writes only the root and the scratch, pinning both, and never the git hooks, config or submodules', () => {
+  it('writes only the root and the scratch, pinning both, and never the git hooks, configs, worktrees or submodules', () => {
     expect(p.filesystem.allowWrite).toEqual(['/Users/me/repo', '/data/runner/sessions/s'])
     expect(p.filesystem.denyWrite).toEqual([
       '/private/tmp/claude',
@@ -61,8 +61,13 @@ describe('the policy for a session’s commands', () => {
       '/data/runner/sessions/s/.pinned',
       '/Users/me/repo/.git/hooks',
       '/Users/me/repo/.git/config',
+      '/Users/me/repo/.git/commondir',
+      '/Users/me/repo/.git/config.worktree',
+      '/Users/me/repo/.git/worktrees',
       '/Users/me/repo/.git/modules',
-      '/Users/me/repo/.gitmodules'
+      '/Users/me/repo/.gitmodules',
+      '/Users/me/repo/*/.git',
+      '/Users/me/repo/*/**/.git'
     ])
   })
 
@@ -163,6 +168,26 @@ describe('getting a session ready for a reply', () => {
     const config = existsSync(join(home, '.gitconfig')) ? readFileSync(join(home, '.gitconfig'), 'utf8') : ''
     expect(config).toMatch(/^(\[user\]\n(\t(name|email) = ".*"\n)+)?(\[init\]\n\tdefaultBranch = ".*"\n)?$/)
     expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toBe('Use tabs.')
+  })
+
+  it('stops the Changes panel’s git in the folder first, and waits for it to end', async () => {
+    const { panelRun, panelRunStarted } = await import('../src/main/code/panelRuns')
+    const c = newSession(userFolder())
+    const ws = workspace.workspaceFor(c.id)
+    const { signal } = panelRun(ws.key)
+    let ended = false
+    const run = new Promise<void>((resolve) =>
+      signal.addEventListener('abort', () =>
+        setTimeout(() => {
+          ended = true
+          resolve()
+        }, 50)
+      )
+    )
+    panelRunStarted(ws.key, run)
+    await session.prepareCodeSession(ws, { network: 'none', timeoutSec: 30 })
+    expect(signal.aborted).toBe(true)
+    expect(ended).toBe(true)
   })
 
   it('prefers OLLMOST.md, cuts a long file, and takes none through a link that leaves the folder', async () => {

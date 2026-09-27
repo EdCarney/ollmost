@@ -17,10 +17,24 @@ const firstLine = (command: string): string => {
   return line.length > FIRST_LINE_MAX ? `${line.slice(0, FIRST_LINE_MAX)}…` : line
 }
 
+/**
+ * Whether a card's summary is just its subject restated, bare or with the "(stopped)"/"(not run)" note a settled call
+ * gets: nothing worth a second, redundant line (e.g. "Couldn't read src/x.ts · src/x.ts (stopped)").
+ */
+function repeatsSubject(summary: string, subject: string): boolean {
+  if (!summary) return true
+  // The main process cuts a long command at the same length without the ellipsis this card adds.
+  const plain = subject.replace(/…$/, '')
+  if (summary === plain) return true
+  const note = summary.match(/^(.*) \((stopped|not run)\)$/)
+  return note !== null && note[1] === plain
+}
+
 /** A command a code session ran: its first line and how it went; on click, the whole command and what the model saw. */
 export function CommandCard({ e }: { e: ToolEvent }) {
   const [open, setOpen] = useState(false)
   const command = String(e.args.command ?? '')
+  const subject = firstLine(command)
   const failed = !e.pending && !e.ok && !e.declined
   const label = e.pending ? 'Running command…' : e.declined ? "Didn't run" : e.ok ? 'Ran' : 'Command failed'
   return (
@@ -37,8 +51,12 @@ export function CommandCard({ e }: { e: ToolEvent }) {
       >
         {e.pending ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" /> : <SquareTerminal className="size-3.5 shrink-0" />}
         <span className="shrink-0">{label}</span>
-        {command && <span className="truncate font-mono text-fg">{firstLine(command)}</span>}
-        {failed && e.summary && <span className="shrink-0">· {e.summary}</span>}
+        {command && <span className="truncate font-mono text-fg">{subject}</span>}
+        {failed && e.summary && !repeatsSubject(e.summary, subject) && (
+          <span className="max-w-[320px] truncate" title={e.summary}>
+            · {e.summary}
+          </span>
+        )}
         {!e.pending && <ChevronRight className={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')} />}
       </button>
       {open && (
@@ -99,6 +117,9 @@ export function FileEvent({ e }: { e: ToolEvent }) {
   const expandable = !e.pending && !!e.preview
   const [done, couldnt, didnt] = kind.labels
   const label = e.pending ? kind.pending : e.ok ? done : e.declined ? didnt : couldnt
+  const path = String(e.args.path ?? '')
+  const pattern = String(e.args.pattern ?? '')
+  const subject = e.tool === 'read_file' ? path : pattern || (e.tool === 'list_files' ? 'files' : '')
   return (
     <div className={cn('max-w-full', open && 'basis-full')}>
       <button
@@ -113,8 +134,12 @@ export function FileEvent({ e }: { e: ToolEvent }) {
       >
         {e.pending ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" /> : <Icon className="size-3.5 shrink-0" />}
         <span className="shrink-0">{label}</span>
-        {e.tool === 'read_file' ? <Subject text={String(e.args.path ?? '')} running={e.pending} /> : !e.pending && <Target e={e} />}
-        {!e.pending && !e.declined && e.summary && <span className="shrink-0">· {e.summary}</span>}
+        {e.tool === 'read_file' ? <Subject text={path} running={e.pending} /> : !e.pending && <Target e={e} />}
+        {!e.pending && !e.declined && e.summary && !repeatsSubject(e.summary, subject) && (
+          <span className={failed ? 'max-w-[320px] truncate' : 'shrink-0'} title={failed ? e.summary : undefined}>
+            · {e.summary}
+          </span>
+        )}
         {expandable && <ChevronRight className={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')} />}
       </button>
       {open && e.preview && (
@@ -125,22 +150,6 @@ export function FileEvent({ e }: { e: ToolEvent }) {
       )}
     </div>
   )
-}
-
-/** Lines a unified diff adds and removes. */
-export function diffCounts(diff: string): { added: number; removed: number } {
-  let added = 0
-  let removed = 0
-  // The --- and +++ header lines come before the first hunk. Counting by position rather than by prefix keeps a
-  // removed line that itself starts with "--" (a Markdown rule reads "----") from passing for a header.
-  let inHunk = false
-  for (const line of diff.split('\n')) {
-    if (line.startsWith('@@')) inHunk = true
-    else if (!inHunk) continue
-    else if (line.startsWith('+')) added++
-    else if (line.startsWith('-')) removed++
-  }
-  return { added, removed }
 }
 
 const EDIT_LABELS: Record<string, [string, string, string, string]> = {
@@ -154,6 +163,7 @@ export function EditCard({ e }: { e: ToolEvent }) {
   const failed = !e.pending && !e.ok && !e.declined
   const [running, done, couldnt, didnt] = EDIT_LABELS[e.tool] ?? EDIT_LABELS.edit_file
   const label = e.pending ? running : e.ok ? done : e.declined ? didnt : couldnt
+  const path = String(e.args.path ?? '')
   return (
     <div className={cn('max-w-full', open && 'basis-full')}>
       <button
@@ -168,8 +178,12 @@ export function EditCard({ e }: { e: ToolEvent }) {
       >
         {e.pending ? <LoaderCircle className="size-3.5 shrink-0 animate-spin" /> : <FilePen className="size-3.5 shrink-0" />}
         <span className="shrink-0">{label}</span>
-        <Subject text={String(e.args.path ?? '')} running={e.pending} />
-        {!e.pending && !e.declined && e.summary && <span className="shrink-0">· {e.summary}</span>}
+        <Subject text={path} running={e.pending} />
+        {!e.pending && !e.declined && e.summary && !repeatsSubject(e.summary, path) && (
+          <span className={failed ? 'max-w-[320px] truncate' : 'shrink-0'} title={failed ? e.summary : undefined}>
+            · {e.summary}
+          </span>
+        )}
         {!e.pending && <ChevronRight className={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')} />}
       </button>
       {open && (

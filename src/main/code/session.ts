@@ -1,11 +1,16 @@
 import { execFile } from 'node:child_process'
-import { rm, writeFile } from 'node:fs/promises'
+import { realpath, rm, writeFile } from 'node:fs/promises'
+import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { promisify } from 'node:util'
+import type { SandboxRuntimeConfig } from '@anthropic-ai/sandbox-runtime'
 import type { CodeNetwork } from '@shared/types'
-import { childEnv } from '../env'
-import { openSessionFile, readyForSession, sessionDir, type Workspace } from '../runner/workspace'
+import { childEnv, childPath } from '../env'
+import { readableFolders } from '../runner/provider'
+import { openSessionFile, readyForRun, readyForSession, realRoot, sessionDir, type Workspace } from '../runner/workspace'
 import { readBranch } from './git'
+import { stopPanelRuns } from './panelRuns'
+import { codePolicyFor, toolchainFolders } from './policy'
 
 // Getting a code session ready for a reply (#88): its folder still where it was, its scratch in order, the user's git
 // identity copied in, and what the prompt says about the project (its instructions file, its branch). All of Ollmost's
@@ -61,9 +66,26 @@ export function sessionEnv(ws: Workspace, path: string, toolchains: Record<strin
 
 let identity: { at: number; value: Promise<Record<string, string>> } | null = null
 
-/** Forget the cached identity (tests). */
+/** Forget what git told us, the identity and whether the tools are there (tests). */
 export const forgetGitIdentity = (): void => {
   identity = null
+  tools = null
+}
+
+let tools: { at: number; value: Promise<boolean> } | null = null
+
+/**
+ * Whether the Command Line Tools are installed: without them /usr/bin/git only opens an install dialog, so nothing
+ * runs git then. Cached briefly, like the identity.
+ */
+export function hasCommandLineTools(): Promise<boolean> {
+  if (tools && Date.now() - tools.at < IDENTITY_TTL_MS) return tools.value
+  const value = run('/usr/bin/xcode-select', ['-p']).then(
+    () => true,
+    () => false
+  )
+  tools = { at: Date.now(), value }
+  return value
 }
 
 /**
@@ -89,7 +111,7 @@ export function gitIdentity(reader: (key: string) => Promise<string | null> = re
 
 async function readGlobalConfig(key: string): Promise<string | null> {
   try {
-    await run('/usr/bin/xcode-select', ['-p'])
+    if (!(await hasCommandLineTools())) return null
     const env = await childEnv()
     const { stdout } = await run('/usr/bin/git', ['config', '--global', '--get', key], { cwd: '/', env, timeout: 5_000 })
     return stdout.trim() || null
@@ -152,6 +174,9 @@ async function readInstructions(ws: Workspace): Promise<CodeSession['instruction
 export async function prepareCodeSession(ws: Workspace, opts: { network: CodeNetwork; timeoutSec: number }): Promise<CodeSession> {
   // Outside the lock: git may take a moment the first time.
   const values = await gitIdentity()
+  // The Changes panel may have git going in the folder (a refresh as the last reply ended): stopped and waited for,
+  // so the turn keeps its tools rather than losing them to a run that ends in a moment.
+  await stopPanelRuns(ws.key)
   return readyForSession(ws, async (root) => {
     await writeGitConfig(ws, values)
     return {
@@ -162,4 +187,30 @@ export async function prepareCodeSession(ws: Workspace, opts: { network: CodeNet
       timeoutSec: opts.timeoutSec
     }
   })
+}
+
+/**
+ * What a command in a session's sandbox runs with: the policy for its folder (a real path, which the sandbox
+ * matches), its scratch, the toolchains on PATH and the session's network preset, and the session's environment.
+ * First the folder is checked to be where it was (RootMissingError otherwise) and the scratch put in order
+ * (readyForRun), which is refused (CodeRunningError) while code already runs in the folder, this session's or
+ * another's on the same folder; the file tools are refused likewise while a command runs.
+ */
+export async function sandboxFor(
+  ws: Workspace,
+  network: CodeNetwork
+): Promise<{ policy: SandboxRuntimeConfig; env: Record<string, string> }> {
+  await readyForRun(ws)
+  const path = await childPath()
+  const home = homedir()
+  const toolchains = toolchainFolders(path, home)
+  const policy = codePolicyFor({
+    root: await realRoot(ws),
+    session: await realpath(sessionDir(ws.id)),
+    home,
+    readable: [...(await readableFolders()), ...toolchains.roots],
+    denied: toolchains.denied,
+    network
+  })
+  return { policy, env: sessionEnv(ws, path, toolchains.env) }
 }

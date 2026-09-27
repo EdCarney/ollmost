@@ -1,16 +1,43 @@
-import { ArrowDown, Bug, ChevronDown, FolderClosed, GitBranch, ScrollText, TriangleAlert } from 'lucide-react'
+import {
+  ArrowDown,
+  Bug,
+  Check,
+  ChevronDown,
+  FileDiff,
+  FolderClosed,
+  GitBranch,
+  Globe,
+  GlobeLock,
+  ScrollText,
+  TriangleAlert
+} from 'lucide-react'
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import type { CodeNetwork } from '@shared/types'
 import { Composer } from '@/components/Composer'
 import { ConversationMenu } from '@/components/ConversationMenu'
 import { AssistantMessage, UserMessage } from '@/components/Messages'
 import { TopBar } from '@/components/TopBar'
 import { ChatCost } from '@/components/UsageBar'
-import { Button, IconButton, Spinner, Tooltip } from '@/components/ui'
+import {
+  Badge,
+  Button,
+  IconButton,
+  Menu,
+  MenuContent,
+  MenuItem,
+  MenuLabel,
+  MenuSeparator,
+  MenuTrigger,
+  Spinner,
+  Tooltip
+} from '@/components/ui'
 import { api } from '@/lib/api'
 import { continueReply, editMessage, retryLast, sendMessage } from '@/lib/chatActions'
 import { folderName } from '@/lib/codeActions'
 import { reportError } from '@/stores/app'
+import { useChangesPanel } from '@/stores/changesPanel'
 import { useChat } from '@/stores/chat'
+import { NETWORKS, NETWORK_SHORT_LABEL } from '@/views/ToolsSettings'
 
 /** A code session: the chat's transcript and composer, with the folder it works in and that folder's branch. */
 export function CodeSessionView({ id }: { id: string }) {
@@ -69,7 +96,27 @@ export function CodeSessionView({ id }: { id: string }) {
     }
   }
 
+  const setNetwork = async (network: CodeNetwork) => {
+    try {
+      setConversation(await api.conversations.update(id, { network }))
+    } catch (err) {
+      reportError(err)
+    }
+  }
+
+  // This view is keyed by id (App.tsx), so leaving this session for another one or elsewhere unmounts it: close
+  // the Changes panel then, if it was the one open, so it doesn't silently reopen on a later visit to this session.
+  useEffect(() => {
+    return () => {
+      if (useChangesPanel.getState().sessionId === id) useChangesPanel.getState().close()
+    }
+  }, [id])
+
   const current = conversation?.id === id ? conversation : null
+  const changesOpen = useChangesPanel((s) => s.open && s.sessionId === id)
+  const changesCountFor = useChangesPanel((s) => s.countFor)
+  const changesCount = useChangesPanel((s) => s.count)
+  const changesBadge = changesCountFor === id ? changesCount : 0
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -79,6 +126,23 @@ export function CodeSessionView({ id }: { id: string }) {
           current && (
             <>
               <ChatCost usage={usage} model={current.model} />
+              <div className="relative">
+                <IconButton
+                  label="Changes"
+                  size="sm"
+                  active={changesOpen}
+                  aria-pressed={changesOpen}
+                  data-testid="changes-toggle"
+                  onClick={() => useChangesPanel.getState().toggle(id)}
+                >
+                  <FileDiff className="size-4" />
+                </IconButton>
+                {changesBadge > 0 && (
+                  <Badge tone="neutral" className="pointer-events-none absolute -right-1.5 -top-1.5">
+                    {changesBadge}
+                  </Badge>
+                )}
+              </div>
               <IconButton label="Open debugger (⌘⇧D)" size="sm" onClick={() => api.debug.open(current.id)}>
                 <Bug className="size-4" />
               </IconButton>
@@ -86,24 +150,57 @@ export function CodeSessionView({ id }: { id: string }) {
           )
         }
       >
-        <div className="flex min-w-0 flex-1 items-center gap-1.5">
+        {/* The title's menu must stay reachable: while the Changes panel is open the chips show only their icons, when
+            room runs short they shrink before the title, and what still doesn't fit is clipped rather than laid over
+            the right side. */}
+        <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">
           {current?.root && (
             <>
               <Tooltip content={current.root}>
                 <button
                   onClick={() => void api.code.reveal(id).catch(reportError)}
-                  className="flex min-w-0 items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] text-muted hover:bg-hover hover:text-fg"
+                  className="flex min-w-8 shrink-[3] items-center gap-1.5 rounded-md px-1.5 py-1 text-[13px] text-muted hover:bg-hover hover:text-fg"
                 >
                   <FolderClosed className="size-3.5 shrink-0" />
-                  <span className="max-w-[180px] truncate">{folderName(current.root)}</span>
+                  <span className={`max-w-[180px] truncate${changesOpen ? ' hidden' : ''}`}>{folderName(current.root)}</span>
                 </button>
               </Tooltip>
               {status?.branch && (
-                <span aria-label={`Branch ${status.branch}`} className="flex min-w-0 items-center gap-1 px-1.5 py-1 text-[13px] text-muted">
+                <span
+                  aria-label={`Branch ${status.branch}`}
+                  className="flex min-w-8 shrink-[3] items-center gap-1 px-1.5 py-1 text-[13px] text-muted"
+                >
                   <GitBranch className="size-3.5 shrink-0" />
-                  <span className="max-w-[160px] truncate">{status.branch}</span>
+                  <span className={`max-w-[160px] truncate${changesOpen ? ' hidden' : ''}`}>{status.branch}</span>
                 </span>
               )}
+              <Menu>
+                <MenuTrigger asChild>
+                  <button
+                    data-testid="network-chip"
+                    aria-label={`Network: ${NETWORK_SHORT_LABEL[current.network]}`}
+                    className="flex min-w-8 shrink-[3] items-center gap-1 rounded-md px-1.5 py-1 text-[13px] text-muted hover:bg-hover hover:text-fg"
+                  >
+                    {current.network === 'none' ? <GlobeLock className="size-3.5 shrink-0" /> : <Globe className="size-3.5 shrink-0" />}
+                    <span className={`max-w-[140px] truncate${changesOpen ? ' hidden' : ''}`}>{NETWORK_SHORT_LABEL[current.network]}</span>
+                  </button>
+                </MenuTrigger>
+                <MenuContent align="start" className="max-w-[260px]">
+                  {NETWORKS.map((o) => (
+                    <MenuItem
+                      key={o.value}
+                      icon={o.value === current.network ? <Check className="size-4 text-accent" /> : null}
+                      onSelect={() => void setNetwork(o.value)}
+                    >
+                      {o.label}
+                    </MenuItem>
+                  ))}
+                  <MenuSeparator />
+                  <MenuLabel>
+                    Registries + git hosts is the only preset that can send data out of your Mac. Takes effect at the next command.
+                  </MenuLabel>
+                </MenuContent>
+              </Menu>
               <span className="text-subtle">/</span>
             </>
           )}
@@ -111,7 +208,7 @@ export function CodeSessionView({ id }: { id: string }) {
             <ConversationMenu
               conversation={current}
               trigger={
-                <button className="flex min-w-0 items-center gap-1 rounded-md px-1.5 py-1 text-sm font-medium hover:bg-hover">
+                <button className="flex min-w-24 items-center gap-1 rounded-md px-1.5 py-1 text-sm font-medium hover:bg-hover">
                   <span className="truncate">{current.title}</span>
                   <ChevronDown className="size-3.5 shrink-0 text-subtle" />
                 </button>

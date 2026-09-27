@@ -1,6 +1,7 @@
 import { X } from 'lucide-react'
 import { useEffect } from 'react'
 import { ArtifactPanel } from './components/ArtifactPanel'
+import { ChangesPanel } from './components/ChangesPanel'
 import { CommandPalette } from './components/CommandPalette'
 import { Sidebar } from './components/Sidebar'
 import { TooltipProvider } from './components/ui'
@@ -9,6 +10,7 @@ import { openFolder } from './lib/codeActions'
 import { cn } from './lib/format'
 import { useApp } from './stores/app'
 import { useArtifactPanel } from './stores/artifactPanel'
+import { useChangesPanel } from './stores/changesPanel'
 import { startUsagePolling } from './stores/usage'
 import { useTheme } from './theme/useTheme'
 import { ArtifactsView } from './views/ArtifactsView'
@@ -126,6 +128,10 @@ export function App() {
   const settings = useApp((s) => s.settings)
   // A code session's replies can hold artifacts too.
   const showsPanel = useApp((s) => s.route.name === 'chat' || (s.route.name === 'code' && !!s.route.id))
+  const codeRouteId = useApp((s) => (s.route.name === 'code' ? s.route.id : undefined))
+  const changesOpen = useChangesPanel((s) => s.open)
+  const changesSessionId = useChangesPanel((s) => s.sessionId)
+  const showsChanges = changesOpen && !!changesSessionId && changesSessionId === codeRouteId
 
   if (!settings) return <div className="h-full bg-canvas" />
 
@@ -138,6 +144,8 @@ export function App() {
             <CurrentView />
           </div>
           {showsPanel && <ArtifactPanel />}
+          {/* Keyed by session so switching sessions remounts it fresh instead of juggling resets by hand. */}
+          {showsChanges && <ChangesPanel key={changesSessionId} />}
         </main>
       </div>
       <CommandPalette />

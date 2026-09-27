@@ -5,6 +5,8 @@ import type {
   ArtifactType,
   Attachment,
   ChatEvent,
+  CodeChanges,
+  CodeDiff,
   CodeNetwork,
   Conversation,
   ConversationDetail,
@@ -207,6 +209,13 @@ export interface OllmostApi {
     status(id: ID): Promise<{ found: boolean; branch: string | null }>
     /** Show a session's folder in Finder. */
     reveal(id: ID): Promise<void>
+    /**
+     * What changed in a session's folder: git status run inside the session's sandbox (never outside it: a folder that
+     * isn't a repository lets session code plant a .git file naming programs for git to run). Refused while a reply runs.
+     */
+    changes(id: ID): Promise<CodeChanges>
+    /** One changed file's diff (`path` relative to the folder), from git inside the sandbox. Refused while a reply runs. */
+    diff(id: ID, path: string): Promise<CodeDiff>
   }
   mcp: {
     /** Configured servers (environment variable names only, never values). */
@@ -273,7 +282,7 @@ export const INVOKE_CHANNELS = {
   debug: ['open', 'list', 'get', 'clear', 'exportTraces', 'replay', 'target', 'inspectApp'],
   links: ['preview'],
   runner: ['status', 'packages', 'resetEnvironment', 'openFile', 'revealFile', 'saveFile'],
-  code: ['pickFolder', 'create', 'recentRoots', 'locate', 'status', 'reveal'],
+  code: ['pickFolder', 'create', 'recentRoots', 'locate', 'status', 'reveal', 'changes', 'diff'],
   mcp: ['list', 'save', 'remove', 'status', 'connect', 'restart', 'log', 'setToolPolicy', 'importJson', 'importSources', 'importFrom']
 } as const satisfies { [G in Exclude<keyof OllmostApi, 'events' | 'files'>]: ReadonlyArray<keyof OllmostApi[G]> }
 

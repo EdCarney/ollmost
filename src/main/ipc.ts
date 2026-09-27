@@ -10,6 +10,7 @@ import { BUILTIN_THEMES } from '@shared/themes'
 import type { ThemeDef } from '@shared/types'
 import { decide } from './chat/approvals'
 import { edit, isReplyingIn, regenerate, send, stop, stopAll } from './chat/service'
+import { changes, diff, stopPanelRuns } from './code/changes'
 import { readBranch } from './code/git'
 import { addArtifactVersion, getArtifact, listAllArtifacts, listArtifacts } from './db/artifacts'
 import {
@@ -135,6 +136,16 @@ function assertNotReplying(id: string): void {
     throw new Error('Ollmost is still responding in this session. Stop it or let it finish, then choose the folder again.')
 }
 
+/** Whether a reply runs in any session on this folder: its file tools and commands would fail while the panel's git runs there. */
+const replyingOn = (root: string): boolean =>
+  listConversations({ mode: 'code', limit: 1000 }).some((c) => c.root === root && isReplyingIn(c.id))
+
+/** The Changes panel is refused while a reply runs in any session on the folder. */
+function assertNoReplyOn(root: string): void {
+  if (replyingOn(root))
+    throw new Error('Ollmost is still responding in a session on this folder. Stop it or let it finish, then look again.')
+}
+
 const impl: Impl = {
   app: {
     info: async () => ({ version: app.getVersion(), dataDir: paths.data, platform: process.platform, home: homedir() }),
@@ -236,6 +247,8 @@ const impl: Impl = {
       // Which folder is the chat's is known from its row: taken before the row goes.
       const workspace = workspaceFor(id)
       await removeFiles(deleteConversation(id))
+      // A Changes panel run still going in the folder would keep the scratch from being removed.
+      await stopPanelRuns(workspace.key)
       await removeWorkspace(workspace)
     },
     search: async (q) => search(q)
@@ -420,6 +433,16 @@ const impl: Impl = {
       sessionRoot(id)
       // Throws RootMissingError when the folder isn't where it was.
       shell.showItemInFolder(await realRoot(workspaceFor(id)))
+    },
+    changes: async (id) => {
+      const root = sessionRoot(id)
+      assertNoReplyOn(root)
+      return changes(workspaceFor(id), { replying: () => replyingOn(root) })
+    },
+    diff: async (id, path) => {
+      const root = sessionRoot(id)
+      assertNoReplyOn(root)
+      return diff(workspaceFor(id), path, { replying: () => replyingOn(root) })
     }
   },
 

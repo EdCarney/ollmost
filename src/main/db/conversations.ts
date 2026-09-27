@@ -484,8 +484,8 @@ export function search(query: string): SearchHit[] {
     .filter(Boolean)
   if (!terms.length) return []
   const match = terms.map((t) => `"${t}"*`).join(' ')
-  const rows = all<{ conversation_id: string; snip: string; title: string; updated_at: number }>(
-    `SELECT s.conversation_id, snippet(search_index, 2, char(1), char(2), '…', 14) AS snip, c.title, c.updated_at
+  const rows = all<{ conversation_id: string; snip: string; title: string; updated_at: number; mode: 'chat' | 'code' }>(
+    `SELECT s.conversation_id, snippet(search_index, 2, char(1), char(2), '…', 14) AS snip, c.title, c.updated_at, c.mode
      FROM search_index s JOIN conversations c ON c.id = s.conversation_id
      WHERE search_index MATCH ? ORDER BY rank LIMIT 100`,
     match
@@ -495,7 +495,13 @@ export function search(query: string): SearchHit[] {
   for (const r of rows) {
     if (seen.has(r.conversation_id)) continue
     seen.add(r.conversation_id)
-    hits.push({ conversationId: r.conversation_id, title: r.title, snippet: r.snip, updatedAt: r.updated_at })
+    hits.push({
+      conversationId: r.conversation_id,
+      title: r.title,
+      snippet: r.snip,
+      updatedAt: r.updated_at,
+      mode: r.mode === 'code' ? 'code' : 'chat'
+    })
   }
   return hits.slice(0, 30)
 }

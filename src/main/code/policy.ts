@@ -133,8 +133,21 @@ export function codePolicyFor(p: CodePolicyInput): SandboxRuntimeConfig {
         pin(p.session),
         join(p.root, '.git', 'hooks'),
         join(p.root, '.git', 'config'),
+        // Where git would look for a config instead of .git/config: a commondir file names another git folder
+        // whose config the user's own git would read, config.worktree is a config of its own, and a linked
+        // worktree's folder holds both.
+        join(p.root, '.git', 'commondir'),
+        join(p.root, '.git', 'config.worktree'),
+        join(p.root, '.git', 'worktrees'),
         join(p.root, '.git', 'modules'),
-        join(p.root, '.gitmodules')
+        join(p.root, '.gitmodules'),
+        // No .git below the folder (a glob: any depth, never the folder's own): a subfolder with one is a submodule
+        // to the user's git, which enters it and runs what its config names; that config would be the session's
+        // to write. Costs git init or clone into a subfolder of the session's. A folder made in the scratch can
+        // still be renamed in with one inside (the runtime sees only the folder's creation; #111), so this raises
+        // the bar rather than closing the door; the README says so.
+        join(p.root, '*', '.git'),
+        join(p.root, '*', '**', '.git')
       ]
     }
   }
