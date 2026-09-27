@@ -2205,6 +2205,40 @@ describe('sub-agents', () => {
     expect(live?.event.child?.rounds).toBe(1)
   })
 
+  it('moves the chat’s usage chip on a child’s own request, not only when the parent’s round ends', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b))
+        return hasToolResult(b)
+          ? reply('The headline is OLLMOST-CHILD-OK.')(b, res, n)
+          : void res.writeHead(200).end(toolCall('web_search', { query: 'ollmost' }))
+      return hasToolResult(b)
+        ? reply('The sub-agent found: OLLMOST-CHILD-OK.')(b, res, n)
+        : void res.writeHead(200).end(delegateCall('Search for ollmost and report the headline.'))
+    }
+    web = (_p, res) =>
+      res.writeHead(200).end(JSON.stringify({ results: [{ title: 'Ollmost', url: 'https://k.io', content: 'OLLMOST-CHILD-OK' }] }))
+    const r = start('find the headline')
+    const done = await doneEvent(r.conversation.id)
+    const doneIndex = events.indexOf(done)
+    // Before the reply is done (a title request afterwards ticks the chip too, but that's not what's under test).
+    const usage = events
+      .slice(0, doneIndex)
+      .filter((e): e is Extract<ChatEvent, { type: 'usage' }> => e.type === 'usage' && e.conversationId === r.conversation.id)
+    // One tick for the parent's own round (the delegate call itself), and a second for the child's first
+    // request — not just the one tick the parent's round alone would give.
+    expect(usage.length).toBeGreaterThanOrEqual(2)
+    const rows = all<{ kind: string }>(
+      'SELECT kind FROM usage_events WHERE conversation_id = ? AND kind = ?',
+      r.conversation.id,
+      'delegate'
+    )
+    expect(rows.length).toBeGreaterThan(0)
+    // The second tick already counts the child's row: its running total is past the first tick's.
+    expect(usage[1].usage.promptTokens + usage[1].usage.completionTokens).toBeGreaterThan(
+      usage[0].usage.promptTokens + usage[0].usage.completionTokens
+    )
+  })
+
   it('is offered beside another tool, and never to a child or outside a reply', async () => {
     const { delegateTools } = await import('../src/main/chat/delegate')
     const offered = (over: Partial<ToolContext>) =>

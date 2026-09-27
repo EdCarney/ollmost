@@ -165,6 +165,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
     },
     onUsage: () => {
       rounds++
+      reply.onUsage?.()
     },
     onLoadedSkill: () => {},
     checkpoint: () => {}

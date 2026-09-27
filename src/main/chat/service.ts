@@ -404,7 +404,8 @@ async function generate(
           codeRunner,
           codeSession: codeSessionForPrompt,
           skillIndex
-        }
+        },
+        onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
       }
     }
     const grants = toolGrants(toolContext)
