@@ -72,7 +72,7 @@ tests/           Vitest unit tests      e2e/   live Playwright run against real 
   - HTML and SVG render in a sandboxed iframe (`artifact://`) with no same-origin access and `connect-src 'none'`. Scripts from cdnjs, jsDelivr and unpkg are allowed; you can turn that off in Settings.
   - An updated artifact is saved as a new version, since the model rewrites it in full each time.
   - Any code block of 15+ lines can be promoted with "Open as artifact".
-- **Command palette (⌘K).** Search chats and projects by name or content, and run commands: actions (a new chat or code session, the sidebar, the debugger), places to go (every view and settings tab), and settings with choices: theme, appearance mode, response font, text size, chat width, default model, the usage chip. Moving through a setting's choices previews each one live; Enter keeps it, Escape puts the saved value back. Recent commands come first.
+- **Command palette (⌘K).** Search chats and projects by name or content, and run commands: actions (a new chat or code session, the sidebar, the debugger, adding a skill or an MCP server), places to go (every view and settings tab), and settings with choices: theme, appearance mode, response font, text size, chat width, default model, the usage chip. Moving through a setting's choices previews each one live; Enter keeps it, and Escape or closing the palette puts the saved value back. Recent commands come first, and a query of several words ("set default model") finds the command whose title or keywords hold them all.
 - **Slash commands.** Typing `/` in a chat's composer lists commands above skills. A command runs once when sent and never becomes a message. The first is **`/compact [what to keep]`**: it summarizes every message but the last two exchanges with the chat's model (a history longer than the model's window is summarized in pieces, each folding the summary so far in), and later replies replay the summary instead of those messages, which stay in the transcript with a divider where the summary ends (click it to read the summary). Compact again and the earlier summary is folded in with what followed; editing or retrying a message the summary covers clears it. Commands from marketplace plugins are planned.
 - **Skills.** Ollmost reads `SKILL.md` folders from three places:
   - Its own `skills/` folder, which you can edit.
@@ -170,6 +170,7 @@ The e2e run checks:
 - a live model using the code runner for something it can't do reliably in its head
 - code sessions: reading, editing and running commands in a folder of the user's with approvals, the diff an edit's approval shows, the folder left untouched by a deleted session, and the Changes panel's git status and diff
 - a live model asking to edit a file in a code session, and denying it
+- the command palette: a theme previewed live from its choice list, put back on Escape and on a click outside, kept on Enter, and a theme picked in Settings showing after one chosen in the palette
 - coming from Kiln: migrating data on first launch, waiting for Kiln to quit, and the one-time notice
 
 Screenshots go to `e2e/shots/`. Set `OLLMOST_DEBUG=1` to log every request Ollmost sends to Ollama to `debug.log` in the data folder, along with the PATH Ollmost gives processes it starts. Apps opened from the Dock get a bare PATH, so Ollmost reads the one your login shell sets up.

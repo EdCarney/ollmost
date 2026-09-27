@@ -8,7 +8,7 @@ import { TooltipProvider } from './components/ui'
 import { api } from './lib/api'
 import { openFolder } from './lib/codeActions'
 import { cn } from './lib/format'
-import { useApp } from './stores/app'
+import { debugTargetFor, useApp } from './stores/app'
 import { useArtifactPanel } from './stores/artifactPanel'
 import { useChangesPanel } from './stores/changesPanel'
 import { startUsagePolling } from './stores/usage'
@@ -52,7 +52,7 @@ function useBootstrap() {
       } else if (action === 'settings') s.navigate({ name: 'settings' })
       else if (action === 'search') s.setSearchOpen(true)
       else if (action === 'toggle-sidebar') s.toggleSidebar()
-      else if (action === 'debugger') void api.debug.open(s.route.name === 'chat' || s.route.name === 'code' ? (s.route.id ?? null) : null)
+      else if (action === 'debugger') void api.debug.open(debugTargetFor(s.route))
     })
     // The menu accelerator covers ⌘K normally; this also catches it when the menu doesn't see the key.
     const onKey = (e: KeyboardEvent) => {

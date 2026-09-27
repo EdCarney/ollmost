@@ -29,6 +29,9 @@ export type Route =
   | { name: 'skills'; id?: string }
   | { name: 'settings'; tab?: SettingsTab }
 
+/** The chat or session a debugger opened from a route should show; null elsewhere. */
+export const debugTargetFor = (route: Route): string | null => (route.name === 'chat' || route.name === 'code' ? (route.id ?? null) : null)
+
 export interface Toast {
   id: number
   message: string

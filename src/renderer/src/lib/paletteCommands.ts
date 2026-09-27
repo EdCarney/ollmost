@@ -1,17 +1,8 @@
-import type { DeepPartial } from '@shared/ipc'
 import type { Rankable } from '@shared/palette'
-import type { Settings } from '@shared/types'
+import { type Choice, settingsCommands } from '@shared/paletteChoices'
 import { api } from '@/lib/api'
 import { openFolder } from '@/lib/codeActions'
-import { displayModelName } from '@/lib/format'
-import type { AppState, SettingsTab } from '@/stores/app'
-
-/** One choice a settings command offers; `patch` is what choosing it saves (and what highlighting it previews). */
-export interface Choice {
-  value: string
-  label: string
-  patch: DeepPartial<Settings>
-}
+import { type AppState, debugTargetFor, type SettingsTab } from '@/stores/app'
 
 export type PaletteGroup = 'Actions' | 'Go to' | 'Settings'
 
@@ -59,16 +50,12 @@ const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; keywords: string[] 
   { id: 'data', label: 'Data', keywords: ['export', 'folder', 'debug'] }
 ]
 
-const range = (from: number, to: number, step: number) =>
-  Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, i) => from + i * step)
-
 /** What the commands are built from: only these slices, so a preview (which changes the store) doesn't rebuild them. */
 export type PaletteInput = Pick<AppState, 'settings' | 'themes' | 'models' | 'route' | 'navigate' | 'toggleSidebar'>
 
 /** Every command the palette offers, built from the app's current state. */
 export function paletteCommands(s: PaletteInput): PaletteCommand[] {
   const go = (route: Parameters<AppState['navigate']>[0]) => () => s.navigate(route)
-  const a = s.settings?.appearance
   const commands: PaletteCommand[] = [
     { id: 'new-chat', title: 'New chat', group: 'Actions', keywords: ['start', 'home'], run: go({ name: 'home' }) },
     { id: 'new-session', title: 'New code session…', group: 'Actions', keywords: ['folder', 'open', 'repo'], run: () => openFolder() },
@@ -78,7 +65,7 @@ export function paletteCommands(s: PaletteInput): PaletteCommand[] {
       title: 'Open the debugger',
       group: 'Actions',
       keywords: ['requests', 'traces', 'replay'],
-      run: () => api.debug.open(s.route.name === 'chat' || s.route.name === 'code' ? (s.route.id ?? null) : null)
+      run: () => api.debug.open(debugTargetFor(s.route))
     },
     { id: 'add-skill', title: 'Add a skill', group: 'Actions', keywords: ['import', 'marketplace'], run: go({ name: 'skills' }) },
     {
@@ -101,75 +88,6 @@ export function paletteCommands(s: PaletteInput): PaletteCommand[] {
       run: go({ name: 'settings', tab: t.id })
     }))
   ]
-  if (!a) return commands
-  const appearance = (patch: Partial<Settings['appearance']>): DeepPartial<Settings> => ({ appearance: patch })
-  commands.push(
-    {
-      id: 'theme',
-      title: 'Theme',
-      group: 'Settings',
-      keywords: ['colors', 'appearance', 'change theme'],
-      current: a.themeId,
-      choices: s.themes.map((t) => ({ value: t.id, label: t.name, patch: appearance({ themeId: t.id }) }))
-    },
-    {
-      id: 'mode',
-      title: 'Appearance mode',
-      group: 'Settings',
-      keywords: ['light', 'dark', 'system'],
-      current: a.mode,
-      choices: (['system', 'light', 'dark'] as const).map((mode) => ({
-        value: mode,
-        label: mode[0].toUpperCase() + mode.slice(1),
-        patch: appearance({ mode })
-      }))
-    },
-    {
-      id: 'font',
-      title: 'Response font',
-      group: 'Settings',
-      keywords: ['serif', 'sans', 'reading'],
-      current: a.responseFont,
-      choices: [
-        { value: 'reading', label: 'Serif', patch: appearance({ responseFont: 'reading' }) },
-        { value: 'ui', label: 'Sans', patch: appearance({ responseFont: 'ui' }) }
-      ]
-    },
-    {
-      id: 'font-size',
-      title: 'Text size',
-      group: 'Settings',
-      keywords: ['font size', 'bigger', 'smaller', 'zoom'],
-      current: String(a.fontSize),
-      choices: range(13, 20, 1).map((n) => ({ value: String(n), label: `${n}px`, patch: appearance({ fontSize: n }) }))
-    },
-    {
-      id: 'chat-width',
-      title: 'Chat width',
-      group: 'Settings',
-      keywords: ['narrow', 'wide', 'column'],
-      current: String(a.chatWidth),
-      choices: range(600, 1100, 100).map((n) => ({ value: String(n), label: `${n}px`, patch: appearance({ chatWidth: n }) }))
-    },
-    {
-      id: 'default-model',
-      title: 'Default model',
-      group: 'Settings',
-      keywords: ['model', 'new chats'],
-      current: s.settings?.defaultModel ?? undefined,
-      choices: s.models.map((m) => ({ value: m.name, label: displayModelName(m.name), patch: { defaultModel: m.name } }))
-    },
-    {
-      id: 'usage-header',
-      title: 'Usage in the title bar',
-      group: 'Settings',
-      keywords: ['quota', 'cost', 'tokens', 'chip'],
-      current: s.settings?.usage.showInHeader ? 'on' : 'off',
-      choices: [
-        { value: 'on', label: 'Shown', patch: { usage: { showInHeader: true } } },
-        { value: 'off', label: 'Hidden', patch: { usage: { showInHeader: false } } }
-      ]
-    }
-  )
+  if (s.settings) commands.push(...settingsCommands(s.settings, s.themes, s.models))
   return commands
 }
