@@ -13,6 +13,7 @@ import type {
   MessageStats,
   SendRequest,
   SendResult,
+  ThinkingSegment,
   ThinkSetting,
   ToolDecision,
   ToolEvent
@@ -273,6 +274,14 @@ async function generate(
 ): Promise<void> {
   let content = ''
   let thinking = ''
+  // Each round's thinking with where the round began, so the UI can show it there (#109).
+  const thinkingSegments: ThinkingSegment[] = []
+  let roundAt = { at: 0, index: 0 }
+  // Where the next round begins in the text: where the last round's calls sat, before the separator after them.
+  let nextRoundAt: number | null = null
+  let roundThinkStart: number | null = null
+  let roundThinkEnd: number | null = null
+  const roundThinkMs = () => (roundThinkStart ? (roundThinkEnd ?? Date.now()) - roundThinkStart : null)
   const toolEvents: ToolEvent[] = []
   const stats: MessageStats = { promptTokens: 0, completionTokens: 0 }
   const startedAt = Date.now()
@@ -299,14 +308,21 @@ async function generate(
     return { promptTokens, completionTokens, costUsd, estimated }
   }
 
-  const delta = (d: { content?: string; thinking?: string }) => emit({ type: 'delta', conversationId, messageId, ...d })
+  const delta = (d: { content?: string; thinking?: string; round?: { at: number; index: number } }) =>
+    emit({ type: 'delta', conversationId, messageId, ...d })
+  // The segments so far, the open round's partial thinking included (a checkpoint may be the last save).
+  const segmentsNow = (): ThinkingSegment[] | null => {
+    const open = openRound?.thinking ? [{ text: openRound.thinking, ...roundAt, ms: roundThinkMs() }] : []
+    const all = [...thinkingSegments, ...open]
+    return all.length ? all : null
+  }
 
   // Save progress now and then, so a quit or crash keeps the partial reply (see markInterruptedReplies).
   let savedAt = Date.now()
   const checkpoint = (now = false) => {
     if (!now && Date.now() - savedAt < CHECKPOINT_MS) return
     savedAt = Date.now()
-    checkpointMessage(messageId, { content, thinking: thinking || null, toolEvents })
+    checkpointMessage(messageId, { content, thinking: thinking || null, thinkingSegments: segmentsNow(), toolEvents })
   }
 
   try {
@@ -484,6 +500,10 @@ async function generate(
       let roundThinking = ''
       let final: ChatChunk | null = null
       openRound = { content: '', thinking: '', promptEstimate: estimatePrompt(body) }
+      roundAt = { at: nextRoundAt ?? content.length, index: toolEvents.length }
+      nextRoundAt = null
+      roundThinkStart = null
+      roundThinkEnd = null
       roundTrace = startTrace({
         kind: 'chat',
         conversationId,
@@ -508,10 +528,12 @@ async function generate(
           thinking += m.thinking
           roundThinking += m.thinking
           openRound.thinking += m.thinking
-          delta({ thinking: m.thinking })
+          roundThinkStart ??= Date.now()
+          delta({ thinking: m.thinking, round: roundAt })
         }
         if (m?.content) {
           if (thinkStart && !thinkEnd) thinkEnd = Date.now()
+          if (roundThinkStart && !roundThinkEnd) roundThinkEnd = Date.now()
           content += m.content
           roundContent += m.content
           openRound.content += m.content
@@ -523,6 +545,8 @@ async function generate(
       }
       if (final?.prompt_eval_count) lastCount = { actual: final.prompt_eval_count, estimated: openRound.promptEstimate }
       const billed = recordRound(final)
+      // After recordRound: it cleared openRound, so the catch below won't push this round's thinking a second time.
+      if (roundThinking) thinkingSegments.push({ text: roundThinking, ...roundAt, ms: roundThinkMs() })
       // Another round follows a tool call: show the chat's totals now rather than when the reply ends (the done carries them).
       if (calls.length) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
       // The last round's reason is the reply's: "length" means the model was cut off mid-answer.
@@ -637,6 +661,7 @@ async function generate(
       // tools away so the next request has to be answered in words.
       if (onlyUnknown) body.tools = undefined
       if (content && !content.endsWith('\n')) {
+        nextRoundAt = content.length
         content += '\n\n'
         delta({ content: '\n\n' })
       }
@@ -652,6 +677,7 @@ async function generate(
     if (!controller.signal.aborted) error = errorMessage(err)
     // A stopped or failed stream still spent tokens; record an estimate for the partial round.
     const partial = openRound ? { content: openRound.content, thinking: openRound.thinking } : null
+    if (openRound?.thinking) thinkingSegments.push({ text: openRound.thinking, ...roundAt, ms: roundThinkMs() })
     const billed = partial && (partial.content || partial.thinking) ? recordRound(null) : null
     roundTrace?.finish({
       status: controller.signal.aborted ? 'aborted' : 'error',
@@ -673,6 +699,7 @@ async function generate(
   const message = updateMessage(messageId, {
     content: content.trimEnd(),
     thinking: thinking || null,
+    thinkingSegments: thinkingSegments.length ? thinkingSegments : null,
     // A tool still running when the reply stopped never finished.
     toolEvents: toolEvents.map(settleToolEvent),
     stats,

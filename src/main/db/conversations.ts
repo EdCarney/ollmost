@@ -1,5 +1,16 @@
 import type { ConversationPatch } from '@shared/ipc'
-import type { Attachment, CodeNetwork, Conversation, Message, MessageStats, Role, SearchHit, ThinkSetting, ToolEvent } from '@shared/types'
+import type {
+  Attachment,
+  CodeNetwork,
+  Conversation,
+  Message,
+  MessageStats,
+  Role,
+  SearchHit,
+  ThinkingSegment,
+  ThinkSetting,
+  ToolEvent
+} from '@shared/types'
 import { isServerAllowKey } from '@shared/toolAllow'
 import { fromStored, toStored } from '../paths'
 import { now, parseJson, uid } from '../util'
@@ -245,6 +256,7 @@ interface MessageRow {
   role: string
   content: string
   thinking: string | null
+  thinking_segments: string | null
   model: string | null
   tool_events: string
   stats: string | null
@@ -259,6 +271,7 @@ const toMessage = (r: MessageRow, attachments: Attachment[]): Message => ({
   role: r.role as Role,
   content: r.content,
   thinking: r.thinking,
+  thinkingSegments: parseJson<ThinkingSegment[] | null>(r.thinking_segments, null),
   model: r.model,
   attachments,
   toolEvents: parseJson<ToolEvent[]>(r.tool_events, []),
@@ -317,6 +330,7 @@ export function updateMessage(
   patch: {
     content?: string
     thinking?: string | null
+    thinkingSegments?: ThinkingSegment[] | null
     model?: string | null
     toolEvents?: ToolEvent[]
     stats?: MessageStats | null
@@ -325,10 +339,12 @@ export function updateMessage(
 ): Message {
   const m = getMessage(id)
   if (!m) throw new Error('Message not found')
+  const segments = patch.thinkingSegments !== undefined ? patch.thinkingSegments : m.thinkingSegments
   run(
-    'UPDATE messages SET content = ?, thinking = ?, model = ?, tool_events = ?, stats = ?, error = ? WHERE id = ?',
+    'UPDATE messages SET content = ?, thinking = ?, thinking_segments = ?, model = ?, tool_events = ?, stats = ?, error = ? WHERE id = ?',
     patch.content ?? m.content,
     patch.thinking !== undefined ? patch.thinking : m.thinking,
+    segments ? JSON.stringify(segments) : null,
     patch.model !== undefined ? patch.model : m.model,
     JSON.stringify(patch.toolEvents ?? m.toolEvents),
     JSON.stringify(patch.stats !== undefined ? patch.stats : m.stats),
@@ -343,11 +359,15 @@ export function updateMessage(
  * Save a streaming reply's progress. Deliberately one UPDATE: this runs every couple of seconds on the
  * main thread, and search indexing waits for the final save (updateMessage).
  */
-export function checkpointMessage(id: string, patch: { content: string; thinking: string | null; toolEvents: ToolEvent[] }): void {
+export function checkpointMessage(
+  id: string,
+  patch: { content: string; thinking: string | null; thinkingSegments: ThinkingSegment[] | null; toolEvents: ToolEvent[] }
+): void {
   run(
-    'UPDATE messages SET content = ?, thinking = ?, tool_events = ? WHERE id = ?',
+    'UPDATE messages SET content = ?, thinking = ?, thinking_segments = ?, tool_events = ? WHERE id = ?',
     patch.content,
     patch.thinking,
+    patch.thinkingSegments ? JSON.stringify(patch.thinkingSegments) : null,
     JSON.stringify(patch.toolEvents),
     id
   )

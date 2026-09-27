@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { Artifact, ChatEvent, ChatUsage, Conversation, Message, SendResult, ToolEvent } from '@shared/types'
+import { applyPiece, endLiveThinking, type LiveThinking, type Piece } from '@shared/thinkingStream'
 import { api } from '@/lib/api'
 import { showsConversation, useApp } from './app'
 import { useArtifactPanel } from './artifactPanel'
@@ -8,10 +9,10 @@ export interface StreamState {
   messageId: string
   content: string
   thinking: string
+  /** Each round's thinking, placed where the round began; the last one is live while its `ms` is null. */
+  thinkingSegments: LiveThinking[]
   toolEvents: ToolEvent[]
   startedAt: number
-  thinkingStartedAt: number | null
-  thinkingEndedAt: number | null
 }
 
 interface ChatState {
@@ -40,6 +41,7 @@ function placeholder(result: SendResult): Message {
     role: 'assistant',
     content: '',
     thinking: null,
+    thinkingSegments: null,
     model: result.conversation.model,
     attachments: [],
     toolEvents: [],
@@ -53,10 +55,9 @@ const emptyStream = (messageId: string): StreamState => ({
   messageId,
   content: '',
   thinking: '',
+  thinkingSegments: [],
   toolEvents: [],
-  startedAt: Date.now(),
-  thinkingStartedAt: null,
-  thinkingEndedAt: null
+  startedAt: Date.now()
 })
 
 // Each open() gets a number; a response is applied only if no later open() started meanwhile.
@@ -122,7 +123,8 @@ export const useChat = create<ChatState>((set, get) => ({
 
 // ---- Event handling -----------------------------------------------------
 
-const pending = new Map<string, { messageId: string; content: string; thinking: string }>()
+/** Deltas since the last frame, in order: thinking keeps its round so the stream's segments can be built. */
+const pending = new Map<string, { messageId: string; pieces: Piece[] }>()
 let frame = 0
 
 function flush(): void {
@@ -135,13 +137,13 @@ function flush(): void {
     for (const [convId, d] of batch) {
       const prev = streams[convId]?.messageId === d.messageId ? streams[convId] : emptyStream(d.messageId)
       const now = Date.now()
-      streams[convId] = {
-        ...prev,
-        content: prev.content + d.content,
-        thinking: prev.thinking + d.thinking,
-        thinkingStartedAt: prev.thinkingStartedAt ?? (d.thinking ? now : null),
-        thinkingEndedAt: prev.thinkingEndedAt ?? (d.content && prev.thinkingStartedAt ? now : null)
+      let { content, thinking, thinkingSegments } = prev
+      for (const piece of d.pieces) {
+        if ('content' in piece) content += piece.content
+        else thinking += piece.thinking
+        thinkingSegments = applyPiece(thinkingSegments, piece, now)
       }
+      streams[convId] = { ...prev, content, thinking, thinkingSegments }
     }
     return { streams }
   })
@@ -159,9 +161,10 @@ function handle(e: ChatEvent): void {
   switch (e.type) {
     case 'delta': {
       const p = pending.get(e.conversationId)
-      const entry = p && p.messageId === e.messageId ? p : { messageId: e.messageId, content: '', thinking: '' }
-      entry.content += e.content ?? ''
-      entry.thinking += e.thinking ?? ''
+      const entry = p && p.messageId === e.messageId ? p : { messageId: e.messageId, pieces: [] as Piece[] }
+      if (e.content) entry.pieces.push({ content: e.content })
+      // Thinking from before rounds were placed (an older main process) counts as the first round's.
+      if (e.thinking) entry.pieces.push({ thinking: e.thinking, round: e.round ?? { at: 0, index: 0 } })
       pending.set(e.conversationId, entry)
       if (!frame) frame = requestAnimationFrame(flush)
       break
@@ -172,7 +175,9 @@ function handle(e: ChatEvent): void {
         const prev = s.streams[e.conversationId] ?? emptyStream(e.messageId)
         const toolEvents = [...prev.toolEvents]
         toolEvents[e.index] = e.event
-        return { streams: { ...s.streams, [e.conversationId]: { ...prev, toolEvents } } }
+        // A call means the round's thinking is over, whether or not any text followed it.
+        const thinkingSegments = endLiveThinking(prev.thinkingSegments, Date.now())
+        return { streams: { ...s.streams, [e.conversationId]: { ...prev, toolEvents, thinkingSegments } } }
       })
       // The chat on screen shows the question inline; any other one gets a toast (and a mark in the sidebar).
       if (e.event.awaiting && !onScreen(e.conversationId)) {

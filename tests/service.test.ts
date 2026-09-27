@@ -183,7 +183,10 @@ describe('reply loop', () => {
     let release!: () => void
     const gate = new Promise<void>((r) => (release = r))
     chat = async (_b, res) => {
-      await streamChunks(res, [line({ message: { role: 'assistant', content: 'early words' }, done: false })])
+      await streamChunks(res, [
+        line({ message: { role: 'assistant', content: '', thinking: 'early thought' }, done: false }),
+        line({ message: { role: 'assistant', content: 'early words' }, done: false })
+      ])
       await new Promise((r) => setTimeout(r, 1700))
       res.write(line({ message: { role: 'assistant', content: '!' }, done: false })) // triggers the checkpoint
       await gate
@@ -192,6 +195,8 @@ describe('reply loop', () => {
     const r = start()
     const saved = await waitFor(() => getMessage(r.assistantMessageId)?.content === 'early words!')
     expect(saved).toBe(true)
+    // The checkpoint carries the round's thinking so far, placed, in case it's the last save.
+    expect(getMessage(r.assistantMessageId)?.thinkingSegments).toEqual([{ text: 'early thought', at: 0, index: 0, ms: expect.any(Number) }])
     release()
     await doneEvent(r.conversation.id)
   })
@@ -211,6 +216,16 @@ describe('reply loop', () => {
     // A stop for a delete (or a quit) doesn't start a title request.
     await new Promise((r) => setTimeout(r, 50))
     expect(titleCalls).toHaveLength(0)
+  })
+
+  it('stop() keeps the thinking of the round it stopped in', async () => {
+    chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: '', thinking: 'half a thought' }, done: false })]) // then hangs
+    const r = start()
+    await waitFor(() => events.some((e) => e.type === 'delta' && e.conversationId === r.conversation.id))
+    await service.stop(r.conversation.id, { quiet: true })
+    const saved = getMessage(r.assistantMessageId)!
+    expect(saved.thinking).toBe('half a thought')
+    expect(saved.thinkingSegments).toEqual([{ text: 'half a thought', at: 0, index: 0, ms: expect.any(Number) }])
   })
 
   it('still titles a new chat whose first reply was stopped with Stop', async () => {
@@ -306,6 +321,47 @@ describe('reply loop', () => {
       [true, 13],
       [false, 13]
     ])
+  })
+
+  it('keeps each round’s thinking with where the round began, live and saved', async () => {
+    setApiKey('test-key')
+    const thought = (text: string) => line({ message: { role: 'assistant', content: '', thinking: text }, done: false })
+    chat = (b, res, n) =>
+      n === 1
+        ? void res
+            .writeHead(200)
+            .end(
+              thought('Plan: search.') +
+                line({ message: { role: 'assistant', content: 'Let me check.' }, done: false }) +
+                toolCall('web_search', { query: 'ollmost' })
+            )
+        : n === 2
+          ? void res
+              .writeHead(200)
+              .end(
+                thought('Got it.') +
+                  line({ message: { role: 'assistant', content: 'Found it.' }, done: false }) +
+                  line({ done: true, done_reason: 'stop', prompt_eval_count: 10, eval_count: 3 })
+              )
+          : reply('Search chat')(b, res, n)
+    web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [{ title: 'Ollmosts', url: 'https://k.io', content: 'hot' }] }))
+    const r = start('look it up')
+    const done = await doneEvent(r.conversation.id)
+    // The joined text stays as it was, for older readers; the segments say where each round's thinking belongs.
+    expect(done.message.thinking).toBe('Plan: search.Got it.')
+    expect(done.message.thinkingSegments).toEqual([
+      { text: 'Plan: search.', at: 0, index: 0, ms: expect.any(Number) },
+      { text: 'Got it.', at: 'Let me check.'.length, index: 1, ms: expect.any(Number) }
+    ])
+    const thinkingDeltas = events.filter(
+      (e): e is Extract<ChatEvent, { type: 'delta' }> => e.type === 'delta' && e.conversationId === r.conversation.id && !!e.thinking
+    )
+    expect(thinkingDeltas.map((e) => [e.thinking, e.round])).toEqual([
+      ['Plan: search.', { at: 0, index: 0 }],
+      ['Got it.', { at: 13, index: 1 }]
+    ])
+    const { listMessages } = await import('../src/main/db/conversations')
+    expect(listMessages(r.conversation.id).at(-1)?.thinkingSegments).toEqual(done.message.thinkingSegments)
   })
 
   it('reports the chat’s usage as each round ends, so the chip moves during a long reply', async () => {

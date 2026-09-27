@@ -194,5 +194,10 @@ export const MIGRATIONS: string[] = [
   /* sql */ `
   -- A code session's network preset (CodeNetwork in src/shared/types.ts): what its commands may reach.
   ALTER TABLE conversations ADD COLUMN network TEXT NOT NULL DEFAULT 'none';
+  `,
+  /* sql */ `
+  -- A reply's thinking, one segment per round with where the round began (ThinkingSegment[] as JSON), so it can be
+  -- shown where it happened (#109). \`thinking\` keeps the joined text; null here means a reply from before.
+  ALTER TABLE messages ADD COLUMN thinking_segments TEXT;
   `
 ]

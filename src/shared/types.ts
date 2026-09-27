@@ -152,6 +152,18 @@ export interface MessageStats {
   unavailableTools?: string[]
 }
 
+/**
+ * One round's thinking, placed where the round began: `at` is how long the reply's text was then, `index` how many
+ * tool events the reply had made (round r's thinking sits after round r−1's calls and before round r's).
+ */
+export interface ThinkingSegment {
+  text: string
+  at: number
+  index: number
+  /** How long the round's thinking took, when known. */
+  ms: number | null
+}
+
 export interface Message {
   id: ID
   conversationId: ID
@@ -159,6 +171,8 @@ export interface Message {
   role: Role
   content: string
   thinking: string | null
+  /** Each round's thinking, placed where the round began; null for a reply saved before this was kept. */
+  thinkingSegments: ThinkingSegment[] | null
   model: string | null
   attachments: Attachment[]
   toolEvents: ToolEvent[]
@@ -602,7 +616,15 @@ export interface SendResult {
 }
 
 export type ChatEvent =
-  | { type: 'delta'; conversationId: ID; messageId: ID; content?: string; thinking?: string }
+  | {
+      type: 'delta'
+      conversationId: ID
+      messageId: ID
+      content?: string
+      thinking?: string
+      /** With `thinking`: where the round it belongs to began (see ThinkingSegment). */
+      round?: { at: number; index: number }
+    }
   | { type: 'tool'; conversationId: ID; messageId: ID; index: number; event: ToolEvent }
   | { type: 'done'; conversationId: ID; message: Message; artifacts: Artifact[]; conversation: Conversation; usage: ChatUsage }
   /** The chat's totals so far, sent as a round ends with more to come, and after a title request: the chip moves during a reply. */
