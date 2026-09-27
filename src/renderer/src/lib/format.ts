@@ -1,11 +1,8 @@
+export { formatContext, formatTokens } from '@shared/format'
+
 export function displayModelName(name: string | null | undefined): string {
   if (!name) return 'Choose a model'
   return name.replace(/(:|-)cloud$/, '').replace(/:latest$/, '')
-}
-
-export function formatContext(tokens: number | null): string {
-  if (!tokens) return ''
-  return tokens >= 1_000_000 ? `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 ? 1 : 0)}M` : `${Math.round(tokens / 1000)}K`
 }
 
 /** Ollama reports cloud models' sizes as raw parameter counts ("304180418494"); local ones as "20.9B". */
@@ -22,10 +19,6 @@ export function formatBytes(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(0)} KB`
   return `${(bytes / 1024 / 1024).toFixed(1)} MB`
-}
-
-export function formatTokens(n: number): string {
-  return n >= 1000 ? `${(n / 1000).toFixed(n >= 10_000 ? 0 : 1)}K` : String(n)
 }
 
 const rtf = new Intl.RelativeTimeFormat(undefined, { numeric: 'auto' })
