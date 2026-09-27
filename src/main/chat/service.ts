@@ -544,8 +544,9 @@ async function generate(
         checkpoint()
       }
       if (final?.prompt_eval_count) lastCount = { actual: final.prompt_eval_count, estimated: openRound.promptEstimate }
-      if (roundThinking) thinkingSegments.push({ text: roundThinking, ...roundAt, ms: roundThinkMs() })
       const billed = recordRound(final)
+      // After recordRound: it cleared openRound, so the catch below won't push this round's thinking a second time.
+      if (roundThinking) thinkingSegments.push({ text: roundThinking, ...roundAt, ms: roundThinkMs() })
       // Another round follows a tool call: show the chat's totals now rather than when the reply ends (the done carries them).
       if (calls.length) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
       // The last round's reason is the reply's: "length" means the model was cut off mid-answer.
