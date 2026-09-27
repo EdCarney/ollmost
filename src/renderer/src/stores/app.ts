@@ -29,13 +29,16 @@ export type Route =
   | { name: 'skills'; id?: string }
   | { name: 'settings'; tab?: SettingsTab }
 
+/** The chat or session a debugger opened from a route should show; null elsewhere. */
+export const debugTargetFor = (route: Route): string | null => (route.name === 'chat' || route.name === 'code' ? (route.id ?? null) : null)
+
 export interface Toast {
   id: number
   message: string
   kind: 'info' | 'error'
 }
 
-interface AppState {
+export interface AppState {
   route: Route
   navigate: (route: Route) => void
 
@@ -75,6 +78,9 @@ interface AppState {
   /** A theme being edited; applied live instead of the saved one. */
   previewTheme: ThemeDef | null
   setPreviewTheme: (theme: ThemeDef | null) => void
+  /** Settings the command palette shows while a choice is highlighted, before they're saved (see withPreview). */
+  previewSettings: DeepPartial<Settings> | null
+  setPreviewSettings: (preview: DeepPartial<Settings> | null) => void
 
   skills: Skill[]
   loadSkills: () => Promise<void>
@@ -155,6 +161,8 @@ export const useApp = create<AppState>((set, get) => ({
   loadThemes: async () => set({ themes: await api.themes.list() }),
   previewTheme: null,
   setPreviewTheme: (previewTheme) => set({ previewTheme }),
+  previewSettings: null,
+  setPreviewSettings: (previewSettings) => set({ previewSettings }),
 
   skills: [],
   loadSkills: async () => set({ skills: await api.skills.list() }),

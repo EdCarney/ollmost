@@ -378,6 +378,84 @@ await second.win.screenshot({ path: join(SHOTS, 'home-nord-dark.png') })
     `${latte.dangerFg} / ${mocha.dangerFg}`
   )
 }
+// 9c. The command palette: commands beside search, and a setting's choices previewed live
+{
+  const w = second.win
+  const canvas = () => w.evaluate(() => getComputedStyle(document.documentElement).getPropertyValue('--o-canvas').trim().toLowerCase())
+  const themeId = () => w.evaluate(() => window.ollmost.settings.get().then((s) => s.appearance.themeId))
+  const savedTheme = await themeId()
+  await w.keyboard.press('Meta+K')
+  await w.waitForSelector('[data-testid="palette-rows"]')
+  const search = w.locator('input[placeholder="Search chats, projects and commands…"]')
+  await search.fill('them')
+  await w.waitForTimeout(250)
+  check(
+    '⌘K lists commands: typing "them" offers Theme',
+    (await w.locator('[data-testid="palette-rows"] button', { hasText: 'Theme' }).count()) > 0
+  )
+  const before = await canvas()
+  await w.keyboard.press('Enter')
+  await w.waitForSelector('input[placeholder="Choose…"]')
+  await w.waitForTimeout(300)
+  check('the choices open on the theme in force, changing nothing', (await canvas()) === before, `${await canvas()} (saved ${before})`)
+  await w.locator('input[placeholder="Choose…"]').fill('nord')
+  await w.waitForTimeout(400)
+  const previewed = await canvas()
+  check('highlighting a theme previews it before it is saved', previewed !== before && previewed === '#2e3440', `${before} → ${previewed}`)
+  await w.keyboard.press('Escape')
+  await w
+    .waitForFunction((c) => getComputedStyle(document.documentElement).getPropertyValue('--o-canvas').trim().toLowerCase() === c, before, {
+      timeout: 3000
+    })
+    .catch(() => {})
+  const afterEscape = { canvas: await canvas(), searchInputs: await search.count() }
+  check(
+    'Escape puts the saved theme back and returns to the commands',
+    afterEscape.canvas === before && afterEscape.searchInputs === 1,
+    `${afterEscape.canvas} (saved ${before}), ${afterEscape.searchInputs} search input`
+  )
+  check('nothing was saved by the preview', (await themeId()) === savedTheme)
+  await search.fill('theme')
+  await w.keyboard.press('Enter')
+  await w.waitForSelector('input[placeholder="Choose…"]')
+  await w.locator('input[placeholder="Choose…"]').fill('nord')
+  await w.waitForTimeout(250)
+  await w.keyboard.press('Enter')
+  await w.waitForTimeout(600)
+  check(
+    'Enter keeps the choice and closes the palette',
+    (await themeId()) === 'nord' && (await w.locator('[data-testid="palette-rows"]').count()) === 0
+  )
+  check('the kept theme is on screen', (await canvas()) === '#2e3440', await canvas())
+  // Nothing lingers: a theme picked in Settings right after shows, and a click outside while previewing reverts.
+  await w.getByRole('button', { name: 'Use Dracula theme' }).click()
+  await w.waitForTimeout(400)
+  const dracula = await canvas()
+  check(
+    'a theme picked in Settings shows after one chosen in the palette',
+    dracula !== '#2e3440' && (await themeId()) === 'dracula',
+    dracula
+  )
+  await w.keyboard.press('Meta+K')
+  await w.waitForSelector('[data-testid="palette-rows"]')
+  await search.fill('theme')
+  // Opened with the mouse, the pointer left resting over the list: still on the value in force, nothing previewed.
+  await w.locator('[data-testid="palette-rows"] button', { hasText: 'Theme' }).first().click()
+  await w.waitForSelector('input[placeholder="Choose…"]')
+  await w.waitForTimeout(400)
+  check('a list opened by a click still opens on the saved value', (await canvas()) === dracula, await canvas())
+  await w.locator('input[placeholder="Choose…"]').fill('nord')
+  await w.waitForTimeout(400)
+  check('the list previews again', (await canvas()) === '#2e3440')
+  await w.mouse.click(8, 400)
+  await w.waitForTimeout(500)
+  check(
+    'a click outside puts the saved theme back',
+    (await canvas()) === dracula && (await w.locator('[data-testid="palette-rows"]').count()) === 0,
+    await canvas()
+  )
+  await w.screenshot({ path: join(SHOTS, 'palette-theme.png') })
+}
 await second.app.close()
 
 // 10–11. Tools against a mock Ollama (deterministic): a model that invents tools must get one
