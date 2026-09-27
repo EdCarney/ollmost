@@ -2,32 +2,17 @@ import type { ComposerSubmit } from '@/components/Composer'
 import { reportError, useApp } from '@/stores/app'
 import { useChat } from '@/stores/chat'
 import { useConfirm } from '@/stores/confirm'
-import { historyLoss, type HistoryLoss } from '@shared/historyLoss'
+import { historyLoss, historyLossNotice, type HistoryLoss } from '@shared/historyLoss'
 import type { Message } from '@shared/types'
 import { api } from './api'
 
 /** Ask before an Edit or a Retry that would lose history; resolves true when nothing would be lost or the user
- *  chose to go ahead. See historyLoss for what counts as a loss. */
+ *  chose to go ahead. The decision and its wording are historyLossNotice's (pure, and unit-tested there); this
+ *  just shows what it returns. */
 async function confirmHistoryLoss(kind: 'edit' | 'retry', loss: HistoryLoss): Promise<boolean> {
-  const { laterMessages, clearsSummary, artifactsMayBeDeleted, fileEditsMade } = loss
-  if (!laterMessages && !clearsSummary && !artifactsMayBeDeleted && !fileEditsMade) return true
-  const verb = kind === 'edit' ? 'Edit' : 'Retry'
-  const body: string[] = []
-  // The exchange's own reply always goes too (that's the point of an edit or a retry), so the count says so.
-  if (laterMessages)
-    body.push(`Its reply and the ${laterMessages} ${laterMessages === 1 ? 'message' : 'messages'} after it will be deleted.`)
-  if (clearsSummary)
-    body.push(
-      "The chat's summary covers this message, so it will be cleared. Later replies will send the full history again until you run /compact."
-    )
-  if (artifactsMayBeDeleted) body.push('Artifacts made in those replies may be deleted too.')
-  if (fileEditsMade) body.push('Changes those replies made to files in the folder stay as they are.')
-  // Named labels only for the two single-cause cases the wording above spells out; anything else, including a
-  // combination, gets the neutral "Continue" rather than a label that would only tell part of the story.
-  const reasons = [laterMessages > 0, clearsSummary, artifactsMayBeDeleted, fileEditsMade].filter(Boolean).length
-  const confirmLabel =
-    reasons > 1 ? 'Continue' : laterMessages ? `${verb} and delete` : clearsSummary ? `${verb} and clear summary` : 'Continue'
-  return useConfirm.getState().ask({ title: kind === 'edit' ? 'Edit this message?' : 'Retry this reply?', body, confirmLabel })
+  const notice = historyLossNotice(kind, loss)
+  if (!notice) return true
+  return useConfirm.getState().ask({ title: notice.title, body: notice.lines, confirmLabel: notice.confirmLabel })
 }
 
 export async function sendMessage(conversationId: string | null, projectId: string | null, input: ComposerSubmit): Promise<boolean> {
@@ -66,11 +51,11 @@ export async function continueReply(conversationId: string, reason: ContinueReas
 }
 
 export async function retryLast(conversationId: string, messages: Message[]): Promise<void> {
-  const { conversation } = useChat.getState()
+  const { conversation, artifacts } = useChat.getState()
   if (!conversation?.model) return
   const lastUser = messages.findLastIndex((m) => m.role === 'user')
   if (lastUser < 0) return
-  if (!(await confirmHistoryLoss('retry', historyLoss(messages, lastUser, conversation.compaction)))) return
+  if (!(await confirmHistoryLoss('retry', historyLoss(messages, lastUser, conversation.compaction, artifacts)))) return
   // The confirm can sit on screen long enough for ⌘K or a menu accelerator to move to another chat; regenerating
   // this one once back is still fine, but must not land on whatever chat is open now (stores/chat.ts's open()
   // also answers false to a confirm still waiting on this chat, so this is mostly a belt-and-braces check).
@@ -86,10 +71,15 @@ export async function retryLast(conversationId: string, messages: Message[]): Pr
 /** Edits and resends a message; returns false unless it actually went through, so the edit box can stay open with
  *  the draft on a cancelled confirm, a stale chat switched away from, or an api failure (which still toasts). */
 export async function editMessage(message: Message, content: string, messages: Message[]): Promise<boolean> {
-  const { conversation } = useChat.getState()
-  if (!conversation?.model) return false
+  const { conversation, artifacts } = useChat.getState()
+  if (!conversation?.model) {
+    // The composer's own Send just disables itself with no model chosen; the edit box has no such gate, so it
+    // says why nothing happened instead of silently leaving the draft sitting there.
+    useApp.getState().toast('Pick a model first.')
+    return false
+  }
   const idx = messages.findIndex((m) => m.id === message.id)
-  if (!(await confirmHistoryLoss('edit', historyLoss(messages, idx, conversation.compaction)))) return false
+  if (!(await confirmHistoryLoss('edit', historyLoss(messages, idx, conversation.compaction, artifacts)))) return false
   if (useChat.getState().conversation?.id !== message.conversationId) return false
   try {
     const result = await api.chat.edit(message.id, content, { model: conversation.model, think: conversation.think })
