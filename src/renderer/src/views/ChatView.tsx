@@ -125,7 +125,7 @@ export function ChatView({ id }: { id: string }) {
                     }}
                   />
                 )}
-                {compaction && compactedAfter === m.id && <CompactionDivider compaction={compaction} />}
+                {compaction && compactedAfter === m.id && <CompactionDivider compaction={compaction} conversationId={id} />}
               </Fragment>
             ))}
           </div>

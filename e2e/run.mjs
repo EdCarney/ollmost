@@ -151,8 +151,11 @@ try {
   await win.waitForTimeout(200)
   const opened = (await win.locator('[data-testid="compaction"]').innerText()).trim()
   check('the summary can be read', opened.length > divider.length + 20, opened.slice(divider.length, divider.length + 60))
-  check('the compacted messages stay in the transcript', (await win.locator('.prose-ollmost').count()) === 3)
   await win.screenshot({ path: join(SHOTS, 'compact.png') })
+  // Closed again: the open summary is Markdown too, so it would count as a reply below.
+  await win.locator('[data-testid="compaction"] button').click()
+  await win.waitForTimeout(200)
+  check('the compacted messages stay in the transcript', (await win.locator('.prose-ollmost').count()) === 3)
 
   // 1c. Retry right after /compact: the last reply is covered by the summary, so it asks first; Cancel changes nothing.
   await win.click('button[aria-label="Retry"]')
@@ -1642,9 +1645,11 @@ const evilSvg = (port) =>
       if (req.url === '/api/tags') return json({ models: [{ name: 'mock-tools:latest' }] })
       if (req.url === '/api/show')
         return json({ capabilities: ['completion', 'tools'], model_info: { 'mock.context_length': 32768 }, details: {} })
-      // A /compact summary takes a moment, so the next message can be typed while it runs.
+      // A /compact summary takes a moment, so the next message can be typed while it runs, and comes in Markdown, as
+      // models often write it whatever the prompt asks.
+      const summary = '**Goal:** greet in French.\n\n- Read README.md.\n- Changed Hello to Bonjour.'
       if (!body.stream && String(body.messages[0]?.content).startsWith('You compact'))
-        return setTimeout(() => json({ message: { role: 'assistant', content: 'The greeting was changed to French.' }, done: true }), 2000)
+        return setTimeout(() => json({ message: { role: 'assistant', content: summary }, done: true }), 2000)
       if (!body.stream) return json({ message: { role: 'assistant', content: 'Mock title' }, done: true })
       const toolNames = (body.tools ?? []).map((t) => t.function.name)
       const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
@@ -1867,6 +1872,17 @@ const evilSvg = (port) =>
       const afterCompact = await win.inputValue('textarea')
       check('text typed while /compact runs is still in the composer when it ends', afterCompact === 'Now say it in Spanish', afterCompact)
       await win.fill('textarea', '')
+      // Opened from its divider, the summary reads as Markdown: bold and a list, not ** and - characters.
+      const divider = win.locator('[data-testid="compaction"]')
+      await divider.locator('button').click()
+      await win.waitForTimeout(200)
+      const summaryText = await divider.innerText()
+      check(
+        'the summary opened from its divider is rendered as Markdown',
+        (await divider.locator('strong').count()) === 1 && (await divider.locator('li').count()) === 2 && !summaryText.includes('**'),
+        summaryText.replace(/\n/g, ' ').slice(0, 100)
+      )
+      await divider.locator('button').click()
 
       // 7. Deleting the session leaves the folder exactly as it was. The panel stays open: the title's menu must be
       // reachable beside it.
