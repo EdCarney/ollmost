@@ -58,6 +58,9 @@
   --shiki-token-parameter: var(--o-fg);
   --shiki-token-punctuation: var(--o-synPunctuation);
   --shiki-token-link: var(--o-synFunction);
+  /* A diff's added and removed lines (a code session's edits). */
+  --shiki-token-inserted: var(--o-success);
+  --shiki-token-deleted: var(--o-danger);
 }
 
 @layer base {
