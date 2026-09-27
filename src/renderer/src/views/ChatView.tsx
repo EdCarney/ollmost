@@ -15,6 +15,7 @@ import { useChat } from '@/stores/chat'
 export function ChatView({ id }: { id: string }) {
   const { conversation, messages, artifacts, loading, open, usage } = useChat()
   const stream = useChat((s) => s.streams[id])
+  const compacting = useChat((s) => !!s.compacting[id])
   const { projects, navigate } = useApp()
   const scroller = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
@@ -108,13 +109,15 @@ export function ChatView({ id }: { id: string }) {
             {messages.map((m, i) => (
               <Fragment key={m.id}>
                 {m.role === 'user' ? (
-                  <UserMessage message={m} disabled={!!stream} onEdit={(content) => editMessage(m, content, messages)} />
+                  <UserMessage message={m} disabled={!!stream || compacting} onEdit={(content) => editMessage(m, content, messages)} />
                 ) : (
                   <AssistantMessage
                     message={m}
                     stream={stream?.messageId === m.id ? stream : undefined}
                     artifacts={artifacts}
                     isLast={i === messages.length - 1}
+                    compaction={compaction}
+                    disabled={compacting}
                     onRetry={() => retryLast(id, messages)}
                     onContinue={(reason) => {
                       pinned.current = true

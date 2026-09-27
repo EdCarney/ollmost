@@ -810,13 +810,17 @@ function fallbackTitle(text: string): string {
   return words.length > 50 ? `${words.slice(0, 50)}…` : words || 'Untitled chat'
 }
 
-const COMPACT_PROMPT = `You compact a chat's history for the assistant that will carry it on. Write a summary of the conversation given that a later reply can rely on in place of the messages themselves: what the user wanted, what was decided, found or produced, the names, numbers, code and file names that matter, what is still open, and preferences the user stated. When a summary so far is given, fold it in: the result stands for all of it. Write plain prose in the past tense, with no preamble and no headings unless the conversation has clearly separate threads. Keep it under 500 words. Say nothing the conversation didn't.`
+const COMPACT_PROMPT = `You compact a chat's history for the assistant that will carry it on. Write a summary of the conversation given that a later reply can rely on in place of the messages themselves: what the user wanted, what was decided, found or produced, the names, numbers, code and file names that matter, what is still open, and preferences the user stated. End the summary with where things stand: the user's latest request, whether it was finished, and what was about to happen next. When a summary so far is given, fold it in: the result stands for all of it. Write plain prose in the past tense, with no preamble and no headings unless the conversation has clearly separate threads. Keep it under 500 words. Say nothing the conversation didn't.`
 const COMPACT_INSTRUCTION = 'Summarize the conversation above, as instructed. Answer with the summary only.'
 /** Room a summary request leaves in the window for the summary itself. */
 const COMPACT_REPLY_TOKENS = 1500
 
-/** Messages a /compact leaves as they are: the last two exchanges, so the model keeps the immediate context verbatim. */
-export const COMPACT_KEEPS = 4
+/** A message's prose in a summary's transcript: a longer one keeps its start and its end, where a reply's conclusion is. */
+const TRANSCRIPT_PROSE = { head: 2000, tail: 4000 }
+/** A tool call's line in a summary's transcript. */
+const TRANSCRIPT_CALL_CHARS = 300
+/** The tool calls a message lists in a summary's transcript: a longer run keeps its first and its last. */
+const TRANSCRIPT_CALLS = { head: 40, tail: 80 }
 
 /** A message's substance in one line, for a title or a summary: its prose, artifacts by title. */
 const proseOf = (content: string): string =>
@@ -832,15 +836,45 @@ function argsBrief(args: Record<string, unknown>): string {
   return inner ? `(${inner})` : ''
 }
 
+/** The start and end of a long prose, with a mark for the middle it cut. */
+function proseBrief(prose: string): string {
+  const { head, tail } = TRANSCRIPT_PROSE
+  if (prose.length <= head + tail) return prose
+  return `${prose.slice(0, head)} [… ${prose.length - head - tail} characters cut …] ${prose.slice(-tail)}`
+}
+
 /**
- * A message as a transcript line for the summary: who said it, its prose, what was attached, and what tools it
- * called and got back in brief (in a code session most of the substance is in the calls).
+ * A single transcript line too big for what's left of the whole piece, even after `transcriptLine`'s own budgets
+ * (prose and each call are already capped, but a reply with many calls can still run to tens of thousands of
+ * characters). Cut its middle, like `proseBrief`, so the front-cut of what came before doesn't silently drop this
+ * one's own tail: its last tool calls, which is usually where an agentic reply's outcome sits.
+ */
+function cutToFit(line: string, maxChars: number): string {
+  if (line.length <= maxChars) return line
+  const mark = (n: number) => ` [… ${n} characters cut to fit …] `
+  const room = Math.max(0, maxChars - mark(line.length).length)
+  const head = Math.ceil(room / 2)
+  const tail = room - head
+  return `${line.slice(0, head)}${mark(line.length - head - tail)}${line.slice(line.length - tail)}`
+}
+
+/**
+ * A message as a transcript entry for the summary: who said it, its prose, what was attached, and then each tool
+ * call on a line of its own, with what it got back in brief (in a code session most of the substance is in the
+ * calls). Prose and calls are cut apart, so a long reply keeps its calls and its conclusion, and a cut says so.
  */
 function transcriptLine(m: Message): string {
-  const parts = [proseOf(m.content)]
-  for (const a of m.attachments) parts.push(`[attached: ${a.name}]`)
-  for (const e of m.toolEvents) parts.push(`[${e.tool}${argsBrief(e.args)}${e.summary ? ` → ${e.summary}` : ''}]`)
-  return `${m.role === 'user' ? 'User' : 'Assistant'}: ${parts.filter(Boolean).join(' ').slice(0, 8000)}`
+  const said = [proseBrief(proseOf(m.content)), ...m.attachments.map((a) => `[attached: ${a.name}]`)].filter(Boolean).join(' ')
+  const calls = m.toolEvents.map((e) => {
+    const call = `[${e.tool}${argsBrief(e.args)}${e.summary ? ` → ${e.summary}` : ''}]`
+    return call.length > TRANSCRIPT_CALL_CHARS ? `${call.slice(0, TRANSCRIPT_CALL_CHARS - 1)}…` : call
+  })
+  const { head, tail } = TRANSCRIPT_CALLS
+  const listed =
+    calls.length > head + tail
+      ? [...calls.slice(0, head), `[… ${calls.length - head - tail} more tool calls]`, ...calls.slice(-tail)]
+      : calls
+  return [`${m.role === 'user' ? 'User' : 'Assistant'}:${said ? ` ${said}` : ''}`, ...listed].join('\n')
 }
 
 /** A chat's /compact summary is stale once a message it covers is edited or retried: the summary stood for it. */
@@ -850,24 +884,20 @@ function uncompactFrom(conversationId: string, from: Message): void {
 }
 
 /**
- * /compact: summarize every message but the last exchanges with the chat's model, and keep the summary on the chat
- * so later replies replay it instead of those messages (which stay in the transcript). The request is sized to the
- * model's window: a longer history is summarized in pieces, each folding the summary so far in, which is also how
- * a second compaction folds the earlier summary in with what followed it.
+ * /compact: summarize every message since the last compaction (or the start) with the chat's model, and keep the
+ * summary on the chat so later replies replay it and only the messages that came after (the messages stay in the
+ * transcript). The request is sized to the model's window: a longer history is summarized in pieces, each folding
+ * the summary so far in, which is also how a second compaction folds the earlier summary in with what followed it.
  */
 export async function compact(conversationId: string, opts: { focus: string; model: string }): Promise<Conversation> {
   assertIdle(conversationId)
   const conversation = getConversation(conversationId)
   if (!conversation) throw new Error('Chat not found')
   const earlier = conversation.compaction
-  const all = listMessages(conversationId).filter((m) => m.role === 'user' || m.content)
+  // A reply with tool calls and no prose still counts: in a code session the calls are its substance.
+  const all = listMessages(conversationId).filter((m) => m.role === 'user' || m.content || m.toolEvents.length)
   const since = earlier ? all.filter((m) => m.createdAt > earlier.upTo) : all
-  // Keep the last exchanges whole: the cut moves back to a question, so no answer stays without it.
-  let cut = since.length - COMPACT_KEEPS
-  while (cut > 0 && since[cut].role !== 'user') cut--
-  const older = since.slice(0, Math.max(0, cut))
-  if (older.length < 2)
-    throw new Error(`Nothing to compact yet: the last exchanges stay as they are, and there's less than an exchange before them.`)
+  if (!since.length) throw new Error(earlier ? 'Nothing new to compact since the last summary.' : 'Nothing to compact yet.')
   compacting.add(conversationId)
   try {
     const info = await getModelInfo(opts.model)
@@ -889,7 +919,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
       2000,
       promptBudget(effectiveContext(info, settings.localNumCtx)) - estimateTokens(system) - COMPACT_REPLY_TOKENS
     )
-    const lines = older.map(transcriptLine)
+    const lines = since.map(transcriptLine)
     let summary = earlier?.summary ?? null
     let i = 0
     while (i < lines.length) {
@@ -902,7 +932,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
         const cost = estimateTokens(lines[i]) + 2
         if (piece.length && used + cost > budget) break
         // A single message larger than the whole budget is cut to what fits rather than left out.
-        piece.push(used + cost > budget ? lines[i].slice(0, Math.max(200, (budget - used) * CHARS_PER_TOKEN)) : lines[i])
+        piece.push(used + cost > budget ? cutToFit(lines[i], Math.max(200, (budget - used) * CHARS_PER_TOKEN)) : lines[i])
         used += cost
         i++
       }
@@ -912,8 +942,8 @@ export async function compact(conversationId: string, opts: { focus: string; mod
     if (!getConversation(conversationId)) throw new Error('The chat was deleted while it was being compacted.')
     const compaction: Compaction = {
       summary: summary!,
-      upTo: older[older.length - 1].createdAt,
-      messages: (earlier?.messages ?? 0) + older.length,
+      upTo: since[since.length - 1].createdAt,
+      messages: (earlier?.messages ?? 0) + since.length,
       at: Date.now()
     }
     return setCompaction(conversationId, compaction)
