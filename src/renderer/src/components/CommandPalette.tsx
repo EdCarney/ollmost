@@ -236,7 +236,8 @@ export function CommandPalette() {
                   <div className="px-3 pb-1 pt-2 text-xs font-medium text-subtle">{row.section}</div>
                 )}
                 <button
-                  onMouseEnter={() => setIndex(i)}
+                  // On movement only: mouseenter also fires when the rows change or scroll under a resting pointer.
+                  onMouseMove={() => i !== index && setIndex(i)}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => void choose(row)}
                   className={cn('flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left', i === index && 'bg-hover')}
