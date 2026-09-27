@@ -1642,6 +1642,9 @@ const evilSvg = (port) =>
       if (req.url === '/api/tags') return json({ models: [{ name: 'mock-tools:latest' }] })
       if (req.url === '/api/show')
         return json({ capabilities: ['completion', 'tools'], model_info: { 'mock.context_length': 32768 }, details: {} })
+      // A /compact summary takes a moment, so the next message can be typed while it runs.
+      if (!body.stream && String(body.messages[0]?.content).startsWith('You compact'))
+        return setTimeout(() => json({ message: { role: 'assistant', content: 'The greeting was changed to French.' }, done: true }), 2000)
       if (!body.stream) return json({ message: { role: 'assistant', content: 'Mock title' }, done: true })
       const toolNames = (body.tools ?? []).map((t) => t.function.name)
       const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
@@ -1828,6 +1831,17 @@ const evilSvg = (port) =>
         (await win.locator('[data-testid="stage-chip"]').getAttribute('aria-label')) === 'Stage: Work'
       )
       await win.waitForFunction(() => !document.querySelector('button[aria-label="Stop"]'), null, { timeout: 120000 })
+
+      // 6c. /compact: the composer stays editable while it runs, and what was typed meanwhile is kept when it ends.
+      await win.fill('textarea', '/compact')
+      await win.click('button[aria-label="Send"]')
+      await win.waitForTimeout(300)
+      await win.fill('textarea', 'Now say it in Spanish')
+      await win.waitForSelector('[data-testid="compaction"]', { timeout: 20000 })
+      await win.waitForTimeout(300)
+      const afterCompact = await win.inputValue('textarea')
+      check('text typed while /compact runs is still in the composer when it ends', afterCompact === 'Now say it in Spanish', afterCompact)
+      await win.fill('textarea', '')
 
       // 7. Deleting the session leaves the folder exactly as it was. The panel stays open: the title's menu must be
       // reachable beside it.
