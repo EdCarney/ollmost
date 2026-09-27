@@ -129,7 +129,7 @@ try {
   const title = await win.locator('header').first().innerText()
   check('chat gets an automatic title', !!title.trim() && !/New chat/.test(title), title.trim())
 
-  // 1b. /compact: two more exchanges, then the command summarizes all but the last four messages
+  // 1b. /compact: two more exchanges, then the command summarizes all six messages
   await send(win, 'Reply with the single word: one')
   await send(win, 'Reply with the single word: two')
   await win.fill('textarea', '/comp')
@@ -142,13 +142,90 @@ try {
   await win.keyboard.press('Enter')
   await win.waitForSelector('[data-testid="compaction"]', { timeout: 120000 })
   const divider = (await win.locator('[data-testid="compaction"]').innerText()).trim()
-  check('/compact summarizes the older messages and marks where the summary ends', /Compacted 2 messages/.test(divider), divider)
+  check('/compact summarizes every message so far', /Compacted 6 messages/.test(divider), divider)
+  check(
+    'the divider marks where the summary ends: after the last message',
+    await win.locator('[data-testid="compaction"]').evaluate((el) => !el.nextElementSibling)
+  )
   await win.locator('[data-testid="compaction"] button').click()
   await win.waitForTimeout(200)
   const opened = (await win.locator('[data-testid="compaction"]').innerText()).trim()
   check('the summary can be read', opened.length > divider.length + 20, opened.slice(divider.length, divider.length + 60))
   check('the compacted messages stay in the transcript', (await win.locator('.prose-ollmost').count()) === 3)
   await win.screenshot({ path: join(SHOTS, 'compact.png') })
+
+  // 1c. Retry right after /compact: the last reply is covered by the summary, so it asks first; Cancel changes nothing.
+  await win.click('button[aria-label="Retry"]')
+  await win.waitForSelector('[role="dialog"]')
+  const retryAsk = (await win.locator('[role="dialog"]').innerText()).trim()
+  check(
+    'retrying the summarized reply asks first, naming the summary in its body (not just its button label)',
+    /Retry this reply\?/.test(retryAsk) && /summary covers this message/.test(retryAsk),
+    retryAsk
+  )
+  await win.screenshot({ path: join(SHOTS, 'history-loss-confirm.png') })
+  await win.locator('[role="dialog"] button:has-text("Cancel")').click()
+  await win.waitForTimeout(200)
+  check(
+    'cancelling the retry leaves the reply and the divider alone',
+    (await win.locator('[data-testid="compaction"]').count()) === 1 && (await win.locator('.prose-ollmost').count()) === 3
+  )
+
+  // 1d. Edit an earlier message (not the last): it would drop the exchange after it and clear the summary, so it
+  // asks first, naming both and offering Continue since both apply; Cancel keeps the draft and deletes nothing. An
+  // element handle, not a locator, holds this message's own group: editing swaps its bubble text for a textarea,
+  // which a hasText locator can't re-find.
+  const earlierGroup = await win
+    .locator('div.group:has(button[aria-label="Edit"])', { hasText: 'Reply with the single word: one' })
+    .elementHandle()
+  await earlierGroup.hover()
+  await (await earlierGroup.$('button[aria-label="Edit"]')).click()
+  await (await earlierGroup.$('textarea')).fill('Reply with the single word: uno')
+  await (await earlierGroup.$('button:has-text("Save & send")')).click()
+  await win.waitForSelector('[role="dialog"]')
+  const editAsk = (await win.locator('[role="dialog"]').innerText()).trim()
+  check(
+    'editing an earlier message asks first, with the count, the summary line, and Continue since both apply',
+    /Edit this message\?/.test(editAsk) &&
+      /Its reply and the 2 messages after it will be deleted\./.test(editAsk) &&
+      /summary covers this message/.test(editAsk) &&
+      /Continue/.test(editAsk),
+    editAsk
+  )
+  await win.locator('[role="dialog"] button:has-text("Cancel")').click()
+  await win.waitForTimeout(200)
+  check(
+    'cancelling the edit keeps the draft open and deletes nothing',
+    (await (await earlierGroup.$('textarea')).inputValue()) === 'Reply with the single word: uno' &&
+      (await win.locator('.prose-ollmost').count()) === 3
+  )
+
+  // 1e. This time press the destructive button: the later exchange is gone, and so is the summary that covered
+  // the edited message.
+  await (await earlierGroup.$('button:has-text("Save & send")')).click()
+  await win.waitForSelector('[role="dialog"]')
+  await win.locator('[role="dialog"] button:has-text("Continue")').click()
+  await win.waitForFunction(
+    () => document.querySelectorAll('.prose-ollmost').length === 2 && !document.querySelector('button[aria-label="Stop"]'),
+    undefined,
+    { timeout: 240000 }
+  )
+  check(
+    'confirming the edit deletes the later exchange and clears the summary',
+    (await win.locator('.prose-ollmost').count()) === 2 && (await win.locator('[data-testid="compaction"]').count()) === 0
+  )
+
+  // 1f. That edited message is now the last one: replacing only its own reply is the point of an edit, so this
+  // sends at once, with no confirm (reaching the wait below at all proves nothing blocked it).
+  await (await earlierGroup.$('button[aria-label="Edit"]')).click()
+  await (await earlierGroup.$('textarea')).fill('Reply with the single word: last')
+  await (await earlierGroup.$('button:has-text("Save & send")')).click()
+  await win.waitForFunction(
+    () => document.querySelectorAll('.prose-ollmost').length === 2 && !document.querySelector('button[aria-label="Stop"]'),
+    undefined,
+    { timeout: 240000 }
+  )
+  check('editing the now-last message sends at once, without asking', (await win.locator('[role="dialog"]').count()) === 0)
 
   // 2. HTML artifact renders in the sandbox, which blocks network and parent access
   await send(win, 'Make an HTML artifact: a page with a heading "Sandbox test" and nothing else.')

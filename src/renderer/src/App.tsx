@@ -3,6 +3,7 @@ import { useEffect } from 'react'
 import { ArtifactPanel } from './components/ArtifactPanel'
 import { ChangesPanel } from './components/ChangesPanel'
 import { CommandPalette } from './components/CommandPalette'
+import { ConfirmDialog } from './components/ConfirmDialog'
 import { Sidebar } from './components/Sidebar'
 import { TooltipProvider } from './components/ui'
 import { api } from './lib/api'
@@ -150,6 +151,7 @@ export function App() {
       </div>
       <CommandPalette />
       <Toasts />
+      <ConfirmDialog />
     </TooltipProvider>
   )
 }
