@@ -62,7 +62,7 @@ export function CommandPalette() {
         route: { name: 'project', id: p.id } as Route
       }))
     const chatItems = hits.map((h) => {
-      const route = conversationRoute(h.conversationId, sessions)
+      const route = conversationRoute(h.conversationId, sessions, h.mode)
       return {
         key: h.conversationId,
         icon: route.name === 'code' ? <SquareTerminal className="size-4" /> : <MessageSquare className="size-4" />,

@@ -1,4 +1,4 @@
-import { FolderClosed, FolderOpen, Pin, SquareTerminal } from 'lucide-react'
+import { FolderClosed, FolderOpen, Hand, Pin, SquareTerminal } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import type { Conversation } from '@shared/types'
 import { ConversationMenu } from '@/components/ConversationMenu'
@@ -8,9 +8,11 @@ import { api } from '@/lib/api'
 import { displayPath, folderName, openFolder } from '@/lib/codeActions'
 import { displayModelName, relativeTime } from '@/lib/format'
 import { reportError, useApp } from '@/stores/app'
+import { useChat } from '@/stores/chat'
 
 export function CodeView() {
   const { sessions, navigate } = useApp()
+  const streams = useChat((s) => s.streams)
   const [recent, setRecent] = useState<string[]>([])
   const [home, setHome] = useState<string | null>(null)
 
@@ -75,22 +77,35 @@ export function CodeView() {
                     <span className="truncate text-xs text-subtle">{displayPath(root, home)}</span>
                   </div>
                   <ul className="divide-y divide-line">
-                    {list.map((c) => (
-                      <li key={c.id} className="group flex items-center gap-2 rounded-lg px-3 py-3 hover:bg-hover">
-                        <button onClick={() => navigate({ name: 'code', id: c.id })} className="min-w-0 flex-1 text-left">
-                          <div className="flex items-center gap-1.5 text-sm font-medium">
-                            {c.pinned && <Pin aria-label="Pinned" className="size-3.5 shrink-0 text-subtle" />}
-                            <span className="truncate">{c.title}</span>
-                          </div>
-                          <div className="mt-0.5 text-xs text-subtle">
-                            {displayModelName(c.model)} · {relativeTime(c.updatedAt)}
-                          </div>
-                        </button>
-                        <span className="opacity-0 group-hover:opacity-100 has-[[data-state=open]]:opacity-100">
-                          <ConversationMenu conversation={c} align="end" />
-                        </span>
-                      </li>
-                    ))}
+                    {list.map((c) => {
+                      const streaming = !!streams[c.id]
+                      const waiting = !!streams[c.id]?.toolEvents.some((e) => e?.awaiting)
+                      return (
+                        <li key={c.id} className="group flex items-center gap-2 rounded-lg px-3 py-3 hover:bg-hover">
+                          <button onClick={() => navigate({ name: 'code', id: c.id })} className="min-w-0 flex-1 text-left">
+                            <div className="flex items-center gap-1.5 text-sm font-medium">
+                              {c.pinned && <Pin aria-label="Pinned" className="size-3.5 shrink-0 text-subtle" />}
+                              <span className="min-w-0 flex-1 truncate">{c.title}</span>
+                              {waiting ? (
+                                <Tooltip content="Waiting for your approval">
+                                  <Hand className="size-3.5 shrink-0 text-warn" aria-label="Waiting for your approval" />
+                                </Tooltip>
+                              ) : (
+                                streaming && (
+                                  <span className="size-1.5 shrink-0 animate-pulse rounded-full bg-accent" aria-label="Responding" />
+                                )
+                              )}
+                            </div>
+                            <div className="mt-0.5 text-xs text-subtle">
+                              {displayModelName(c.model)} · {relativeTime(c.updatedAt)}
+                            </div>
+                          </button>
+                          <span className="opacity-0 group-hover:opacity-100 has-[[data-state=open]]:opacity-100">
+                            <ConversationMenu conversation={c} align="end" />
+                          </span>
+                        </li>
+                      )
+                    })}
                   </ul>
                 </section>
               ))}

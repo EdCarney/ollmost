@@ -215,6 +215,7 @@ export interface SearchHit {
   title: string
   snippet: string
   updatedAt: number
+  mode: 'chat' | 'code'
 }
 
 // ---- Models -------------------------------------------------------------

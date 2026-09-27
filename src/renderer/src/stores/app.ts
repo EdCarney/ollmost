@@ -195,9 +195,10 @@ export function showsConversation(route: Route, conversationId: string): boolean
   return (route.name === 'chat' || route.name === 'code') && route.id === conversationId
 }
 
-/** Where a conversation opens: a code session in the Code pane, anything else as a chat. */
-export function conversationRoute(id: string, sessions: Conversation[]): Route {
-  return sessions.some((c) => c.id === id) ? { name: 'code', id } : { name: 'chat', id }
+/** Where a conversation opens: a code session in the Code pane, anything else as a chat. `mode`, when given, decides directly. */
+export function conversationRoute(id: string, sessions: Conversation[], mode?: 'chat' | 'code'): Route {
+  const isCode = mode ? mode === 'code' : sessions.some((c) => c.id === id)
+  return isCode ? { name: 'code', id } : { name: 'chat', id }
 }
 
 /** Surface an error from an async UI action as a toast. */

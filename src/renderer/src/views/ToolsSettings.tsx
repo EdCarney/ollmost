@@ -511,6 +511,10 @@ export const NETWORK_SHORT_LABEL: Record<CodeNetwork, string> = {
 
 function CodeSessionsSection() {
   const { settings, updateSettings } = useApp()
+  const [status, setStatus] = useState<RunnerStatus | null>(null)
+  useEffect(() => {
+    void api.runner.status().then(setStatus).catch(reportError)
+  }, [])
   if (!settings) return null
   const c = settings.code
   const update = (patch: Partial<Settings['code']>) => void updateSettings({ code: patch })
@@ -520,6 +524,13 @@ function CodeSessionsSection() {
       title="Code sessions"
       description="Lets a model work in a folder you choose: reading files, editing them and running commands, in the same macOS sandbox as the code runner. It can read that folder, the system and your toolchains (nvm, cargo, pyenv and the like) but not the rest of your home folder; it writes only to that folder and a scratch folder of its own; and it has no network access unless a session's preset allows package registries, or those and git hosts."
     >
+      <div data-testid="code-status" className={cn('text-xs', status && !status.available ? 'text-danger' : 'text-muted')}>
+        {!status
+          ? 'Checking…'
+          : status.available
+            ? "Ready: commands run in the sandbox; edits and reads are Ollmost's own."
+            : status.reason}
+      </div>
       <Row label="When a model wants to run a command">
         <Segmented
           label="When a model wants to run a command"
