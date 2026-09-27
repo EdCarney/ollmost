@@ -113,7 +113,10 @@ export interface OllmostApi {
     removeFile(fileId: ID): Promise<void>
     /** Put a file in another folder ('' for the root); folders are the files' paths, so this is all a move is. */
     moveFile(fileId: ID, folder: string): Promise<ProjectFile>
-    /** Open a project file with the app that handles its type. */
+    /**
+     * Preview a project file with Quick Look, never with the app for its type: the stored copy lost its original's
+     * download mark, so a launcher document would run without a word (#67). It's marked as downloaded again first.
+     */
     openFile(fileId: ID): Promise<void>
     /** Show a project file in Finder. */
     revealFile(fileId: ID): Promise<void>

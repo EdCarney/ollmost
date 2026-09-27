@@ -20,9 +20,9 @@ export interface HistoryLoss {
  * message being redone (it would be cleared, see `uncompactFrom` in the main process). A message with no reply yet
  * loses nothing later, and a failed reply still counts as the exchange being redone, not as later history.
  *
- * `artifacts` is the chat's own artifacts (their `versions[].messageId` says which message made each version), so
- * an edit or a retry that only replaces its own reply's text can still be told it would also cost an artifact or a
- * file edit that reply made — `historyLossNotice` decides whether that's worth mentioning.
+ * `artifacts` is the chat's own artifacts (their `versions[].messageId` says which message made each version).
+ * `lostArtifacts` and `fileEditsMade` count what the redone reply made as well as what later messages made;
+ * `historyLossNotice` names them only when later messages are dropped too, never on their own.
  */
 export function historyLoss(messages: Message[], index: number, compaction: { upTo: number } | null, artifacts: Artifact[]): HistoryLoss {
   const message = messages[index]
