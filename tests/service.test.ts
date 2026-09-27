@@ -308,6 +308,47 @@ describe('reply loop', () => {
     ])
   })
 
+  it('keeps each round’s thinking with where the round began, live and saved', async () => {
+    setApiKey('test-key')
+    const thought = (text: string) => line({ message: { role: 'assistant', content: '', thinking: text }, done: false })
+    chat = (b, res, n) =>
+      n === 1
+        ? void res
+            .writeHead(200)
+            .end(
+              thought('Plan: search.') +
+                line({ message: { role: 'assistant', content: 'Let me check.' }, done: false }) +
+                toolCall('web_search', { query: 'ollmost' })
+            )
+        : n === 2
+          ? void res
+              .writeHead(200)
+              .end(
+                thought('Got it.') +
+                  line({ message: { role: 'assistant', content: 'Found it.' }, done: false }) +
+                  line({ done: true, done_reason: 'stop', prompt_eval_count: 10, eval_count: 3 })
+              )
+          : reply('Search chat')(b, res, n)
+    web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [{ title: 'Ollmosts', url: 'https://k.io', content: 'hot' }] }))
+    const r = start('look it up')
+    const done = await doneEvent(r.conversation.id)
+    // The joined text stays as it was, for older readers; the segments say where each round's thinking belongs.
+    expect(done.message.thinking).toBe('Plan: search.Got it.')
+    expect(done.message.thinkingSegments).toEqual([
+      { text: 'Plan: search.', at: 0, index: 0, ms: expect.any(Number) },
+      { text: 'Got it.', at: 'Let me check.'.length, index: 1, ms: expect.any(Number) }
+    ])
+    const thinkingDeltas = events.filter(
+      (e): e is Extract<ChatEvent, { type: 'delta' }> => e.type === 'delta' && e.conversationId === r.conversation.id && !!e.thinking
+    )
+    expect(thinkingDeltas.map((e) => [e.thinking, e.round])).toEqual([
+      ['Plan: search.', { at: 0, index: 0 }],
+      ['Got it.', { at: 13, index: 1 }]
+    ])
+    const { listMessages } = await import('../src/main/db/conversations')
+    expect(listMessages(r.conversation.id).at(-1)?.thinkingSegments).toEqual(done.message.thinkingSegments)
+  })
+
   it('remembers earlier search results on the next turn', async () => {
     setApiKey('test-key')
     chat = (b, res, n) =>

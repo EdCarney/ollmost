@@ -22,7 +22,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { parseMessage, parseMessageRanges, typeForCodeLanguage } from '@shared/artifactParser'
 import { diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
-import type { Artifact, Message, ToolDecision, ToolEvent } from '@shared/types'
+import type { Artifact, Message, ThinkingSegment, ToolDecision, ToolEvent } from '@shared/types'
 import { IMAGE_FILE, openWith } from '@shared/workspace'
 import { formatCost } from '@shared/usage'
 import { api } from '@/lib/api'
@@ -558,11 +558,19 @@ export const AssistantMessage = memo(function AssistantMessage({
 }: AssistantProps) {
   const streaming = !!stream
   const content = stream ? stream.content : message.content
-  const thinking = stream ? stream.thinking : (message.thinking ?? '')
   const toolEvents = stream ? stream.toolEvents : message.toolEvents
+  // Each round's thinking sits where the round began; a reply saved before that was kept shows its thinking first.
+  const thinkingSegments = useMemo<ThinkingSegment[]>(
+    () =>
+      stream
+        ? stream.thinkingSegments
+        : (message.thinkingSegments ??
+          (message.thinking ? [{ text: message.thinking, at: 0, index: 0, ms: message.stats?.thinkingMs ?? null }] : [])),
+    [stream, message.thinkingSegments, message.thinking, message.stats?.thinkingMs]
+  )
   const segments = useMemo(() => parseMessageRanges(content, streaming), [content, streaming])
-  // Tool calls sit where they happened in the text.
-  const timeline = useMemo(() => interleave(segments, toolEvents), [segments, toolEvents])
+  // Tool calls and thinking sit where they happened in the text.
+  const timeline = useMemo(() => interleave(segments, toolEvents, thinkingSegments), [segments, toolEvents, thinkingSegments])
   const [copied, copy] = useCopy()
   const conversationId = message.conversationId
   const openLive = useArtifactPanel((s) => s.openLive)
@@ -599,17 +607,22 @@ export const AssistantMessage = memo(function AssistantMessage({
     }
   }
 
-  const thinkingActive = streaming && !content && !toolEvents.length
+  // Nothing has arrived yet: a "Thinking…" card stands in until the first text, thinking or call does.
+  const awaitingFirst = streaming && !timeline.length
   // Waiting on you, not the model: no caret while a tool call waits for approval.
   const working = streaming && !toolEvents.some((e) => e?.awaiting)
-  const thinkingMs = stream
-    ? stream.thinkingStartedAt && stream.thinkingEndedAt
-      ? stream.thinkingEndedAt - stream.thinkingStartedAt
-      : null
-    : (message.stats?.thinkingMs ?? null)
 
   const occurrences = new Map<string, number>()
   const rendered = timeline.map((item, i) => {
+    if (item.kind === 'thinking')
+      return (
+        <ThinkingBlock
+          key={`k${item.position}`}
+          thinking={item.thinking.text}
+          active={streaming && item.thinking.ms === null}
+          durationMs={item.thinking.ms}
+        />
+      )
     if (item.kind === 'tools')
       return (
         <ToolGroup
@@ -630,9 +643,9 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <div className="group">
-      <ThinkingBlock thinking={thinking} active={thinkingActive && !!(thinking || streaming)} durationMs={thinkingMs} />
+      {awaitingFirst && <ThinkingBlock thinking="" active durationMs={null} />}
       {rendered}
-      {working && !content && !thinking && <div className="stream-caret h-6" aria-label="Waiting for reply" />}
+      {working && !timeline.length && <div className="stream-caret h-6" aria-label="Waiting for reply" />}
       {working && content && <span className="stream-caret" />}
       {message.error && !streaming && (
         <div className="mt-2 flex items-start gap-2 rounded-ollmost border border-danger/40 bg-[color-mix(in_srgb,var(--o-danger)_8%,transparent)] px-3 py-2.5 text-sm">

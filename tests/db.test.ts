@@ -4,7 +4,9 @@ import {
   createConversation,
   deleteConversation,
   deleteMessagesFrom,
+  getMessage,
   insertMessage,
+  updateMessage,
   listCodeRoots,
   listConversations,
   listMessages,
@@ -177,5 +179,22 @@ describe('code sessions', () => {
       '/work/many-3',
       '/work/many-2'
     ])
+  })
+})
+
+describe('a message’s thinking segments', () => {
+  it('round-trips them, and reads none for a message saved before they existed', () => {
+    const c = chat()
+    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: 'Answer.' })
+    expect(getMessage(m.id)?.thinkingSegments).toBeNull()
+    const segments = [
+      { text: 'Plan.', at: 0, index: 0, ms: 120 },
+      { text: 'Check.', at: 7, index: 1, ms: null }
+    ]
+    updateMessage(m.id, { thinking: 'Plan.Check.', thinkingSegments: segments })
+    expect(getMessage(m.id)).toMatchObject({ thinking: 'Plan.Check.', thinkingSegments: segments })
+    // A patch without segments keeps them.
+    updateMessage(m.id, { error: null })
+    expect(getMessage(m.id)?.thinkingSegments).toEqual(segments)
   })
 })
