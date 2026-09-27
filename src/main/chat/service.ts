@@ -48,7 +48,7 @@ import { runnerStatus } from '../runner/status'
 import { prepareWorkspace, type Workspace, workspaceFor } from '../runner/workspace'
 import { conversationUsage, insertUsageEvent } from '../db/usage'
 import { requestCost } from '../usage/pricing'
-import { errorMessage, estimateTokens } from '../util'
+import { errorMessage, estimateTokens, now } from '../util'
 import { hasPrivateFiles } from './exposure'
 import { assemble, type HistoryTurn, promptBudget } from './assemble'
 import { TITLE_PROMPT } from './prompts'
@@ -478,9 +478,9 @@ async function generate(
         loadedIds = [...loadedIds, id]
         updateConversation(conversationId, { autoSkills: loadedIds })
       },
-      checkpoint: (state, now = false) => {
+      checkpoint: (state, immediate = false) => {
         // Save progress now and then, so a quit or crash keeps the partial reply (see markInterruptedReplies).
-        if (!now && Date.now() - savedAt < CHECKPOINT_MS) return
+        if (!immediate && Date.now() - savedAt < CHECKPOINT_MS) return
         savedAt = Date.now()
         checkpointMessage(messageId, { ...state, thinking: state.thinking || null })
       }
@@ -708,7 +708,9 @@ export async function compact(conversationId: string, opts: { focus: string; mod
       summary: summary!,
       upTo: since[since.length - 1].createdAt,
       messages: (earlier?.messages ?? 0) + since.length,
-      at: Date.now()
+      // The same clock usage_events.created_at uses (Date.now() runs behind it when several rows land in one
+      // millisecond), so a pre-compaction row can never look newer than the compaction itself.
+      at: now()
     }
     return setCompaction(conversationId, compaction)
   } finally {

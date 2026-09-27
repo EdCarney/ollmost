@@ -62,6 +62,8 @@ export function conversationUsage(conversationId: string): ChatUsage {
   // was later deleted (an Edit or Retry) never went out either; skip both so the meter reads null, not a
   // stale number, until a real request lands.
   const compactedAt = getConversation(conversationId)?.compaction?.at ?? 0
+  // ORDER BY ... LIMIT 1 over the filtered rows, so when an Edit or Retry deletes the latest reply, this falls
+  // back to the latest surviving request's real total — an older real number, not an estimate of the next one.
   const last = get<{ tokens: number }>(
     `SELECT prompt_tokens + completion_tokens AS tokens FROM usage_events
      WHERE conversation_id = ? AND kind = 'chat' AND created_at > ?
