@@ -11,10 +11,11 @@ import {
   ScrollText,
   TriangleAlert
 } from 'lucide-react'
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { CodeNetwork } from '@shared/types'
 import { Composer } from '@/components/Composer'
 import { ConversationMenu } from '@/components/ConversationMenu'
+import { CompactionDivider } from '@/components/CompactionDivider'
 import { AssistantMessage, UserMessage } from '@/components/Messages'
 import { TopBar } from '@/components/TopBar'
 import { ChatCost } from '@/components/UsageBar'
@@ -32,7 +33,7 @@ import {
   Tooltip
 } from '@/components/ui'
 import { api } from '@/lib/api'
-import { continueReply, editMessage, retryLast, sendMessage } from '@/lib/chatActions'
+import { continueReply, editMessage, retryLast, runCommand, sendMessage } from '@/lib/chatActions'
 import { folderName } from '@/lib/codeActions'
 import { reportError } from '@/stores/app'
 import { useChangesPanel } from '@/stores/changesPanel'
@@ -113,6 +114,9 @@ export function CodeSessionView({ id }: { id: string }) {
   }, [id])
 
   const current = conversation?.id === id ? conversation : null
+  // A /compact summary ends after the last message it covers; the divider goes there.
+  const compaction = current?.compaction ?? null
+  const compactedAfter = compaction ? messages.filter((m) => m.createdAt <= compaction.upTo).at(-1)?.id : null
   const changesOpen = useChangesPanel((s) => s.open && s.sessionId === id)
   const changesCountFor = useChangesPanel((s) => s.countFor)
   const changesCount = useChangesPanel((s) => s.count)
@@ -249,25 +253,27 @@ export function CodeSessionView({ id }: { id: string }) {
           </div>
         ) : (
           <div className="mx-auto space-y-8 px-6 pb-10 pt-4" style={{ maxWidth: 'calc(var(--o-chat-width) + 48px)' }}>
-            {messages.map((m, i) =>
-              m.role === 'user' ? (
-                <UserMessage key={m.id} message={m} disabled={!!stream} onEdit={(content) => editMessage(m, content, messages)} />
-              ) : (
-                <AssistantMessage
-                  key={m.id}
-                  message={m}
-                  stream={stream?.messageId === m.id ? stream : undefined}
-                  artifacts={artifacts}
-                  isLast={i === messages.length - 1}
-                  scope="session"
-                  onRetry={() => retryLast(id, messages)}
-                  onContinue={(reason) => {
-                    pinned.current = true
-                    void continueReply(id, reason)
-                  }}
-                />
-              )
-            )}
+            {messages.map((m, i) => (
+              <Fragment key={m.id}>
+                {m.role === 'user' ? (
+                  <UserMessage message={m} disabled={!!stream} onEdit={(content) => editMessage(m, content, messages)} />
+                ) : (
+                  <AssistantMessage
+                    message={m}
+                    stream={stream?.messageId === m.id ? stream : undefined}
+                    artifacts={artifacts}
+                    isLast={i === messages.length - 1}
+                    scope="session"
+                    onRetry={() => retryLast(id, messages)}
+                    onContinue={(reason) => {
+                      pinned.current = true
+                      void continueReply(id, reason)
+                    }}
+                  />
+                )}
+                {compaction && compactedAfter === m.id && <CompactionDivider compaction={compaction} />}
+              </Fragment>
+            ))}
           </div>
         )}
       </div>
@@ -290,6 +296,7 @@ export function CodeSessionView({ id }: { id: string }) {
             autoFocus
             mode="code"
             onStop={() => api.chat.stop(id)}
+            onCommand={(cmd) => runCommand(id, cmd)}
             onSubmit={async (input) => {
               pinned.current = true
               return sendMessage(id, null, input)

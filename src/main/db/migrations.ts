@@ -199,5 +199,10 @@ export const MIGRATIONS: string[] = [
   -- A reply's thinking, one segment per round with where the round began (ThinkingSegment[] as JSON), so it can be
   -- shown where it happened (#109). \`thinking\` keeps the joined text; null here means a reply from before.
   ALTER TABLE messages ADD COLUMN thinking_segments TEXT;
+  `,
+  /* sql */ `
+  -- A chat's /compact summary (Compaction in src/shared/types.ts, as JSON): later replies replay it instead of the
+  -- turns it covers (#90). Null when none was made.
+  ALTER TABLE conversations ADD COLUMN compaction TEXT;
   `
 ]

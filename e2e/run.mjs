@@ -129,6 +129,27 @@ try {
   const title = await win.locator('header').first().innerText()
   check('chat gets an automatic title', !!title.trim() && !/New chat/.test(title), title.trim())
 
+  // 1b. /compact: two more exchanges, then the command summarizes all but the last four messages
+  await send(win, 'Reply with the single word: one')
+  await send(win, 'Reply with the single word: two')
+  await win.fill('textarea', '/comp')
+  await win.waitForTimeout(300)
+  check('typing / offers the compact command', (await win.locator('button:has-text("/compact")').count()) > 0)
+  await win.keyboard.press('Enter')
+  await win.waitForTimeout(200)
+  check('choosing it puts the command in the composer', (await win.inputValue('textarea')).startsWith('/compact '))
+  await win.fill('textarea', '/compact keep the words')
+  await win.keyboard.press('Enter')
+  await win.waitForSelector('[data-testid="compaction"]', { timeout: 120000 })
+  const divider = (await win.locator('[data-testid="compaction"]').innerText()).trim()
+  check('/compact summarizes the older messages and marks where the summary ends', /Compacted 2 messages/.test(divider), divider)
+  await win.locator('[data-testid="compaction"] button').click()
+  await win.waitForTimeout(200)
+  const opened = (await win.locator('[data-testid="compaction"]').innerText()).trim()
+  check('the summary can be read', opened.length > divider.length + 20, opened.slice(divider.length, divider.length + 60))
+  check('the compacted messages stay in the transcript', (await win.locator('.prose-ollmost').count()) === 3)
+  await win.screenshot({ path: join(SHOTS, 'compact.png') })
+
   // 2. HTML artifact renders in the sandbox, which blocks network and parent access
   await send(win, 'Make an HTML artifact: a page with a heading "Sandbox test" and nothing else.')
   await win.waitForTimeout(1500)
@@ -1655,7 +1676,8 @@ const evilSvg = (port) =>
     // the schema is taken out first, or they'd fail on it. A new schema migration means updating this too.
     const KILN_DB_VERSION = 8
     const version = db.prepare('PRAGMA user_version').get().user_version
-    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 5, `database version ${version}`)
+    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 6, `database version ${version}`)
+    db.exec('ALTER TABLE conversations DROP COLUMN compaction')
     db.exec('ALTER TABLE messages DROP COLUMN thinking_segments')
     db.exec('ALTER TABLE conversations DROP COLUMN network')
     db.exec('DROP INDEX conversations_mode; ALTER TABLE conversations DROP COLUMN root; ALTER TABLE conversations DROP COLUMN mode')

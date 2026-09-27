@@ -55,6 +55,16 @@ export interface CodeDiff {
   cut: boolean
 }
 
+/** What /compact made of a chat's older turns: later replies replay the summary instead of them (the messages stay). */
+export interface Compaction {
+  summary: string
+  /** The `createdAt` of the last message the summary covers; replies send only what came after. */
+  upTo: number
+  /** How many messages the summary stands for. */
+  turns: number
+  at: number
+}
+
 export interface Conversation {
   id: ID
   projectId: ID | null
@@ -77,6 +87,8 @@ export interface Conversation {
   root: string | null
   /** What a code session's commands may reach on the network; 'none' for a chat. */
   network: CodeNetwork
+  /** The chat's /compact summary, when one was made; null otherwise. */
+  compaction: Compaction | null
   pinned: boolean
   createdAt: number
   updatedAt: number
@@ -338,7 +350,7 @@ export interface UsageSummary {
 
 // ---- Debugger traces -----------------------------------------------------
 
-export type TraceKind = 'chat' | 'title' | 'tool' | 'replay'
+export type TraceKind = 'chat' | 'title' | 'tool' | 'replay' | 'compact'
 export type TraceStatus = 'running' | 'ok' | 'error' | 'aborted'
 
 export interface TraceSummary {

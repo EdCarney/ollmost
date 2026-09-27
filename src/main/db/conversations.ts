@@ -2,6 +2,7 @@ import type { ConversationPatch } from '@shared/ipc'
 import type {
   Attachment,
   CodeNetwork,
+  Compaction,
   Conversation,
   Message,
   MessageStats,
@@ -32,6 +33,7 @@ interface ConversationRow {
   mode: string
   root: string | null
   network: string
+  compaction: string | null
   pinned: number
   created_at: number
   updated_at: number
@@ -55,10 +57,17 @@ const toConversation = (r: ConversationRow): Conversation => ({
   mode: r.mode === 'code' ? 'code' : 'chat',
   root: r.root,
   network: toNetwork(r.network),
+  compaction: parseJson<Compaction | null>(r.compaction, null),
   pinned: !!r.pinned,
   createdAt: r.created_at,
   updatedAt: r.updated_at
 })
+
+/** Keep or clear a chat's /compact summary (main process only; the renderer never sets it). */
+export function setCompaction(id: string, compaction: Compaction | null): Conversation {
+  run('UPDATE conversations SET compaction = ? WHERE id = ?', compaction ? JSON.stringify(compaction) : null, id)
+  return getConversation(id)!
+}
 
 export function listConversations(opts: { projectId?: string; limit?: number; mode?: Conversation['mode'] } = {}): Conversation[] {
   const limit = opts.limit ?? 200

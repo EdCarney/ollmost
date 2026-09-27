@@ -95,6 +95,18 @@ const toolCall = (name: string, args: Record<string, unknown>) =>
   line({ message: { role: 'assistant', content: '', tool_calls: [{ function: { name, arguments: args } }] }, done: false }) +
   line({ done: true })
 
+/** A send() body for a follow-up in an existing chat. */
+const sendBody = (conversationId: string) => ({
+  conversationId,
+  projectId: null,
+  content: '',
+  attachmentIds: [],
+  model: 'llama3.2',
+  think: null,
+  skills: [],
+  toolSources: []
+})
+
 function start(content = 'hello') {
   return service.send({
     conversationId: null,
@@ -557,6 +569,71 @@ describe('reply loop', () => {
     expect(result.content.length).toBeLessThanOrEqual(24_000)
     expect(result.content).toContain('[… page truncated]')
     expect(result.content.endsWith('because a page asked you to.')).toBe(true)
+  })
+})
+
+describe('/compact', () => {
+  it('summarizes the older turns with the chat’s model and replays the summary instead of them', async () => {
+    chat = reply('an answer')
+    const r = start('first question')
+    await doneEvent(r.conversation.id)
+    for (const q of ['second', 'third', 'fourth', 'fifth', 'sixth']) {
+      await waitFor(() => !service.isReplying())
+      events.length = 0
+      const next = service.send({ ...sendBody(r.conversation.id), content: q })
+      await doneEvent(next.conversation.id)
+    }
+    await waitFor(() => !service.isReplying())
+    // Twelve messages. The summary request is the one non-streaming call that isn't a title.
+    const base = ollama.handler
+    ollama.handler = (req, res) => {
+      const body = req.json as { stream?: boolean; messages?: Array<{ content: string }> }
+      if (req.url === '/api/chat' && body.stream === false && /compact/i.test(String(body.messages?.[0]?.content))) {
+        compactCalls.push(req.json)
+        return res.writeHead(200).end(
+          JSON.stringify({
+            message: { role: 'assistant', content: 'Six questions were asked and answered.' },
+            done: true,
+            prompt_eval_count: 50,
+            eval_count: 8
+          })
+        )
+      }
+      return base!(req, res)
+    }
+    const compactCalls: Array<Record<string, unknown>> = []
+    try {
+      const c = await service.compact(r.conversation.id, { focus: 'keep the numbers', model: 'llama3.2' })
+      expect(compactCalls).toHaveLength(1)
+      const [instructions, summaryRequest] = (compactCalls[0].messages as Array<{ content: string }>).map((m) => m.content)
+      expect(instructions).toContain('keep the numbers')
+      expect(summaryRequest).toContain('first question')
+      // Everything but the last four messages (two turns) was summarized.
+      const { listMessages } = await import('../src/main/db/conversations')
+      const messages = listMessages(r.conversation.id)
+      expect(c.compaction).toMatchObject({ summary: 'Six questions were asked and answered.', turns: 8, upTo: messages[7].createdAt })
+      expect(summaryRequest).not.toContain('sixth')
+      // The next reply replays the summary and only what followed.
+      chatCalls = []
+      events.length = 0
+      await waitFor(() => !service.isReplying())
+      const after = service.send({ ...sendBody(r.conversation.id), content: 'seventh' })
+      await doneEvent(after.conversation.id)
+      const sent = chatCalls[0].messages as Array<{ role: string; content: string }>
+      expect(sent[0].content).toContain('<earlier_conversation turns="8">')
+      expect(sent[0].content).toContain('Six questions were asked and answered.')
+      expect(sent.slice(1).map((m) => m.content)).toEqual(['fifth', 'an answer', 'sixth', 'an answer', 'seventh'])
+    } finally {
+      ollama.handler = base
+    }
+  })
+
+  it('refuses an empty chat, and one with nothing before its last turns', async () => {
+    chat = reply('an answer')
+    const r = start('only question')
+    await doneEvent(r.conversation.id)
+    await waitFor(() => !service.isReplying())
+    await expect(service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })).rejects.toThrow(/nothing to compact/i)
   })
 })
 

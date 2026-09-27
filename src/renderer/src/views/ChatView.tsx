@@ -1,13 +1,14 @@
 import { ArrowDown, Bug, ChevronDown, FolderClosed, ScrollText } from 'lucide-react'
-import { useEffect, useLayoutEffect, useRef, useState } from 'react'
+import { Fragment, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Composer } from '@/components/Composer'
 import { ConversationMenu } from '@/components/ConversationMenu'
+import { CompactionDivider } from '@/components/CompactionDivider'
 import { AssistantMessage, UserMessage } from '@/components/Messages'
 import { TopBar } from '@/components/TopBar'
 import { ChatCost } from '@/components/UsageBar'
 import { IconButton, Spinner, Tooltip } from '@/components/ui'
 import { api } from '@/lib/api'
-import { continueReply, editMessage, retryLast, sendMessage } from '@/lib/chatActions'
+import { continueReply, editMessage, retryLast, runCommand, sendMessage } from '@/lib/chatActions'
 import { useApp } from '@/stores/app'
 import { useChat } from '@/stores/chat'
 
@@ -44,6 +45,9 @@ export function ChatView({ id }: { id: string }) {
 
   const project = conversation?.projectId ? projects.find((p) => p.id === conversation.projectId) : null
   const current = conversation?.id === id ? conversation : null
+  // A /compact summary ends after the last message it covers; the divider goes there.
+  const compaction = current?.compaction ?? null
+  const compactedAfter = compaction ? messages.filter((m) => m.createdAt <= compaction.upTo).at(-1)?.id : null
 
   return (
     <div className="flex h-full min-h-0 flex-col">
@@ -101,24 +105,26 @@ export function ChatView({ id }: { id: string }) {
           </div>
         ) : (
           <div className="mx-auto space-y-8 px-6 pb-10 pt-4" style={{ maxWidth: 'calc(var(--o-chat-width) + 48px)' }}>
-            {messages.map((m, i) =>
-              m.role === 'user' ? (
-                <UserMessage key={m.id} message={m} disabled={!!stream} onEdit={(content) => editMessage(m, content, messages)} />
-              ) : (
-                <AssistantMessage
-                  key={m.id}
-                  message={m}
-                  stream={stream?.messageId === m.id ? stream : undefined}
-                  artifacts={artifacts}
-                  isLast={i === messages.length - 1}
-                  onRetry={() => retryLast(id, messages)}
-                  onContinue={(reason) => {
-                    pinned.current = true
-                    void continueReply(id, reason)
-                  }}
-                />
-              )
-            )}
+            {messages.map((m, i) => (
+              <Fragment key={m.id}>
+                {m.role === 'user' ? (
+                  <UserMessage message={m} disabled={!!stream} onEdit={(content) => editMessage(m, content, messages)} />
+                ) : (
+                  <AssistantMessage
+                    message={m}
+                    stream={stream?.messageId === m.id ? stream : undefined}
+                    artifacts={artifacts}
+                    isLast={i === messages.length - 1}
+                    onRetry={() => retryLast(id, messages)}
+                    onContinue={(reason) => {
+                      pinned.current = true
+                      void continueReply(id, reason)
+                    }}
+                  />
+                )}
+                {compaction && compactedAfter === m.id && <CompactionDivider compaction={compaction} />}
+              </Fragment>
+            ))}
           </div>
         )}
       </div>
@@ -140,6 +146,7 @@ export function ChatView({ id }: { id: string }) {
             streaming={!!stream}
             autoFocus
             onStop={() => api.chat.stop(id)}
+            onCommand={(cmd) => runCommand(id, cmd)}
             onSubmit={async (input) => {
               pinned.current = true
               return sendMessage(id, current?.projectId ?? null, input)

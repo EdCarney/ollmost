@@ -8,6 +8,7 @@ import { EVENT_CHANNELS } from '@shared/ipc'
 import { resolveThinkProfile, toOllamaThink } from '@shared/thinking'
 import type {
   ChatEvent,
+  Compaction,
   Conversation,
   Message,
   MessageStats,
@@ -29,6 +30,7 @@ import {
   insertMessage,
   linkAttachments,
   listMessages,
+  setCompaction,
   unfinishedReplyIds,
   updateConversation,
   updateMessage
@@ -150,6 +152,7 @@ export async function regenerate(
   const lastUserIndex = messages.findLastIndex((m) => m.role === 'user')
   if (lastUserIndex < 0) throw new Error('Nothing to retry')
   await dropAfter(conversationId, messages, lastUserIndex)
+  uncompactFrom(conversationId, messages[lastUserIndex])
   const conversation = updateConversation(conversationId, { model: opts.model, think: opts.think, touch: true })
   return startAssistant(conversation, messages[lastUserIndex], opts.model, opts.think, reply)
 }
@@ -169,6 +172,7 @@ export async function edit(
     messages,
     messages.findIndex((m) => m.id === messageId)
   )
+  uncompactFrom(original.conversationId, original)
   const user = updateMessage(messageId, { content })
   const conversation = updateConversation(original.conversationId, { model: opts.model, think: opts.think, touch: true })
   return startAssistant(conversation, user, opts.model, opts.think, reply)
@@ -427,8 +431,12 @@ async function generate(
       .filter((r) => running.has(r.server.id))
       .map((r) => r.server.name)
 
+    // After a /compact, the request replays the summary in the system prompt and only the messages that followed.
+    const compaction = conversation.compaction
     const history = await Promise.all(
-      messages.filter((m) => m.id !== messageId && !(m.role === 'assistant' && !m.content)).map((m) => toTurn(m, vision))
+      messages
+        .filter((m) => m.id !== messageId && !(m.role === 'assistant' && !m.content) && (!compaction || m.createdAt > compaction.upTo))
+        .map((m) => toTurn(m, vision))
     )
 
     const assembled = assemble({
@@ -451,7 +459,8 @@ async function generate(
       skillIndex,
       selectedSkills: await load(selectedIds),
       loadedSkills: await load(loadedIds),
-      history
+      history,
+      compaction: compaction ? { summary: compaction.summary, turns: compaction.turns } : null
     })
     if (assembled.droppedTurns) stats.truncatedHistory = assembled.droppedTurns
 
@@ -767,6 +776,102 @@ function cleanTitle(raw: string): string {
 function fallbackTitle(text: string): string {
   const words = text.replace(/\s+/g, ' ').trim().split(' ').slice(0, 6).join(' ')
   return words.length > 50 ? `${words.slice(0, 50)}…` : words || 'Untitled chat'
+}
+
+const COMPACT_PROMPT = `You compact a chat's history for the assistant that will carry it on. Write a summary of the conversation below that a later reply can rely on in place of the messages themselves: what the user wanted, what was decided, found or produced, the names, numbers, code and file names that matter, what is still open, and preferences the user stated. Write plain prose in the past tense, with no preamble and no headings unless the conversation has clearly separate threads. Keep it under 500 words. Say nothing the conversation didn't.`
+
+/** Messages a /compact leaves as they are: the last two exchanges, so the model keeps the immediate context verbatim. */
+export const COMPACT_KEEPS = 4
+
+/** A chat's /compact summary is stale once a message it covers is edited or retried: the summary stood for it. */
+function uncompactFrom(conversationId: string, from: Message): void {
+  const c = getConversation(conversationId)?.compaction
+  if (c && from.createdAt <= c.upTo) setCompaction(conversationId, null)
+}
+
+/**
+ * /compact: summarize every message but the last few with the chat's model, and keep the summary on the chat so
+ * later replies replay it instead of those messages (which stay in the transcript). A second compaction folds the
+ * earlier summary in with what followed it.
+ */
+export async function compact(conversationId: string, opts: { focus: string; model: string }): Promise<Conversation> {
+  assertIdle(conversationId)
+  const conversation = getConversation(conversationId)
+  if (!conversation) throw new Error('Chat not found')
+  const earlier = conversation.compaction
+  const messages = listMessages(conversationId).filter((m) => m.role === 'user' || m.content)
+  const since = earlier ? messages.filter((m) => m.createdAt > earlier.upTo) : messages
+  const older = since.slice(0, Math.max(0, since.length - COMPACT_KEEPS))
+  if (older.length < 2)
+    throw new Error(
+      `Nothing to compact yet: the last ${COMPACT_KEEPS} messages stay as they are, and there's less than an exchange before them.`
+    )
+  const prose = (content: string) =>
+    parseMessage(content)
+      .map((s) => (s.kind === 'text' ? s.text : `[artifact: ${s.title}]`))
+      .join(' ')
+  const transcript = [
+    ...(earlier ? [`Summary of the ${earlier.turns} messages before these:\n${earlier.summary}`] : []),
+    ...older.map((m) => `${m.role === 'user' ? 'User' : 'Assistant'}: ${prose(m.content).slice(0, 8000)}`)
+  ].join('\n\n')
+  const focus = opts.focus.trim()
+  const modelName = opts.model
+  const info = await getModelInfo(modelName)
+  const profile = resolveThinkProfile(modelName, info.capabilities, info.overrides.think)
+  const body: ChatBody = {
+    model: modelName,
+    messages: [
+      { role: 'system', content: focus ? `${COMPACT_PROMPT}\n\nAbove all, keep what the user asked for: ${focus}` : COMPACT_PROMPT },
+      { role: 'user', content: transcript }
+    ],
+    think: profile.kind === 'levels' ? 'low' : profile.kind === 'toggle' ? false : undefined,
+    options: { temperature: 0.3, ...contextOptions(info, getSettings().localNumCtx) }
+  }
+  const trace = startTrace({
+    kind: 'compact',
+    conversationId,
+    messageId: null,
+    model: modelName,
+    endpoint: endpointFor('/api/chat'),
+    request: { ...body, stream: false },
+    summary: 'Compacting…'
+  })
+  try {
+    const res = await chatOnce(body, { timeoutMs: 5 * 60_000 })
+    trace.firstByte()
+    const summary = (res.message?.content ?? '').trim()
+    const promptTokens = res.prompt_eval_count ?? estimateTokens(transcript)
+    const completionTokens = res.eval_count ?? estimateTokens(summary)
+    insertUsageEvent({
+      conversationId,
+      messageId: null,
+      model: modelName,
+      kind: 'compact',
+      promptTokens,
+      completionTokens,
+      costUsd: requestCost(modelName, promptTokens, completionTokens),
+      estimated: res.eval_count === undefined
+    })
+    if (!summary) throw new Error('The model gave no summary; nothing was compacted.')
+    const { message: _m, ...finalStats } = res
+    trace.finish({
+      status: 'ok',
+      response: { content: summary, final: finalStats },
+      promptTokens,
+      completionTokens,
+      summary: `Compacted ${older.length} messages`
+    })
+    const compaction: Compaction = {
+      summary,
+      upTo: older[older.length - 1].createdAt,
+      turns: (earlier?.turns ?? 0) + older.length,
+      at: Date.now()
+    }
+    return setCompaction(conversationId, compaction)
+  } catch (err) {
+    trace.finish({ status: 'error', response: { error: errorMessage(err) }, summary: `Error: ${errorMessage(err)}` })
+    throw err
+  }
 }
 
 async function generateTitle(conversationId: string, chatModel: string): Promise<void> {

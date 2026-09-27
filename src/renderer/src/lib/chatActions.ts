@@ -62,3 +62,18 @@ export async function editMessage(message: Message, content: string, messages: M
     reportError(err)
   }
 }
+
+/** A slash command sent from a chat's composer: it runs once, and never becomes a message. */
+export async function runCommand(conversationId: string, cmd: { name: string; args: string; model: string }): Promise<boolean> {
+  if (cmd.name !== 'compact') return false
+  try {
+    const conversation = await api.chat.compact(conversationId, { focus: cmd.args, model: cmd.model })
+    useChat.getState().setConversation(conversation)
+    const c = conversation.compaction
+    if (c) useApp.getState().toast(`Compacted ${c.turns} ${c.turns === 1 ? 'message' : 'messages'} into a summary.`)
+    return true
+  } catch (err) {
+    reportError(err)
+    return false
+  }
+}
