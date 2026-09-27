@@ -106,7 +106,10 @@ export const TooltipProvider = RTooltip.Provider
 
 // ---- Menus ----------------------------------------------------------------
 
-const surface = 'z-50 min-w-[200px] rounded-ollmost border border-line bg-panel p-1 text-sm text-fg shadow-[0_8px_30px_rgba(0,0,0,0.12)]'
+// A floating panel's look, without padding: a submenu hands its spacing to the list and footer inside it, and
+// cn() doesn't merge classes, so a p-0 added after surface's p-1 would lose to it (Tailwind emits p-1 later).
+const panel = 'z-50 min-w-[200px] rounded-ollmost border border-line bg-panel text-sm text-fg shadow-[0_8px_30px_rgba(0,0,0,0.12)]'
+const surface = `${panel} p-1`
 const item =
   'flex items-center gap-2 rounded-md px-2 py-1.5 outline-none select-none data-[highlighted]:bg-hover data-[disabled]:opacity-40'
 
@@ -214,8 +217,8 @@ export function MenuSub({
           sideOffset={4}
           collisionPadding={8}
           className={cn(
-            surface,
-            'flex max-h-[var(--radix-dropdown-menu-content-available-height)] max-w-[min(440px,var(--radix-dropdown-menu-content-available-width))] flex-col p-0'
+            panel,
+            'flex max-h-[var(--radix-dropdown-menu-content-available-height)] max-w-[min(440px,var(--radix-dropdown-menu-content-available-width))] flex-col'
           )}
         >
           <MenuScroll>{children}</MenuScroll>
