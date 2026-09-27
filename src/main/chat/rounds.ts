@@ -322,7 +322,8 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
                 // Still pending, and still where it was in the text: only what the card shows changes.
                 toolEvents[index] = { ...event, pending: true, at: pending.at }
                 input.onToolEvent(index, toolEvents[index])
-                input.checkpoint({ content, thinking, thinkingSegments: segmentsNow(), toolEvents })
+                // Saved at once when the card waits for the user (a sub-agent's call asking), like the loop's own asks.
+                input.checkpoint({ content, thinking, thinkingSegments: segmentsNow(), toolEvents }, !!event.awaiting)
               }
             })
           } catch (err) {

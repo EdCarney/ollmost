@@ -5,7 +5,8 @@ import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatEvent, MessageStats, ToolEvent } from '@shared/types'
 import type { RoundsInput } from '../src/main/chat/rounds'
-import type { ToolProvider } from '../src/main/chat/tools'
+import type { ToolContext, ToolProvider } from '../src/main/chat/tools'
+import type { Workspace } from '../src/main/runner/workspace'
 import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMock'
 
 // Everything above the Electron line is real: SQLite (in memory), settings, prompt assembly, the
@@ -1534,7 +1535,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const r = service.send({ ...sendBody(session.id), content: 'plan a greeting change' })
     await doneEvent(r.conversation.id)
     const offered = (calls: number) => ((chatCalls[calls].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
-    expect(offered(0)).toEqual(['read_file', 'list_files', 'search_files'])
+    expect(offered(0)).toEqual(['read_file', 'list_files', 'search_files', 'delegate'])
     const system = (chatCalls[0].messages as Array<{ content: string }>)[0].content
     expect(system).toMatch(/<plan_mode>/)
     expect(system).not.toMatch(/<approved_plan>/)
@@ -1550,7 +1551,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     events.length = 0
     const next = service.send({ ...sendBody(session.id), content: 'go ahead' })
     await doneEvent(next.conversation.id)
-    expect(offered(1)).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command'])
+    expect(offered(1)).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command', 'delegate'])
     const later = (chatCalls[1].messages as Array<{ content: string }>)[0].content
     expect(later).toMatch(/<approved_plan>[\s\S]*Change the greeting[\s\S]*<\/approved_plan>/)
     expect(later).not.toMatch(/<plan_mode>/)
@@ -1820,7 +1821,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     })
     // The read ran unasked, and the model got the numbered file.
     const offered = ((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
-    expect(offered).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command'])
+    expect(offered).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command', 'delegate'])
     const results = (i: number) => (chatCalls[i].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
     expect(results(1)[0].content).toBe('hello.py (1 line)\n\n     1\tprint("hello")')
     approvals.decide(r.conversation.id, edit.messageId, edit.index, 'chat')
@@ -2110,5 +2111,283 @@ describe('runRounds', () => {
     expect(out.error).toBeNull()
     expect(out.rounds).toBe(1)
     expect(listTraces(conversation.id).find((t) => t.kind === 'delegate')?.status).toBe('aborted')
+  })
+})
+
+describe('sub-agents', () => {
+  const isChild = (b: Record<string, unknown>) => String((b.messages as Array<{ content: string }>)[0].content).includes('<sub_agent>')
+  const hasToolResult = (b: Record<string, unknown>) => (b.messages as Array<{ role: string }>).some((m) => m.role === 'tool')
+  const toolResults = (b: Record<string, unknown>) => (b.messages as Array<{ role: string }>).filter((m) => m.role === 'tool').length
+  const delegateCall = (task: string) => toolCall('delegate', { task })
+  const offeredIn = (b: Record<string, unknown>) => ((b.tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
+  const toolEventsIn = (conversationId: string) =>
+    events.filter((e): e is Extract<ChatEvent, { type: 'tool' }> => e.type === 'tool' && e.conversationId === conversationId)
+
+  beforeEach(() => setApiKey('test-key')) // web tools on, so delegate is offered
+
+  it('runs a child on the task and gives the parent only its result', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b))
+        return hasToolResult(b)
+          ? reply('The headline is OLLMOST-CHILD-OK.')(b, res, n)
+          : void res.writeHead(200).end(toolCall('web_search', { query: 'ollmost' }))
+      return hasToolResult(b)
+        ? reply('The sub-agent found: OLLMOST-CHILD-OK.')(b, res, n)
+        : void res.writeHead(200).end(delegateCall('Search for ollmost and report the headline.'))
+    }
+    web = (_p, res) =>
+      res.writeHead(200).end(JSON.stringify({ results: [{ title: 'Ollmost', url: 'https://k.io', content: 'OLLMOST-CHILD-OK' }] }))
+    const r = start('find the headline')
+    const done = await doneEvent(r.conversation.id)
+    expect(done.message.content).toBe('The sub-agent found: OLLMOST-CHILD-OK.')
+    const [event] = done.message.toolEvents
+    expect(event).toMatchObject({ tool: 'delegate', ok: true, summary: 'Search for ollmost and report the headline. · 1 tool call' })
+    expect(event.pending).toBeUndefined()
+    expect(event.child).toMatchObject({
+      task: 'Search for ollmost and report the headline.',
+      result: 'The headline is OLLMOST-CHILD-OK.',
+      rounds: 2
+    })
+    expect(event.child!.events).toEqual([expect.objectContaining({ tool: 'web_search', ok: true })])
+    // The parent's request after the call carries the child's reply, not its reading.
+    const parentAfter = chatCalls.find((b) => !isChild(b) && hasToolResult(b))!
+    const toolMsg = (parentAfter.messages as Array<{ role: string; content: string }>).find((m) => m.role === 'tool')!
+    expect(toolMsg.content).toBe('The headline is OLLMOST-CHILD-OK.')
+    expect(toolMsg.content).not.toContain('k.io')
+    // The child was offered no delegate of its own; the parent was.
+    const childReq = chatCalls.find(isChild)!
+    expect(offeredIn(childReq)).not.toContain('delegate')
+    expect(offeredIn(chatCalls[0])).toContain('delegate')
+    expect(String((chatCalls[0].messages as Array<{ content: string }>)[0].content)).toContain('<sub_agents>')
+    // Billed on the chat as delegate rows; traced as the child's own turn.
+    const rows = all<{ kind: string; message_id: string }>(
+      'SELECT kind, message_id FROM usage_events WHERE conversation_id = ? AND kind = ?',
+      r.conversation.id,
+      'delegate'
+    )
+    expect(rows).toEqual([
+      { kind: 'delegate', message_id: r.assistantMessageId },
+      { kind: 'delegate', message_id: r.assistantMessageId }
+    ])
+    const traces = listTraces(r.conversation.id)
+    expect(traces.filter((t) => t.kind === 'delegate').every((t) => t.messageId === `${r.assistantMessageId}#0`)).toBe(true)
+    expect(traces.filter((t) => t.kind === 'delegate')).toHaveLength(2)
+    expect(traces.every((t) => t.status !== 'running')).toBe(true)
+    // Live: the parent's event was re-emitted with the child's search while it ran.
+    const live = toolEventsIn(r.conversation.id)
+    expect(live.some((e) => e.event.pending && e.event.child?.events.some((c) => c.tool === 'web_search'))).toBe(true)
+  })
+
+  it('is offered beside another tool, and never to a child or outside a reply', async () => {
+    const { delegateTools } = await import('../src/main/chat/delegate')
+    const parent: ToolContext['reply'] = {
+      conversationId: 'c',
+      messageId: 'm',
+      model: 'llama3.2',
+      think: null,
+      maxRounds: 10,
+      prompt: { userName: '', model: 'llama3.2', contextLength: 8192, web: 'on', skillIndex: [] }
+    }
+    const offered = (over: Partial<ToolContext>) =>
+      delegateTools
+        .tools({ mode: 'chat', skills: false, web: false, sources: [], workspace: null, reply: parent, ...over })
+        .map((t) => t.function.name)
+    expect(offered({ web: true })).toEqual(['delegate'])
+    // Skills alone give a sub-agent nothing to do.
+    expect(offered({ skills: true })).toEqual([])
+    // The code runner, when run_code is offered: switched on with a workspace of Ollmost's own readied.
+    expect(offered({ sources: ['code'], workspace: { owned: true } as Workspace })).toEqual(['delegate'])
+    expect(offered({ sources: ['code'] })).toEqual([])
+    // An MCP server switched on counts by the tools it offers.
+    expect(offered({ sources: ['mcp:not-running'] })).toEqual([])
+    const off = registerToolProvider({
+      id: 'notes',
+      tools: () => [{ type: 'function', function: { name: 'notes__search', description: 'Search notes', parameters: { type: 'object' } } }],
+      pending: ({ name, args }) => ({ tool: name, args, ok: true, pending: true, summary: '' }),
+      run: async ({ name, args }) => ({ content: '', event: { tool: name, args, ok: true, summary: '' } })
+    })
+    try {
+      expect(offered({})).toEqual(['delegate'])
+    } finally {
+      off()
+    }
+    expect(offered({ web: true, child: true })).toEqual([])
+    expect(offered({ web: true, reply: undefined })).toEqual([])
+  })
+
+  it('is not offered without tools to delegate to, nor when switched off', async () => {
+    setApiKey('')
+    chat = reply('plain')
+    const r = start('hi')
+    await doneEvent(r.conversation.id)
+    expect(offeredIn(chatCalls[0])).not.toContain('delegate')
+    expect(String((chatCalls[0].messages as Array<{ content: string }>)[0].content)).not.toContain('<sub_agents>')
+    setApiKey('test-key')
+    updateSettings({ delegate: { enabled: false, maxRounds: 20 } })
+    try {
+      chat = reply('plain')
+      const r2 = start('hi again')
+      await doneEvent(r2.conversation.id)
+      expect(offeredIn(chatCalls.at(-1)!)).toContain('web_search')
+      expect(offeredIn(chatCalls.at(-1)!)).not.toContain('delegate')
+    } finally {
+      updateSettings({ delegate: { enabled: true, maxRounds: 20 } })
+    }
+  })
+
+  it('a child that runs out of rounds returns what it had, with a note', async () => {
+    updateSettings({ delegate: { enabled: true, maxRounds: 2 } })
+    try {
+      chat = (b, res, n) => {
+        if (isChild(b))
+          return b.tools
+            ? void res
+                .writeHead(200)
+                .end(line({ message: { role: 'assistant', content: 'Partial. ' }, done: false }) + toolCall('web_search', { query: 'x' }))
+            : reply('Still partial.')(b, res, n)
+        return hasToolResult(b) ? reply('ok')(b, res, n) : void res.writeHead(200).end(delegateCall('Loop forever.'))
+      }
+      web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] }))
+      const r = start('loop')
+      const done = await doneEvent(r.conversation.id)
+      expect(done.message.toolEvents[0].child?.result).toContain('stopped at its limit of 2 requests')
+      expect(done.message.toolEvents[0].child?.result).toContain('Still partial.')
+      expect(done.message.toolEvents[0].child?.rounds).toBe(2)
+    } finally {
+      updateSettings({ delegate: { enabled: true, maxRounds: 20 } })
+    }
+  })
+
+  it('an approval inside the child is keyed by the child’s id and stored on the chat', async () => {
+    const { childId } = await import('../src/main/chat/delegate')
+    // A tool that acts on this Mac: it asks first, and can be allowed for the chat.
+    const runs: string[] = []
+    const off = registerToolProvider({
+      id: 'wipe-test',
+      tools: () => [{ type: 'function', function: { name: 'notes__wipe', description: 'Wipe a note', parameters: { type: 'object' } } }],
+      pending: ({ name, args }) => ({ tool: name, args, ok: true, pending: true, summary: 'wiping' }),
+      run: async ({ name, args }) => {
+        runs.push(name)
+        return { content: 'Wiped.', event: { tool: name, args, ok: true, summary: 'wiped' } }
+      },
+      approval: () => 'ask'
+    })
+    try {
+      chat = (b, res, n) => {
+        if (isChild(b)) return hasToolResult(b) ? reply('Wiped it.')(b, res, n) : void res.writeHead(200).end(toolCall('notes__wipe', {}))
+        // Then the parent calls the same tool itself: allowed for the chat inside the child, it runs unasked.
+        const results = toolResults(b)
+        if (results === 0) return void res.writeHead(200).end(delegateCall('Wipe the note.'))
+        if (results === 1) return void res.writeHead(200).end(toolCall('notes__wipe', {}))
+        return reply('done')(b, res, n)
+      }
+      const r = start('wipe it')
+      const waiting = await waitFor(() => toolEventsIn(r.conversation.id).find((e) => !!e.event.child?.events.some((c) => c.awaiting)))
+      // The parent's card carries the question up, and is saved at once, as the parent's own questions are.
+      expect(waiting).toMatchObject({ index: 0, event: { tool: 'delegate', awaiting: true, pending: true } })
+      expect(getMessage(r.assistantMessageId)!.toolEvents[0].child?.events[0]).toMatchObject({ tool: 'notes__wipe', awaiting: true })
+      expect(runs).toEqual([])
+      // The renderer answers with the child's id and the child's index; the parent's own id is not waiting.
+      expect(() => approvals.decide(r.conversation.id, r.assistantMessageId, 0, 'chat')).toThrow(/isn't waiting/)
+      approvals.decide(r.conversation.id, childId(r.assistantMessageId, 0), 0, 'chat')
+      const done = await doneEvent(r.conversation.id)
+      expect(done.message.toolEvents[0].child?.events[0]).toMatchObject({ tool: 'notes__wipe', ok: true })
+      expect(done.message.toolEvents[0].awaiting).toBeUndefined()
+      expect(done.conversation.allowedTools).toEqual(['notes__wipe'])
+      expect(done.message.toolEvents[1]).toMatchObject({ tool: 'notes__wipe', ok: true })
+      expect(runs).toEqual(['notes__wipe', 'notes__wipe'])
+      expect(toolEventsIn(r.conversation.id).some((e) => e.index === 1 && e.event.awaiting)).toBe(false)
+    } finally {
+      off()
+    }
+  })
+
+  it('Stop during the child settles both', async () => {
+    chat = (b, res) => {
+      if (isChild(b)) return streamChunks(res, [line({ message: { role: 'assistant', content: 'thinking' }, done: false })]) // hangs
+      return void res.writeHead(200).end(delegateCall('Take forever.'))
+    }
+    const r = start('stop me')
+    await waitFor(() => chatCalls.some(isChild))
+    await service.stop(r.conversation.id)
+    const saved = getMessage(r.assistantMessageId)!
+    expect(saved.stats).toBeTruthy()
+    expect(saved.error).toBeNull()
+    expect(saved.toolEvents[0]).toMatchObject({ tool: 'delegate', pending: false, ok: false })
+    expect(saved.toolEvents[0].summary).toContain('stopped')
+    expect(listTraces(r.conversation.id).every((t) => t.status !== 'running')).toBe(true)
+    expect(listTraces(r.conversation.id).find((t) => t.kind === 'delegate')?.status).toBe('aborted')
+  })
+
+  it('two delegations in one round run in order', async () => {
+    const order: string[] = []
+    chat = (b, res, n) => {
+      if (isChild(b)) {
+        const task = String((b.messages as Array<{ content: string }>).at(-1)!.content)
+        order.push(task.includes('first') ? 'first' : 'second')
+        return reply(task.includes('first') ? 'A' : 'B')(b, res, n)
+      }
+      return hasToolResult(b)
+        ? reply('A then B')(b, res, n)
+        : void res.writeHead(200).end(
+            line({
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [
+                  { function: { name: 'delegate', arguments: { task: 'the first' } } },
+                  { function: { name: 'delegate', arguments: { task: 'the second' } } }
+                ]
+              },
+              done: false
+            }) + line({ done: true })
+          )
+    }
+    const r = start('two')
+    const done = await doneEvent(r.conversation.id)
+    expect(order).toEqual(['first', 'second'])
+    expect(done.message.toolEvents.map((e) => e.child?.result)).toEqual(['A', 'B'])
+    const traces = listTraces(r.conversation.id).filter((t) => t.kind === 'delegate')
+    expect(traces.map((t) => t.messageId)).toEqual([`${r.assistantMessageId}#0`, `${r.assistantMessageId}#1`])
+  })
+
+  // A code session needs the macOS sandbox, as the session tests above do.
+  it.runIf(process.platform === 'darwin')('a child in plan mode gets no write tools', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    writeFileSync(join(folder, 'README.md'), 'Hello\n')
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    service.setStage(session.id, 'plan')
+    chat = (b, res, n) =>
+      isChild(b)
+        ? reply('Surveyed.')(b, res, n)
+        : hasToolResult(b)
+          ? reply('done')(b, res, n)
+          : void res.writeHead(200).end(delegateCall('Survey the folder.'))
+    const r = service.send({ ...sendBody(session.id), content: 'survey it' })
+    const done = await doneEvent(r.conversation.id)
+    expect(done.message.toolEvents[0]).toMatchObject({ tool: 'delegate', ok: true })
+    expect(offeredIn(chatCalls[0])).toContain('delegate')
+    const childReq = chatCalls.find(isChild)!
+    expect(offeredIn(childReq)).toEqual(expect.arrayContaining(['read_file', 'list_files', 'search_files']))
+    expect(offeredIn(childReq)).toEqual(expect.not.arrayContaining(['edit_file', 'write_file', 'run_command']))
+    // The child works under the session's prompt, in plan mode, with its task.
+    const system = String((childReq.messages as Array<{ content: string }>)[0].content)
+    expect(system).toMatch(/<plan_mode>/)
+    expect(system).toMatch(/<sub_agent>[\s\S]*Survey the folder\./)
   })
 })

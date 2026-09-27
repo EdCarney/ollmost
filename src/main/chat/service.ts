@@ -52,10 +52,15 @@ import { errorMessage, estimateTokens } from '../util'
 import { hasPrivateFiles } from './exposure'
 import { assemble, type HistoryTurn, promptBudget } from './assemble'
 import { TITLE_PROMPT } from './prompts'
+import { delegateTools } from './delegate'
 import { CHARS_PER_TOKEN, runRounds, toolsTokens } from './rounds'
-import { missingAbilities, replayCalls, settleToolEvent, type ToolContext, toolGrants, toolsFor } from './tools'
+import { missingAbilities, registerToolProvider, replayCalls, settleToolEvent, type ToolContext, toolGrants, toolsFor } from './tools'
 import type { WebStatus } from './prompts'
 import { turnPolicy } from './turn'
+
+// The delegate tool runs a reply loop of its own, and the loop imports tools.ts, so it joins the built-in providers
+// here rather than in tools.ts's list. It comes after them; no MCP tool can take its name (theirs are <server>__<tool>).
+registerToolProvider(delegateTools)
 
 /** How long a reply waits for the chat's MCP servers to start; ones still starting are left out of it. */
 const SERVER_WAIT_MS = 30_000
