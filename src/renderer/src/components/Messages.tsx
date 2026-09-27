@@ -32,7 +32,7 @@ import type { ContinueReason } from '@/lib/chatActions'
 import { type StreamState, useChat } from '@/stores/chat'
 import { ArtifactCard } from './ArtifactCard'
 import { CodeBlock, useCopy } from './CodeBlock'
-import { CommandCard } from './CodeCards'
+import { CommandCard, diffCounts, EditCard, FileEvent } from './CodeCards'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { Button, IconButton, TextArea, Tooltip } from './ui'
@@ -143,6 +143,8 @@ export const UserMessage = memo(function UserMessage({
 
 const SKILL_TOOL_NAMES = new Set(['load_skill', 'read_skill_file'])
 const WEB_TOOL_NAMES = new Set(['web_search', 'web_fetch'])
+const FILE_TOOL_NAMES = new Set(['read_file', 'list_files', 'search_files'])
+const EDIT_TOOL_NAMES = new Set(['edit_file', 'write_file'])
 
 export const pill = 'flex max-w-full items-center gap-1.5 rounded-lg border px-2 py-1 font-ui text-xs'
 
@@ -374,6 +376,9 @@ export function ApprovalCard({
   const args = argsText(e)
   const code = e.tool === 'run_code' ? String(e.args.code ?? '') : e.tool === 'run_command' ? String(e.args.command ?? '') : null
   const lang = e.tool === 'run_command' ? 'bash' : runLanguage(e)
+  const edits = EDIT_TOOL_NAMES.has(e.tool)
+  const diff = edits && e.diff ? e.diff : null
+  const counts = diff !== null ? diffCounts(diff) : null
   const answer = async (decision: ToolDecision) => {
     setAnswering(true)
     try {
@@ -397,6 +402,17 @@ export function ApprovalCard({
             </>
           ) : code !== null ? (
             <>Run this {lang === 'bash' ? 'bash script' : 'Python'} in the sandbox?</>
+          ) : edits ? (
+            <>
+              {e.tool === 'write_file' ? 'Write' : 'Edit'}{' '}
+              <span className="break-all font-mono font-medium text-fg">{String(e.args.path ?? '')}</span>?
+              {counts && (
+                <span className="text-muted">
+                  {' '}
+                  +{counts.added} −{counts.removed}
+                </span>
+              )}
+            </>
           ) : (
             <>
               Allow the model to use <span className="font-mono font-medium text-fg">{toolName(e)}</span>
@@ -415,9 +431,13 @@ export function ApprovalCard({
         <div className="mt-2 max-h-96 overflow-auto">
           <CodeBlock code={code} lang={lang} />
         </div>
+      ) : diff !== null ? (
+        <div className="mt-2 max-h-96 overflow-auto">
+          <CodeBlock code={diff} lang="diff" />
+        </div>
       ) : (
         <>
-          {e.summary && e.summary !== e.tool && <div className="mt-1 truncate pl-6 text-xs text-muted">{e.summary}</div>}
+          {e.summary && e.summary !== e.tool && !edits && <div className="mt-1 truncate pl-6 text-xs text-muted">{e.summary}</div>}
           {args && (
             <div className="mt-2">
               <Detail label="Arguments" text={args} />
@@ -473,6 +493,10 @@ export function ToolGroup({
           <CodeRunCard key={index} e={e} conversationId={conversationId} />
         ) : e.tool === 'run_command' ? (
           <CommandCard key={index} e={e} />
+        ) : FILE_TOOL_NAMES.has(e.tool) ? (
+          <FileEvent key={index} e={e} />
+        ) : EDIT_TOOL_NAMES.has(e.tool) ? (
+          <EditCard key={index} e={e} />
         ) : WEB_TOOL_NAMES.has(e.tool) ? (
           <WebEvent key={index} e={e} />
         ) : SKILL_TOOL_NAMES.has(e.tool) ? (

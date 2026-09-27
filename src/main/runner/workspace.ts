@@ -291,7 +291,7 @@ export function changedFiles(before: Snapshot, after: Snapshot): Array<{ path: s
 }
 
 /** On a Mac, open() fails if any part of the path is a link (O_NOFOLLOW_ANY), which code can't race. */
-const NO_LINKS = process.platform === 'darwin' ? 0x20000000 : constants.O_NOFOLLOW
+export const NO_LINKS = process.platform === 'darwin' ? 0x20000000 : constants.O_NOFOLLOW
 
 /** Where `rel` would be under the root (by its real path), or null when that's outside it. Nothing is opened. */
 async function pathInside(ws: Workspace, rel: string): Promise<string | null> {

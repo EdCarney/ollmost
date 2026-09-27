@@ -72,8 +72,11 @@ export interface ToolProvider {
    * null. Only asked after exact names, so an alias can never shadow a real tool such as an MCP server's `fetch`.
    */
   alias?(name: string, args: Record<string, unknown>): string | null
-  /** What to show while the call runs. */
-  pending(call: ResolvedCall): ToolEvent
+  /**
+   * What to show while the call runs. May take a moment: a code session's edit shows its diff before it asks, which
+   * means reading the file.
+   */
+  pending(call: ResolvedCall, ctx: ToolContext): ToolEvent | Promise<ToolEvent>
   /** Run the call. Throwing is fine: the error goes back to the model (a stop is re-thrown instead). */
   run(call: ResolvedCall, ctx: RunContext): Promise<ToolResult>
   /** What later turns keep of a finished call; null or absent keeps nothing. */
@@ -200,9 +203,9 @@ export function settleToolEvent(e: ToolEvent): ToolEvent {
 }
 
 /** What to show while a call runs, before its result is known. */
-export function pendingEvent(call: ToolCall, ctx: ToolContext): ToolEvent {
+export async function pendingEvent(call: ToolCall, ctx: ToolContext): Promise<ToolEvent> {
   const resolved = resolveCall(call, ctx)
-  if (resolved) return resolved.provider.pending(resolved)
+  if (resolved) return resolved.provider.pending(resolved, ctx)
   return { tool: call.function.name, args: argsOf(call), ok: true, pending: true, summary: call.function.name, unknown: true }
 }
 

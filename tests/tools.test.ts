@@ -86,14 +86,18 @@ describe('tool registry', () => {
     register(fake('mcp', ['fetch']))
     const c = call('fetch', { url: 'https://example.com' })
     expect(resolveCall(c, ctx({ web: true }))).toMatchObject({ name: 'fetch', via: null })
-    expect(pendingEvent(c, ctx({ web: true })).summary).toBe('mcp pending')
+    expect((await pendingEvent(c, ctx({ web: true }))).summary).toBe('mcp pending')
     expect((await runTool(c, ctx({ web: true }))).content).toBe('mcp:fetch')
   })
 
-  it('still routes gpt-oss browser names to the web tools when nothing else offers them', () => {
+  it('still routes gpt-oss browser names to the web tools when nothing else offers them', async () => {
     const resolved = resolveCall(call('browser.open', { id: 'https://example.com/a' }), ctx({ web: true }))
     expect(resolved).toMatchObject({ name: 'web_fetch', via: 'browser.open' })
-    expect(resolved!.provider.pending(resolved!)).toMatchObject({ tool: 'web_fetch', summary: 'https://example.com/a', pending: true })
+    expect(await resolved!.provider.pending(resolved!, ctx({ web: true }))).toMatchObject({
+      tool: 'web_fetch',
+      summary: 'https://example.com/a',
+      pending: true
+    })
     // With web off there's nothing to alias to.
     expect(resolveCall(call('browser.open', { id: 'https://example.com/a' }), ctx())).toBeNull()
   })
@@ -269,8 +273,8 @@ describe('asking first', () => {
     expect(approvalFor(call('web_fetch', url), ctx({ web: true }))).toBe('auto')
   })
 
-  it('tells the model a declined call never ran, and shows it as declined', () => {
-    const pending = { ...pendingEvent(call('web_search', { query: 'ollmost' }), ctx({ web: true })), awaiting: true }
+  it('tells the model a declined call never ran, and shows it as declined', async () => {
+    const pending = { ...(await pendingEvent(call('web_search', { query: 'ollmost' }), ctx({ web: true }))), awaiting: true }
     const result = declinedResult(call('web_search', { query: 'ollmost' }), pending)
     expect(result.content).toMatch(/declined to run web_search, so it didn't run\. Don't call it again unless they ask/)
     expect(result.event).toEqual({

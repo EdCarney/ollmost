@@ -230,7 +230,7 @@ describe('run_command among the tools', () => {
 
   it('is offered in a session and never in a chat, and run_code the other way round', () => {
     const ctx = sessionCtx(userFolder())
-    expect(names(ctx)).toEqual(['run_command'])
+    expect(names(ctx)).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command'])
     expect(names({ ...ctx, mode: 'chat', sources: ['code'] })).toEqual([])
     const chat = createConversation({ projectId: null, model: 'm', think: null, skills: [] })
     expect(names({ ...ctx, workspace: workspace.workspaceFor(chat.id) })).toEqual([])
@@ -248,9 +248,9 @@ describe('run_command among the tools', () => {
     expect(tools.toolEndpoint(call({ command: 'ls' }), ctx)).toBe('ollmost://code/run_command')
   })
 
-  it('shows the command while it waits, and keeps what it printed for later turns', () => {
+  it('shows the command while it waits, and keeps what it printed for later turns', async () => {
     const ctx = sessionCtx(userFolder())
-    expect(tools.pendingEvent(call({ command: '# look\nnpm test -- --run', timeout_sec: 10 }), ctx)).toEqual({
+    expect(await tools.pendingEvent(call({ command: '# look\nnpm test -- --run', timeout_sec: 10 }), ctx)).toEqual({
       tool: 'run_command',
       args: { command: '# look\nnpm test -- --run', timeout_sec: 10 },
       ok: true,

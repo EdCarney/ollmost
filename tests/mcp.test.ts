@@ -378,7 +378,7 @@ describe('as tools in a reply', () => {
 
   it('runs a call and keeps a short record of it for later turns', async () => {
     const c = ctx([`mcp:${id}`])
-    const pending = tools.pendingEvent(call('codenames__lookup_codename', { project: 'Ollmost' }), c)
+    const pending = await tools.pendingEvent(call('codenames__lookup_codename', { project: 'Ollmost' }), c)
     expect(pending).toMatchObject({ pending: true, summary: 'Ollmost', source: 'Codenames' })
     const result = await tools.runTool(call('codenames__lookup_codename', { project: 'Ollmost' }), c)
     expect(result.content).toBe('The internal codename for project Ollmost is BLUE KESTREL.')

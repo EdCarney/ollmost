@@ -62,7 +62,9 @@
   "dependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.77",
     "@modelcontextprotocol/sdk": "1.30.1",
+    "diff": "^9.0.0",
     "exceljs": "^4.4.0",
+    "ignore": "^7.0.10",
     "mammoth": "^1.12.3",
     "pdfjs-dist": "^6.3.289",
     "yaml": "^2.9.1"
