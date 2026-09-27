@@ -1,11 +1,9 @@
 import { create } from 'zustand'
-import type { Artifact, ChatEvent, ChatUsage, Conversation, Message, SendResult, ThinkingSegment, ToolEvent } from '@shared/types'
+import type { Artifact, ChatEvent, ChatUsage, Conversation, Message, SendResult, ToolEvent } from '@shared/types'
+import { applyPiece, endLiveThinking, type LiveThinking, type Piece } from '@shared/thinkingStream'
 import { api } from '@/lib/api'
 import { showsConversation, useApp } from './app'
 import { useArtifactPanel } from './artifactPanel'
-
-/** A round's thinking as it streams: `ms` is measured here until the text moves on (the saved reply carries its own). */
-export type LiveThinking = ThinkingSegment & { startedAt: number }
 
 export interface StreamState {
   messageId: string
@@ -126,22 +124,8 @@ export const useChat = create<ChatState>((set, get) => ({
 // ---- Event handling -----------------------------------------------------
 
 /** Deltas since the last frame, in order: thinking keeps its round so the stream's segments can be built. */
-type Piece = { content: string } | { thinking: string; round: { at: number; index: number } }
 const pending = new Map<string, { messageId: string; pieces: Piece[] }>()
 let frame = 0
-
-/** The stream's thinking segments after a delta: text joins the round's segment or starts one; content ends the live one. */
-function applyPiece(segments: LiveThinking[], piece: Piece, now: number): LiveThinking[] {
-  const last = segments[segments.length - 1]
-  if ('content' in piece) {
-    if (!piece.content || !last || last.ms !== null) return segments
-    return [...segments.slice(0, -1), { ...last, ms: now - last.startedAt }]
-  }
-  const round = piece.round
-  if (last && last.at === round.at && last.index === round.index && last.ms === null)
-    return [...segments.slice(0, -1), { ...last, text: last.text + piece.thinking }]
-  return [...segments, { text: piece.thinking, at: round.at, index: round.index, ms: null, startedAt: now }]
-}
 
 function flush(): void {
   frame = 0
@@ -192,7 +176,7 @@ function handle(e: ChatEvent): void {
         const toolEvents = [...prev.toolEvents]
         toolEvents[e.index] = e.event
         // A call means the round's thinking is over, whether or not any text followed it.
-        const thinkingSegments = applyPiece(prev.thinkingSegments, { content: ' ' }, Date.now())
+        const thinkingSegments = endLiveThinking(prev.thinkingSegments, Date.now())
         return { streams: { ...s.streams, [e.conversationId]: { ...prev, toolEvents, thinkingSegments } } }
       })
       // The chat on screen shows the question inline; any other one gets a toast (and a mark in the sidebar).

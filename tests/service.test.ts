@@ -195,7 +195,10 @@ describe('reply loop', () => {
     let release!: () => void
     const gate = new Promise<void>((r) => (release = r))
     chat = async (_b, res) => {
-      await streamChunks(res, [line({ message: { role: 'assistant', content: 'early words' }, done: false })])
+      await streamChunks(res, [
+        line({ message: { role: 'assistant', content: '', thinking: 'early thought' }, done: false }),
+        line({ message: { role: 'assistant', content: 'early words' }, done: false })
+      ])
       await new Promise((r) => setTimeout(r, 1700))
       res.write(line({ message: { role: 'assistant', content: '!' }, done: false })) // triggers the checkpoint
       await gate
@@ -204,6 +207,8 @@ describe('reply loop', () => {
     const r = start()
     const saved = await waitFor(() => getMessage(r.assistantMessageId)?.content === 'early words!')
     expect(saved).toBe(true)
+    // The checkpoint carries the round's thinking so far, placed, in case it's the last save.
+    expect(getMessage(r.assistantMessageId)?.thinkingSegments).toEqual([{ text: 'early thought', at: 0, index: 0, ms: expect.any(Number) }])
     release()
     await doneEvent(r.conversation.id)
   })
@@ -223,6 +228,16 @@ describe('reply loop', () => {
     // A stop for a delete (or a quit) doesn't start a title request.
     await new Promise((r) => setTimeout(r, 50))
     expect(titleCalls).toHaveLength(0)
+  })
+
+  it('stop() keeps the thinking of the round it stopped in', async () => {
+    chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: '', thinking: 'half a thought' }, done: false })]) // then hangs
+    const r = start()
+    await waitFor(() => events.some((e) => e.type === 'delta' && e.conversationId === r.conversation.id))
+    await service.stop(r.conversation.id, { quiet: true })
+    const saved = getMessage(r.assistantMessageId)!
+    expect(saved.thinking).toBe('half a thought')
+    expect(saved.thinkingSegments).toEqual([{ text: 'half a thought', at: 0, index: 0, ms: expect.any(Number) }])
   })
 
   it('still titles a new chat whose first reply was stopped with Stop', async () => {

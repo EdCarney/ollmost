@@ -645,7 +645,9 @@ export const AssistantMessage = memo(function AssistantMessage({
     <div className="group">
       {awaitingFirst && <ThinkingBlock thinking="" active durationMs={null} />}
       {rendered}
-      {working && !timeline.length && <div className="stream-caret h-6" aria-label="Waiting for reply" />}
+      {working && !content && !thinkingSegments.some((t) => t.ms === null) && (
+        <div className="stream-caret h-6" aria-label="Waiting for reply" />
+      )}
       {working && content && <span className="stream-caret" />}
       {message.error && !streaming && (
         <div className="mt-2 flex items-start gap-2 rounded-ollmost border border-danger/40 bg-[color-mix(in_srgb,var(--o-danger)_8%,transparent)] px-3 py-2.5 text-sm">
