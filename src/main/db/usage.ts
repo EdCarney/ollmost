@@ -1,5 +1,6 @@
 import type { ChatUsage, TokenTotals, UsageSummary } from '@shared/types'
 import { now, uid } from '../util'
+import { getConversation } from './conversations'
 import { all, get, run } from './index'
 
 export function insertUsageEvent(e: {
@@ -57,10 +58,17 @@ export function conversationUsage(conversationId: string): ChatUsage {
     `SELECT model, ${TOTALS_SQL} FROM usage_events WHERE conversation_id = ? GROUP BY model ORDER BY SUM(completion_tokens) DESC`,
     conversationId
   ).map((r) => ({ model: r.model, ...totals(r) }))
+  // A compacted chat's older rows no longer reflect what the next request sends, and a row whose message
+  // was later deleted (an Edit or Retry) never went out either; skip both so the meter reads null, not a
+  // stale number, until a real request lands.
+  const compactedAt = getConversation(conversationId)?.compaction?.at ?? 0
   const last = get<{ tokens: number }>(
     `SELECT prompt_tokens + completion_tokens AS tokens FROM usage_events
-     WHERE conversation_id = ? AND kind = 'chat' ORDER BY created_at DESC LIMIT 1`,
-    conversationId
+     WHERE conversation_id = ? AND kind = 'chat' AND created_at > ?
+       AND (message_id IS NULL OR EXISTS (SELECT 1 FROM messages WHERE messages.id = usage_events.message_id))
+     ORDER BY created_at DESC LIMIT 1`,
+    conversationId,
+    compactedAt
   )
   const { requests: _requests, ...rest } = total
   return { ...rest, byModel, lastContextTokens: last?.tokens ?? null }
