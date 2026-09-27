@@ -2,6 +2,7 @@ import { CircleCheck, CircleEqual, CircleHelp, ExternalLink, Gauge, KeyRound, Re
 import { useEffect, useState } from 'react'
 import { formatCost, formatDollars, formatPercent, formatTimeLeft, type Pace, type PaceStatus, paceOf, spendPeriod } from '@shared/usage'
 import type { AccountUsage, ChatUsage, UsageSummary, UsageWindow } from '@shared/types'
+import { withPreview } from '@shared/settingsPreview'
 import { api } from '@/lib/api'
 import { cn, displayModelName, formatContext, formatTokens, relativeTime } from '@/lib/format'
 import { contextWindowFor, findModel, useApp } from '@/stores/app'
@@ -130,7 +131,7 @@ function WindowDetail({ w, now, onSetReset }: { w: UsageWindow; now: number; onS
 
 export function AccountQuota() {
   const { account, loading, load } = useUsage()
-  const { settings, navigate } = useApp()
+  const { settings, previewSettings, navigate } = useApp()
   const [open, setOpen] = useState(false)
   const [local, setLocal] = useState<UsageSummary | null>(null)
   const [now, setNow] = useState(Date.now())
@@ -149,7 +150,8 @@ export function AccountQuota() {
     if (open) void api.usage.summary(30, since ?? undefined, until).then(setLocal)
   }, [open, since, until])
 
-  if (!settings?.usage.showInHeader) return null
+  // The palette previews the header toggle live, before it's saved.
+  if (!settings || !withPreview(settings, previewSettings).usage.showInHeader) return null
   const w = headlineWindow(account, settings.usage.headerWindow)
   const pace = w ? paceOf(w, now) : null
   // Per-model request counts cover every app on the account; prefer the longest window that has them.
@@ -305,7 +307,15 @@ export function AccountQuota() {
 export function ChatCost({ usage, model: modelName }: { usage: ChatUsage | null; model: string | null }) {
   const models = useApp((s) => s.models)
   const settings = useApp((s) => s.settings)
-  if (!settings?.usage.showInHeader || !usage || usage.promptTokens + usage.completionTokens === 0) return null
+  const previewSettings = useApp((s) => s.previewSettings)
+  // The palette previews the header toggle live, before it's saved.
+  if (
+    !settings ||
+    !withPreview(settings, previewSettings).usage.showInHeader ||
+    !usage ||
+    usage.promptTokens + usage.completionTokens === 0
+  )
+    return null
   const model = findModel(models, modelName)
   const total = usage.promptTokens + usage.completionTokens
   const contextWindow = contextWindowFor(model, settings)

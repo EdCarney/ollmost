@@ -1,6 +1,7 @@
-import { useEffect, useSyncExternalStore } from 'react'
+import { useEffect, useMemo, useSyncExternalStore } from 'react'
 import { BUILTIN_THEMES, usesDark } from '@shared/themes'
-import type { Palette, ThemeDef } from '@shared/types'
+import type { Palette, Settings, ThemeDef } from '@shared/types'
+import { withPreview } from '@shared/settingsPreview'
 import { api } from '@/lib/api'
 import { useApp } from '@/stores/app'
 import { applyTheme, onSystemThemeChange, systemIsDark } from './applyTheme'
@@ -10,27 +11,33 @@ export function useSystemDark(): boolean {
   return useSyncExternalStore(onSystemThemeChange, systemIsDark)
 }
 
+/** The appearance on screen: the saved settings with the command palette's preview, if any, laid over. */
+export function useAppearance(): Settings['appearance'] | null {
+  const settings = useApp((s) => s.settings)
+  const preview = useApp((s) => s.previewSettings)
+  return useMemo(() => (settings ? withPreview(settings, preview).appearance : null), [settings, preview])
+}
+
 /** The theme on screen (the editor's live preview wins), whether it's showing dark, and that palette. */
 export function useActiveTheme(): { theme: ThemeDef; dark: boolean; palette: Palette } {
-  const themeId = useApp((s) => s.settings?.appearance.themeId)
-  const mode = useApp((s) => s.settings?.appearance.mode ?? 'system')
+  const appearance = useAppearance()
   const themes = useApp((s) => s.themes)
   const preview = useApp((s) => s.previewTheme)
   const systemDark = useSystemDark()
-  const theme = preview ?? themes.find((t) => t.id === themeId) ?? BUILTIN_THEMES[0]
-  const dark = usesDark(theme, mode, systemDark)
+  const theme = preview ?? themes.find((t) => t.id === appearance?.themeId) ?? BUILTIN_THEMES[0]
+  const dark = usesDark(theme, appearance?.mode ?? 'system', systemDark)
   return { theme, dark, palette: dark ? theme.dark : theme.light }
 }
 
 /** Apply the saved (or previewed) theme to this window, following system light/dark changes. */
 export function useTheme(): void {
-  const settings = useApp((s) => s.settings)
+  const appearance = useAppearance()
   const { theme, dark } = useActiveTheme()
 
   useEffect(() => {
-    if (!settings) return
-    const background = applyTheme(theme, settings.appearance)
+    if (!appearance) return
+    const background = applyTheme(theme, appearance)
     // A single-palette theme sets the native side too (menus, scrollbars, form controls).
-    void api.app.setNativeTheme(theme.only ?? settings.appearance.mode, background)
-  }, [settings, theme, dark])
+    void api.app.setNativeTheme(theme.only ?? appearance.mode, background)
+  }, [appearance, theme, dark])
 }
