@@ -134,8 +134,8 @@ export interface OllmostApi {
     edit(messageId: ID, content: string, opts: { model: string; think: ThinkSetting | null }): Promise<SendResult>
     stop(conversationId: ID): Promise<void>
     /**
-     * /compact: summarize the chat's older turns with `model` (the composer's), keeping the last few as they are;
-     * later replies replay the summary instead. `focus` is what the user asked to keep. Returns the updated chat.
+     * /compact: summarize every message since the last summary (or the start) with `model` (the composer's); later
+     * replies replay the summary instead. `focus` is what the user asked to keep. Returns the updated chat.
      */
     compact(conversationId: ID, opts: { focus: string; model: string }): Promise<Conversation>
     /** Answer a tool call that's waiting for approval: its reply's id and the call's index in its tool events. */
