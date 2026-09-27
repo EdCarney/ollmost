@@ -308,6 +308,35 @@ describe('reply loop', () => {
     ])
   })
 
+  it('reports the chat’s usage as each round ends, so the chip moves during a long reply', async () => {
+    setApiKey('test-key')
+    chat = (b, res, n) =>
+      n === 1
+        ? void res
+            .writeHead(200)
+            .end(
+              line({ message: { role: 'assistant', content: 'Let me check.' }, done: false }) + toolCall('web_search', { query: 'ollmost' })
+            )
+        : reply('Found it.')(b, res, n)
+    web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [{ title: 'Ollmosts', url: 'https://k.io', content: 'hot' }] }))
+    const r = start('look it up')
+    const done = await doneEvent(r.conversation.id)
+    await waitFor(() => events.some((e) => e.type === 'title' && e.conversationId === r.conversation.id))
+    const mine = events.filter((e) => e.conversationId === r.conversation.id)
+    const types = mine.map((e) => e.type)
+    // One usage event as the first round closes, after its text and before the second round's (the done carries the
+    // last round's), then one after the title request.
+    const before = types.slice(0, types.indexOf('done'))
+    expect(before.filter((x) => x === 'usage')).toHaveLength(1)
+    expect(before.indexOf('usage')).toBeGreaterThan(before.indexOf('delta'))
+    expect(before.lastIndexOf('delta')).toBeGreaterThan(before.indexOf('usage'))
+    const between = mine[types.indexOf('usage')] as Extract<ChatEvent, { type: 'usage' }>
+    expect(between.usage.byModel.map((m) => m.requests)).toEqual([1])
+    expect(done.usage.byModel.map((m) => m.requests)).toEqual([2])
+    const after = mine.slice(types.indexOf('done')).filter((e): e is Extract<ChatEvent, { type: 'usage' }> => e.type === 'usage')
+    expect(after.map((e) => e.usage.byModel.map((m) => m.requests))).toEqual([[3]])
+  })
+
   it('remembers earlier search results on the next turn', async () => {
     setApiKey('test-key')
     chat = (b, res, n) =>
