@@ -840,9 +840,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
   while (cut > 0 && since[cut].role !== 'user') cut--
   const older = since.slice(0, Math.max(0, cut))
   if (older.length < 2)
-    throw new Error(
-      `Nothing to compact yet: the last ${COMPACT_KEEPS} messages stay as they are, and there's less than an exchange before them.`
-    )
+    throw new Error(`Nothing to compact yet: the last exchanges stay as they are, and there's less than an exchange before them.`)
   compacting.add(conversationId)
   try {
     const info = await getModelInfo(opts.model)
@@ -859,11 +857,17 @@ export async function compact(conversationId: string, opts: { focus: string; mod
       think: profile.kind === 'levels' ? 'low' : profile.kind === 'toggle' ? false : undefined,
       options: { temperature: 0.3, ...contextOptions(info, settings.localNumCtx) }
     })
-    const budget = promptBudget(effectiveContext(info, settings.localNumCtx)) - estimateTokens(system) - COMPACT_REPLY_TOKENS
+    // A model with a tiny window still gets a piece worth summarizing rather than one message cut to nothing.
+    const budget = Math.max(
+      2000,
+      promptBudget(effectiveContext(info, settings.localNumCtx)) - estimateTokens(system) - COMPACT_REPLY_TOKENS
+    )
     const lines = older.map(transcriptLine)
     let summary = earlier?.summary ?? null
     let i = 0
     while (i < lines.length) {
+      // The chat may go while the model works; nothing else can change it (assertIdle), but a delete can.
+      if (!getConversation(conversationId)) throw new Error('The chat was deleted while it was being compacted.')
       const head = summary ? `<summary_so_far>\n${summary}\n</summary_so_far>\n\n` : ''
       let used = estimateTokens(head) + estimateTokens(COMPACT_INSTRUCTION) + 40
       const piece: string[] = []
@@ -878,7 +882,6 @@ export async function compact(conversationId: string, opts: { focus: string; mod
       const transcript = `${head}<conversation>\n${piece.join('\n\n')}\n</conversation>\n\n${COMPACT_INSTRUCTION}`
       summary = await summarizeOnce(conversationId, opts.model, body(transcript), transcript, piece.length)
     }
-    // The chat may have gone while the model worked; nothing else could change it (assertIdle).
     if (!getConversation(conversationId)) throw new Error('The chat was deleted while it was being compacted.')
     const compaction: Compaction = {
       summary: summary!,
@@ -886,9 +889,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
       messages: (earlier?.messages ?? 0) + older.length,
       at: Date.now()
     }
-    const updated = setCompaction(conversationId, compaction)
-    emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
-    return updated
+    return setCompaction(conversationId, compaction)
   } finally {
     compacting.delete(conversationId)
   }
@@ -918,18 +919,20 @@ async function summarizeOnce(
     const promptTokens = res.prompt_eval_count ?? estimateTokens(transcript)
     const completionTokens = res.eval_count ?? estimateTokens(summary)
     const costUsd = requestCost(modelName, promptTokens, completionTokens)
-    // The chat may have been deleted meanwhile; a usage row for it would fail, and there's nothing to bill it to.
-    if (getConversation(conversationId))
-      insertUsageEvent({
-        conversationId,
-        messageId: null,
-        model: modelName,
-        kind: 'compact',
-        promptTokens,
-        completionTokens,
-        costUsd,
-        estimated: res.eval_count === undefined
-      })
+    // Spent tokens are kept even for a chat deleted meanwhile (with no chat to bill them to), and the chat's usage
+    // chip moves after each piece, so a later failure leaves it right.
+    const chat = getConversation(conversationId)
+    insertUsageEvent({
+      conversationId: chat ? conversationId : null,
+      messageId: null,
+      model: modelName,
+      kind: 'compact',
+      promptTokens,
+      completionTokens,
+      costUsd,
+      estimated: res.eval_count === undefined
+    })
+    if (chat) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
     if (!summary) throw new Error('The model gave no summary; nothing was compacted.')
     const { message: _m, ...finalStats } = res
     trace.finish({
