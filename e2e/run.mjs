@@ -427,6 +427,30 @@ await second.win.screenshot({ path: join(SHOTS, 'home-nord-dark.png') })
     (await themeId()) === 'nord' && (await w.locator('[data-testid="palette-rows"]').count()) === 0
   )
   check('the kept theme is on screen', (await canvas()) === '#2e3440', await canvas())
+  // Nothing lingers: a theme picked in Settings right after shows, and a click outside while previewing reverts.
+  await w.getByRole('button', { name: 'Use Dracula theme' }).click()
+  await w.waitForTimeout(400)
+  const dracula = await canvas()
+  check(
+    'a theme picked in Settings shows after one chosen in the palette',
+    dracula !== '#2e3440' && (await themeId()) === 'dracula',
+    dracula
+  )
+  await w.keyboard.press('Meta+K')
+  await w.waitForSelector('[data-testid="palette-rows"]')
+  await search.fill('theme')
+  await w.keyboard.press('Enter')
+  await w.waitForSelector('input[placeholder="Choose…"]')
+  await w.locator('input[placeholder="Choose…"]').fill('nord')
+  await w.waitForTimeout(400)
+  check('the list previews again', (await canvas()) === '#2e3440')
+  await w.mouse.click(8, 400)
+  await w.waitForTimeout(500)
+  check(
+    'a click outside puts the saved theme back',
+    (await canvas()) === dracula && (await w.locator('[data-testid="palette-rows"]').count()) === 0,
+    await canvas()
+  )
   await w.screenshot({ path: join(SHOTS, 'palette-theme.png') })
 }
 await second.app.close()

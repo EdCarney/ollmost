@@ -17,6 +17,12 @@ describe('a settings preview', () => {
     expect(settings.appearance.themeId).toBe('paper')
   })
 
+  it('goes as deep as the preview does, keeping siblings at every level', () => {
+    const saved = { skills: { sources: { ollama: true, claude: false }, disabled: ['x'], autoLoad: true } }
+    const out = withPreview(saved, { skills: { sources: { claude: true } } })
+    expect(out.skills).toEqual({ sources: { ollama: true, claude: true }, disabled: ['x'], autoLoad: true })
+  })
+
   it('is the saved settings themselves when there is no preview', () => {
     expect(withPreview(settings, null)).toBe(settings)
     expect(withPreview(settings, {})).toBe(settings)

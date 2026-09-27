@@ -1,11 +1,12 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { Check, ChevronLeft, FolderClosed, MessageSquare, Search, SlidersHorizontal, SquareTerminal, Zap } from 'lucide-react'
-import { type ReactNode, useEffect, useMemo, useState } from 'react'
+import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { rankCommands } from '@shared/palette'
 import type { SearchHit } from '@shared/types'
 import { api } from '@/lib/api'
 import { cn, relativeTime } from '@/lib/format'
-import { type Choice, type PaletteCommand, paletteCommands, recentCommands, rememberCommand } from '@/lib/paletteCommands'
+import type { Choice } from '@shared/paletteChoices'
+import { type PaletteCommand, paletteCommands, recentCommands, rememberCommand } from '@/lib/paletteCommands'
 import { conversationRoute, type Route, useApp } from '@/stores/app'
 import { Snippet } from '@/views/ChatsView'
 
@@ -35,6 +36,8 @@ export function CommandPalette() {
   const [hits, setHits] = useState<SearchHit[]>([])
   const [index, setIndex] = useState(0)
   const [choosing, setChoosing] = useState<PaletteCommand | null>(null)
+  const input = useRef<HTMLInputElement>(null)
+  const list = useRef<HTMLDivElement>(null)
 
   // Commands come from the app's state when the palette opens (and follow settings, themes and models while open).
   // Built from the saved settings, never the preview, or each previewed choice would rebuild the list under itself.
@@ -53,10 +56,15 @@ export function CommandPalette() {
     }
   }, [searchOpen, setPreviewSettings])
 
+  // Whatever is on screen when the palette goes away is the saved state: closing, or this component going, clears
+  // the preview.
+  useEffect(() => () => setPreviewSettings(null), [setPreviewSettings])
+
   useEffect(() => {
-    // A choice list opens on the value in force; typing, or the command list, starts at the top.
-    const current = choosing && !query ? choosing.choices?.findIndex((c) => c.value === choosing.current) : -1
-    setIndex(Math.max(0, current ?? -1))
+    // A choice list opens on the value in force (nothing highlighted, and nothing previewed, if it isn't listed);
+    // typing, or the command list, starts at the top.
+    const current = choosing && !query ? (choosing.choices?.findIndex((c) => c.value === choosing.current) ?? -1) : 0
+    setIndex(current)
     if (choosing || !query.trim()) return setHits([])
     const t = setTimeout(() => api.conversations.search(query).then(setHits), 120)
     return () => clearTimeout(t)
@@ -116,19 +124,26 @@ export function CommandPalette() {
     return [...commandRows, ...projectRows, ...chatRows]
   }, [query, choosing, commands, recents, hits, conversations, sessions, projects])
 
-  // While choosing, the highlighted value is on screen before it's saved.
+  // While choosing, the highlighted value is on screen before it's saved. Not once the palette is closing: the
+  // rows rebuild then, and this must not put a preview back that the close just cleared.
   useEffect(() => {
-    if (!choosing) return
+    if (!searchOpen || !choosing) return
     const row = rows[index]
     const next = row?.kind === 'choice' ? row.choice.patch : null
     // Only a change of value: the store's preview is compared by content so a re-render never re-previews.
     if (JSON.stringify(next) !== JSON.stringify(useApp.getState().previewSettings)) setPreviewSettings(next)
-  }, [choosing, rows, index, setPreviewSettings])
+  }, [searchOpen, choosing, rows, index, setPreviewSettings])
+
+  // The highlighted row stays in view as the keys move it.
+  useEffect(() => {
+    list.current?.querySelector<HTMLElement>(`[data-index="${index}"]`)?.scrollIntoView({ block: 'nearest' })
+  }, [index, rows])
 
   const back = () => {
     setPreviewSettings(null)
     setChoosing(null)
     setQuery('')
+    input.current?.focus()
   }
 
   const choose = async (row: Row | undefined) => {
@@ -139,16 +154,20 @@ export function CommandPalette() {
       return
     }
     if (row.kind === 'choice') {
-      setPreviewSettings(null)
-      setSearchOpen(false)
       if (choosing) rememberCommand(choosing.id)
-      await updateSettings(row.choice.patch)
+      // Saved first, then closed: what's on screen is then the saved value, with no flash of the old one.
+      try {
+        await updateSettings(row.choice.patch)
+      } finally {
+        setSearchOpen(false)
+      }
       return
     }
     const { command } = row
     if (command.choices) {
       setChoosing(command)
       setQuery('')
+      input.current?.focus()
       return
     }
     rememberCommand(command.id)
@@ -174,7 +193,12 @@ export function CommandPalette() {
           <Dialog.Title className="sr-only">Search and commands</Dialog.Title>
           <div className="flex items-center gap-2 border-b border-line px-4">
             {choosing ? (
-              <button onClick={back} aria-label="Back to commands" className="rounded-md p-0.5 text-subtle hover:text-fg">
+              <button
+                onClick={back}
+                onMouseDown={(e) => e.preventDefault()}
+                aria-label="Back to commands"
+                className="rounded-md p-0.5 text-subtle hover:text-fg"
+              >
                 <ChevronLeft className="size-4" />
               </button>
             ) : (
@@ -182,13 +206,14 @@ export function CommandPalette() {
             )}
             {choosing && <span className="shrink-0 text-sm text-muted">{choosing.title}</span>}
             <input
+              ref={input}
               autoFocus
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault()
-                  setIndex((i) => Math.min(i + 1, rows.length - 1))
+                  setIndex((i) => Math.max(0, Math.min(i + 1, rows.length - 1)))
                 } else if (e.key === 'ArrowUp') {
                   e.preventDefault()
                   setIndex((i) => Math.max(i - 1, 0))
@@ -204,14 +229,15 @@ export function CommandPalette() {
               className="h-12 flex-1 bg-transparent text-[15px] outline-none placeholder:text-subtle"
             />
           </div>
-          <div className="max-h-[50vh] overflow-y-auto p-1.5" data-testid="palette-rows">
+          <div ref={list} className="max-h-[50vh] overflow-y-auto p-1.5" data-testid="palette-rows">
             {rows.map((row, i) => (
-              <div key={row.key}>
+              <div key={row.key} data-index={i}>
                 {(i === 0 || rows[i - 1].section !== row.section) && (
                   <div className="px-3 pb-1 pt-2 text-xs font-medium text-subtle">{row.section}</div>
                 )}
                 <button
                   onMouseEnter={() => setIndex(i)}
+                  onMouseDown={(e) => e.preventDefault()}
                   onClick={() => void choose(row)}
                   className={cn('flex w-full items-start gap-3 rounded-lg px-3 py-2 text-left', i === index && 'bg-hover')}
                 >
