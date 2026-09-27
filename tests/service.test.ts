@@ -2601,10 +2601,9 @@ describe('sub-agents', () => {
             : void res.writeHead(200).end(delegateCall('Look.'))
       const r = start('look')
       await doneEvent(r.conversation.id)
-      const system = (b: Record<string, unknown>) => String((b.messages as Array<{ content: string }>)[0].content)
-      expect(system(chatCalls[0])).toContain('You are talking with Ada.')
-      expect(system(chatCalls.find(isChild)!)).not.toContain('Ada')
-      expect(system(chatCalls.find(isChild)!)).not.toContain('talking with')
+      expect(systemOf(chatCalls[0])).toContain('You are talking with Ada.')
+      expect(systemOf(chatCalls.find(isChild)!)).not.toContain('Ada')
+      expect(systemOf(chatCalls.find(isChild)!)).not.toContain('talking with')
     } finally {
       updateSettings({ userName: '' })
     }
@@ -2612,8 +2611,7 @@ describe('sub-agents', () => {
 
   it('two delegations in one round run in order', async () => {
     // One at a time, as Settings allows.
-    updateSettings({ delegate: { parallel: 1 } })
-    try {
+    await withAtOnce(1, async () => {
       const order: string[] = []
       chat = (b, res, n) => {
         if (isChild(b)) {
@@ -2643,9 +2641,7 @@ describe('sub-agents', () => {
       expect(done.message.toolEvents.map((e) => e.child?.result)).toEqual(['A', 'B'])
       const traces = listTraces(r.conversation.id).filter((t) => t.kind === 'delegate')
       expect(traces.map((t) => t.messageId)).toEqual([`${r.assistantMessageId}#0`, `${r.assistantMessageId}#1`])
-    } finally {
-      updateSettings({ delegate: { parallel: 3 } })
-    }
+    })
   })
 
   it('two delegations in one round run at the same time', async () => {
@@ -2766,6 +2762,64 @@ describe('sub-agents', () => {
     const stopped = listTraces(r.conversation.id).filter((t) => t.kind === 'tool' && t.status === 'aborted')
     const id = r.assistantMessageId
     expect(stopped.map((t) => t.messageId).sort()).toEqual([id, id, `${id}#0`, `${id}#1`].sort())
+  })
+
+  it('Stop leaves a sub-agent the limit kept waiting unstarted, and saves it as not run', async () => {
+    await withAtOnce(2, async () => {
+      chat = (b, res) =>
+        isChild(b)
+          ? streamChunks(res, [line({ message: { role: 'assistant', content: 'working' }, done: false })]) // hangs
+          : void res
+              .writeHead(200)
+              .end(
+                callsTogether(
+                  ['delegate', { task: 'the first' }],
+                  ['delegate', { task: 'the second' }],
+                  ['delegate', { task: 'the third' }]
+                )
+              )
+      const r = start('three, then stop')
+      const id = r.assistantMessageId
+      await waitFor(() => chatCalls.filter(isChild).length === 2, 2000)
+      // The third shows, waiting its turn.
+      expect(lastEvent(r.conversation.id, 2)).toMatchObject({ tool: 'delegate', pending: true })
+      await service.stop(r.conversation.id)
+      const saved = getMessage(id)!
+      expect(saved.toolEvents.map((e) => e.summary)).toEqual(['the first (stopped)', 'the second (stopped)', 'the third (not run)'])
+      expect(saved.toolEvents.some((e) => e.pending || e.ok || e.awaiting)).toBe(false)
+      // It never ran: no request of its own, and no trace, of its call or of a child.
+      expect(chatCalls.filter(isChild).some((b) => taskOf(b).includes('third'))).toBe(false)
+      const traces = listTraces(r.conversation.id)
+      expect(traces.filter((t) => t.kind === 'tool' && t.messageId === id)).toHaveLength(2)
+      expect(traces.some((t) => t.messageId === `${id}#2`)).toBe(false)
+      expect(traces.every((t) => t.status !== 'running')).toBe(true)
+    })
+  })
+
+  it('a sub-agent that fails beside one that answers: both come back as results, in call order', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b)) {
+        // The second fails at once and the first answers a moment later, so they finish out of order.
+        if (taskOf(b).includes('second')) return void res.writeHead(500).end('boom')
+        return new Promise((r) => setTimeout(r, 100)).then(() => reply('A')(b, res, n))
+      }
+      return hasToolResult(b)
+        ? reply('One answered, one failed.')(b, res, n)
+        : void res.writeHead(200).end(callsTogether(['delegate', { task: 'the first' }], ['delegate', { task: 'the second' }]))
+    }
+    const r = start('one fails')
+    const done = await doneEvent(r.conversation.id)
+    expect(done.message.error).toBeNull()
+    expect(done.message.content).toBe('One answered, one failed.')
+    expect(done.message.toolEvents.map((e) => [e.ok, e.summary])).toEqual([
+      [true, 'the first · 0 tool calls'],
+      [false, 'the second · failed']
+    ])
+    const [first, second, ...rest] = toolMessagesIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)
+    expect(first).toBe('A')
+    expect(second).toMatch(/^The sub-agent failed: /)
+    expect(rest).toEqual([])
+    await waitFor(() => listTraces(r.conversation.id).every((t) => t.status !== 'running'))
   })
 
   it('asks on one sub-agent’s card while another beside it finishes', async () => {

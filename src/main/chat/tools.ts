@@ -231,11 +231,14 @@ export function settleToolEvent(event: ToolEvent): ToolEvent {
     const e = { ...rest, child: { ...event.child, events: event.child.events.map(settleToolEvent) } }
     return e.pending || awaiting ? { ...e, pending: false, ok: false, summary: `${e.summary} (stopped)` } : e
   }
-  if (event.awaiting) {
-    const { awaiting: _awaiting, everyTime: _everyTime, ...rest } = event
-    return { ...rest, pending: false, ok: false, summary: `${event.summary} (not run)` }
-  }
+  if (event.awaiting) return notRunEvent(event)
   return event.pending ? { ...event, pending: false, ok: false, summary: `${event.summary} (stopped)` } : event
+}
+
+/** A call that never ran: it waited for an answer that didn't come, or for its turn when the reply stopped. */
+export function notRunEvent(event: ToolEvent): ToolEvent {
+  const { awaiting: _awaiting, everyTime: _everyTime, ...rest } = event
+  return { ...rest, pending: false, ok: false, summary: `${event.summary} (not run)` }
 }
 
 /** What to show while a call runs, before its result is known. */
@@ -266,8 +269,7 @@ export function allowKeyFor(call: ToolCall, ctx: ToolContext): string {
  * (the reply's question would wait while the others ran).
  */
 export function runsInParallel(call: ToolCall, ctx: ToolContext): boolean {
-  const resolved = resolveCall(call, ctx)
-  return !!resolved?.provider.parallel && (resolved.provider.approval?.(resolved, ctx) ?? 'ask') === 'auto'
+  return !!resolveCall(call, ctx)?.provider.parallel && approvalFor(call, ctx) === 'auto'
 }
 
 /** Tell a call's provider that the user allowed it for the chat. */

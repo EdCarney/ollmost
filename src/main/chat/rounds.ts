@@ -15,6 +15,7 @@ import {
   approvalFor,
   declinedResult,
   noteAllowedForChat,
+  notRunEvent,
   pendingEvent,
   runsInParallel,
   runTool,
@@ -368,7 +369,17 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         const results =
           shown.length === 1
             ? [await runCall(shown[0], maxResultChars)]
-            : await runTogether(shown, parallel, input.signal, (c) => runCall(c, maxResultChars))
+            : await runTogether(
+                shown,
+                parallel,
+                input.signal,
+                (c) => runCall(c, maxResultChars),
+                // A call still waiting its turn when the reply stopped never ran, and its card says so.
+                ({ index, pending }) => {
+                  toolEvents[index] = { ...notRunEvent(pending), at: pending.at }
+                  input.onToolEvent(index, toolEvents[index])
+                }
+              )
         // The results go to the model in call order, whichever finished first.
         for (const [i, { call }] of shown.entries()) {
           const result = results[i]
@@ -436,11 +447,18 @@ function batchesOf(calls: ToolCall[], parallel: number, ctx: ToolContext): ToolC
 }
 
 /**
- * Run a batch's calls, `limit` at a time: as one finishes the next starts, and none starts once one has failed or the
- * reply is stopped. Every call that started settles first (a stopped sub-agent reports what it had and closes its
- * traces), then the first failure, which only a stop can be, is thrown. The results are in the batch's order.
+ * Run a batch's calls, `limit` at a time: as one finishes the next starts, and none starts once one has thrown or the
+ * reply is stopped. A throw is usually a stop, though a trace, a save or an event can throw too; either way the calls
+ * already running are waited for (a stopped sub-agent reports what it had and closes its traces), and then the first
+ * error is thrown. The calls that never started are handed to `unstarted` first. The results are in the batch's order.
  */
-async function runTogether<T, R>(items: T[], limit: number, signal: AbortSignal, run: (item: T) => Promise<R>): Promise<R[]> {
+async function runTogether<T, R>(
+  items: T[],
+  limit: number,
+  signal: AbortSignal,
+  run: (item: T) => Promise<R>,
+  unstarted: (item: T) => void
+): Promise<R[]> {
   const results: R[] = []
   const failures: unknown[] = []
   let next = 0
@@ -455,8 +473,9 @@ async function runTogether<T, R>(items: T[], limit: number, signal: AbortSignal,
     }
   }
   await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker))
+  items.slice(next).forEach(unstarted)
   if (failures.length) throw failures[0]
-  // A stop between two calls leaves the rest unstarted, with nothing to return (they're saved as stopped).
+  // A stop between two calls leaves the rest unstarted, with nothing to return.
   if (next < items.length) signal.throwIfAborted()
   return results
 }

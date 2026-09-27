@@ -7,7 +7,7 @@ import { childId } from '@shared/toolEvents'
 import type { MessageStats, Settings, ToolEvent } from '@shared/types'
 import type { ChatBody, OllamaTool } from '../ollama/client'
 import { getModelInfo } from '../ollama/models'
-import { getSettings } from '../settings'
+import { DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
 import { assemble, promptBudget } from './assemble'
 import { TOOL_RESULT_CHARS } from './results'
 import { runRounds, toolsTokens } from './rounds'
@@ -18,8 +18,8 @@ export const DELEGATE_RESULT_CHARS = 12_000
 const SUMMARY_CHARS = 60
 const RECORD_CHARS = 500
 const CUT_MARK = '\n\n[… the sub-agent’s reply was cut here]'
-/** How many sub-agents one reply may run at the same time: at most, and when the setting is missing. */
-const AT_ONCE = { max: 5, unset: 3 }
+/** The most sub-agents one reply may run at the same time, whatever the setting says. */
+const MAX_AT_ONCE = 5
 
 const DELEGATE_TOOL: OllamaTool = {
   type: 'function',
@@ -53,11 +53,11 @@ function offered(ctx: ToolContext): boolean {
 
 /**
  * How many sub-agents one reply may run at the same time: the setting as a whole number from 1 to 5 (settings aren't
- * checked over IPC), or 3 when there's no number (a settings file saved before the setting existed).
+ * checked over IPC), or the default when there's no number (a settings file saved before the setting existed).
  */
 export function subAgentsAtOnce(settings: Settings['delegate']): number {
   const n: unknown = settings.parallel
-  return typeof n === 'number' && Number.isFinite(n) ? Math.min(AT_ONCE.max, Math.max(1, Math.floor(n))) : AT_ONCE.unset
+  return typeof n === 'number' && Number.isFinite(n) ? Math.min(MAX_AT_ONCE, Math.max(1, Math.floor(n))) : DEFAULT_SUB_AGENTS_AT_ONCE
 }
 
 const optional = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
