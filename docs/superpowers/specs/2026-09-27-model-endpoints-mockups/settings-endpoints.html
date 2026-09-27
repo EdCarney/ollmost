@@ -1,0 +1,493 @@
+<style>
+  .st {
+    background: #fbfaf7;
+    border: 1px solid #e3ded4;
+    border-radius: 12px;
+    font:
+      13px/1.4 -apple-system,
+      BlinkMacSystemFont,
+      'Inter',
+      sans-serif;
+    color: #2b2a27;
+    text-align: left;
+    overflow: hidden;
+  }
+  .st .tabs {
+    display: flex;
+    gap: 2px;
+    padding: 8px 10px;
+    border-bottom: 1px solid #e9e4da;
+    font-size: 12px;
+    color: #8a857b;
+    flex-wrap: wrap;
+  }
+  .st .tabs span {
+    padding: 3px 8px;
+    border-radius: 6px;
+  }
+  .st .tabs .on {
+    background: #ece7dd;
+    color: #2b2a27;
+    font-weight: 500;
+  }
+  .st .body {
+    padding: 14px 16px;
+  }
+  .sec {
+    margin-bottom: 16px;
+  }
+  .sec h4 {
+    margin: 0 0 2px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .sec .d {
+    color: #8a857b;
+    font-size: 12px;
+    margin-bottom: 8px;
+  }
+  .ep {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 8px;
+    border: 1px solid #ece7dd;
+    border-radius: 8px;
+    margin-bottom: 6px;
+    background: #fff;
+  }
+  .ep .dot {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #5fa36a;
+    flex: none;
+  }
+  .ep .dot.bad {
+    background: #d0694b;
+  }
+  .ep .nm {
+    font-weight: 500;
+  }
+  .ep .url {
+    color: #9a958b;
+    font-size: 12px;
+  }
+  .ep .badge {
+    font-size: 10.5px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    background: #efeae1;
+    color: #6f6a61;
+  }
+  .ep .r {
+    margin-left: auto;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #9a958b;
+    font-size: 12px;
+  }
+  .sw {
+    width: 26px;
+    height: 15px;
+    border-radius: 999px;
+    background: #c96442;
+    position: relative;
+    display: inline-block;
+  }
+  .sw::after {
+    content: '';
+    position: absolute;
+    right: 2px;
+    top: 2px;
+    width: 11px;
+    height: 11px;
+    border-radius: 50%;
+    background: #fff;
+  }
+  .sw.off {
+    background: #d9d3c8;
+  }
+  .sw.off::after {
+    right: auto;
+    left: 2px;
+  }
+  .btn {
+    display: inline-block;
+    font-size: 12px;
+    padding: 4px 10px;
+    border-radius: 7px;
+    border: 1px solid #e3ded4;
+    background: #fff;
+    color: #2b2a27;
+  }
+  .btn.pri {
+    background: #2b2a27;
+    color: #fbfaf7;
+    border-color: #2b2a27;
+  }
+  table.mt {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 12px;
+  }
+  table.mt th {
+    text-align: left;
+    color: #9a958b;
+    font-weight: 500;
+    padding: 4px 4px;
+  }
+  table.mt td {
+    border-top: 1px solid #ece7dd;
+    padding: 5px 4px;
+    vertical-align: middle;
+  }
+  .sel {
+    font-size: 11px;
+    border: 1px solid #e3ded4;
+    border-radius: 5px;
+    padding: 1px 4px;
+    background: #fff;
+    color: #5f5a52;
+    white-space: nowrap;
+  }
+  .det {
+    color: #aaa59b;
+    font-size: 10.5px;
+  }
+  .chips {
+    display: flex;
+    gap: 6px;
+    margin-bottom: 6px;
+    flex-wrap: wrap;
+  }
+  .chip {
+    font-size: 11.5px;
+    padding: 1px 8px;
+    border-radius: 999px;
+    border: 1px solid #e3ded4;
+    color: #6f6a61;
+  }
+  .chip.on {
+    background: #2b2a27;
+    color: #fbfaf7;
+    border-color: #2b2a27;
+  }
+  .md {
+    display: flex;
+    min-height: 380px;
+  }
+  .md .left {
+    width: 150px;
+    border-right: 1px solid #e9e4da;
+    padding: 8px 6px;
+  }
+  .md .left .it {
+    padding: 6px 8px;
+    border-radius: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .md .left .it.on {
+    background: #ece7dd;
+    font-weight: 500;
+  }
+  .md .right {
+    flex: 1;
+    padding: 12px 14px;
+  }
+  .fld {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 5px 0;
+    border-bottom: 1px solid #f0ece4;
+  }
+  .fld .lb {
+    color: #5f5a52;
+  }
+  .fld .v {
+    color: #2b2a27;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 11.5px;
+  }
+  .dlg {
+    background: #fff;
+    border: 1px solid #e3ded4;
+    border-radius: 12px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
+    width: 360px;
+    font:
+      13px/1.4 -apple-system,
+      sans-serif;
+    color: #2b2a27;
+    text-align: left;
+    padding: 14px 16px;
+  }
+  .dlg h4 {
+    margin: 0 0 8px;
+    font-size: 14px;
+  }
+  .inp {
+    border: 1px solid #e3ded4;
+    border-radius: 7px;
+    padding: 6px 8px;
+    font-family: ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    color: #2b2a27;
+    margin-bottom: 8px;
+    background: #fbfaf7;
+  }
+  .ph {
+    color: #aaa59b;
+  }
+  .presets {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+  .presets span {
+    font-size: 11.5px;
+    padding: 2px 8px;
+    border-radius: 999px;
+    background: #efeae1;
+    color: #5f5a52;
+  }
+  .found {
+    background: #f2f7f0;
+    border: 1px solid #d5e6d0;
+    border-radius: 8px;
+    padding: 8px 10px;
+    margin-bottom: 10px;
+    font-size: 12px;
+  }
+  .found b {
+    color: #2f6b3a;
+  }
+  .foot {
+    display: flex;
+    justify-content: flex-end;
+    gap: 8px;
+    margin-top: 6px;
+  }
+  .row2 {
+    display: flex;
+    gap: 16px;
+    flex-wrap: wrap;
+    justify-content: center;
+    padding: 16px;
+    background: #f4f1ea;
+    border-radius: 10px;
+  }
+  .cap {
+    font-size: 12px;
+    color: #8a857b;
+    max-width: 360px;
+  }
+</style>
+
+<h2>Where endpoints live in Settings</h2>
+<p class="subtitle">
+  Both keep today's tabs. The per-model table gains Tools / Vision / Context overrides (shown as "Auto (detected value)"). The ollama.com
+  account key gets its own small section because it powers web search, quota, and the Ollama cloud endpoint — for every model.
+</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 12px; background: #f4f1ea">
+      <div class="st">
+        <div class="tabs">
+          <span>General</span><span class="on">Models</span><span>Features</span><span>Tools</span><span>Usage &amp; cost</span
+          ><span>Data</span>
+        </div>
+        <div class="body">
+          <div class="sec">
+            <h4>Endpoints</h4>
+            <div class="d">Where Ollmost finds models. Ollama is the default; LM Studio, llama.cpp and vLLM work too.</div>
+            <div class="ep">
+              <span class="dot"></span><span class="nm">Ollama</span><span class="badge">Ollama</span
+              ><span class="url">127.0.0.1:11434</span><span class="r">14 models <span class="sw"></span> ⋯</span>
+            </div>
+            <div class="ep">
+              <span class="dot"></span><span class="nm">LM Studio</span><span class="badge">LM Studio</span
+              ><span class="url">localhost:1234</span><span class="r">5 models <span class="sw"></span> ⋯</span>
+            </div>
+            <div class="ep">
+              <span class="dot"></span><span class="nm">GPU box</span><span class="badge">vLLM</span
+              ><span class="url">192.168.1.20:8000</span><span class="r">1 model <span class="sw"></span> ⋯</span>
+            </div>
+            <div class="ep">
+              <span class="dot bad"></span><span class="nm">llama.cpp</span><span class="badge">llama.cpp</span
+              ><span class="url">localhost:8080</span><span class="r">offline <span class="sw off"></span> ⋯</span>
+            </div>
+            <span class="btn">+ Add endpoint</span>
+          </div>
+          <div class="sec">
+            <h4>ollama.com account</h4>
+            <div class="d">
+              Web search &amp; page reading (for any model), your Ollama quota, and Ollama cloud models. Searches go through ollama.com even
+              when the model is local.
+            </div>
+            <div class="fld"><span class="lb">API key</span><span class="v">•••••••• saved · Replace</span></div>
+          </div>
+          <div class="sec">
+            <h4>Per-model behaviour</h4>
+            <div class="chips">
+              <span class="chip on">All</span><span class="chip">Ollama</span><span class="chip">LM Studio</span
+              ><span class="chip">GPU box</span>
+            </div>
+            <table class="mt">
+              <tr>
+                <th>Model</th>
+                <th>Thinking</th>
+                <th>Tools</th>
+                <th>Vision</th>
+                <th>Context</th>
+              </tr>
+              <tr>
+                <td>qwen/qwen3-8b <span class="det">LM Studio</span></td>
+                <td><span class="sel">Auto (on/off)</span></td>
+                <td><span class="sel">Auto (on)</span></td>
+                <td><span class="sel">Auto (off)</span></td>
+                <td><span class="sel">Auto (32K)</span></td>
+              </tr>
+              <tr>
+                <td>Qwen/Qwen3-32B <span class="det">GPU box</span></td>
+                <td><span class="sel">Show only</span></td>
+                <td><span class="sel">Off</span> <span class="det">server lacks --enable-auto-tool-choice</span></td>
+                <td><span class="sel">Auto (off)</span></td>
+                <td><span class="sel">Auto (32K)</span></td>
+              </tr>
+              <tr>
+                <td>gpt-oss:120b <span class="det">Ollama</span></td>
+                <td><span class="sel">Auto (levels)</span></td>
+                <td><span class="sel">Auto (on)</span></td>
+                <td><span class="sel">Auto (off)</span></td>
+                <td><span class="sel">Auto (128K)</span></td>
+              </tr>
+            </table>
+            <div class="det" style="margin-top: 4px">+ Artifacts and Auto skills columns as today</div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Everything on the Models tab</h3>
+      <p>Endpoints list replaces "Connection"; one per-model table with the same filter chips as the picker. Edit opens a small dialog.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image" style="padding: 12px; background: #f4f1ea">
+      <div class="st">
+        <div class="tabs">
+          <span>General</span><span class="on">Models</span><span>Features</span><span>Tools</span><span>Usage &amp; cost</span
+          ><span>Data</span>
+        </div>
+        <div class="md">
+          <div class="left">
+            <div class="it">
+              <span class="ep" style="all: unset"
+                ><span class="dot" style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #5fa36a"></span
+              ></span>
+              Ollama
+            </div>
+            <div class="it on">
+              <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #5fa36a"></span> LM Studio
+            </div>
+            <div class="it">
+              <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #5fa36a"></span> GPU box
+            </div>
+            <div class="it">
+              <span style="display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: #d0694b"></span> llama.cpp
+            </div>
+            <div class="it" style="color: #8a857b">+ Add endpoint</div>
+            <div style="border-top: 1px solid #e9e4da; margin: 8px 0"></div>
+            <div class="it">ollama.com account</div>
+            <div class="it">Defaults</div>
+          </div>
+          <div class="right">
+            <div class="sec">
+              <h4>LM Studio <span class="det" style="font-weight: 400">· LM Studio 0.4 · connected</span></h4>
+              <div class="fld"><span class="lb">Name</span><span class="v">LM Studio</span></div>
+              <div class="fld"><span class="lb">Address</span><span class="v">http://localhost:1234/v1</span></div>
+              <div class="fld"><span class="lb">API key</span><span class="v ph">none</span></div>
+              <div class="fld"><span class="lb">Context when not reported</span><span class="v">8K</span></div>
+              <div class="fld"><span class="lb">Enabled</span><span class="sw"></span></div>
+              <div style="margin-top: 6px; display: flex; gap: 6px">
+                <span class="btn">Re-detect</span><span class="btn" style="color: #b4492d">Remove…</span>
+              </div>
+            </div>
+            <div class="sec">
+              <h4>Models on LM Studio</h4>
+              <table class="mt">
+                <tr>
+                  <th>Model</th>
+                  <th>Thinking</th>
+                  <th>Tools</th>
+                  <th>Vision</th>
+                  <th>Context</th>
+                </tr>
+                <tr>
+                  <td>qwen/qwen3-8b</td>
+                  <td><span class="sel">Auto (on/off)</span></td>
+                  <td><span class="sel">Auto (on)</span></td>
+                  <td><span class="sel">Auto (off)</span></td>
+                  <td><span class="sel">Auto (32K)</span></td>
+                </tr>
+                <tr>
+                  <td>google/gemma-3-12b</td>
+                  <td><span class="sel">n/a</span></td>
+                  <td><span class="sel">Auto (on)</span></td>
+                  <td><span class="sel">Auto (on)</span></td>
+                  <td><span class="sel">Auto (128K)</span></td>
+                </tr>
+              </table>
+              <div class="det" style="margin-top: 4px">+ Artifacts and Auto skills columns as today</div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Master–detail inside the Models tab</h3>
+      <p>
+        Pick an endpoint on the left; its settings and its models' overrides on the right. ollama.com account and Defaults are their own
+        entries.
+      </p>
+    </div>
+  </div>
+</div>
+
+<h3 style="margin-top: 24px">Add endpoint (same in A or B)</h3>
+<div class="row2">
+  <div>
+    <div class="dlg">
+      <h4>Add an endpoint</h4>
+      <div class="presets"><span>Ollama :11434</span><span>LM Studio :1234</span><span>llama.cpp :8080</span><span>vLLM :8000</span></div>
+      <div class="inp">http://localhost:1234</div>
+      <div class="inp ph">API key (optional)</div>
+      <div class="foot"><span class="btn">Cancel</span><span class="btn pri">Check</span></div>
+    </div>
+    <div class="cap" style="margin-top: 6px">1 · Type a URL or click a preset. "Check" probes it.</div>
+  </div>
+  <div>
+    <div class="dlg">
+      <h4>Add an endpoint</h4>
+      <div class="found">
+        <b>Found LM Studio 0.4</b> at localhost:1234<br />5 models · 4 with tools · 1 with vision · 2 can think<br />Context sizes reported
+        by the server
+      </div>
+      <div style="font-size: 12px; color: #5f5a52; margin-bottom: 4px">Name</div>
+      <div class="inp">LM Studio</div>
+      <div class="foot"><span class="btn">Back</span><span class="btn pri">Add</span></div>
+    </div>
+    <div class="cap" style="margin-top: 6px">
+      2 · Shows what it found before saving. A generic OpenAI-compatible server says "Found an OpenAI-compatible server · 12 models ·
+      capabilities not reported — defaults apply (tools on, vision off)".
+    </div>
+  </div>
+</div>

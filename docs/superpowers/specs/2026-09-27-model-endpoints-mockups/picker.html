@@ -1,0 +1,324 @@
+<style>
+  .pk {
+    width: 340px;
+    background: #fbfaf7;
+    border: 1px solid #e3ded4;
+    border-radius: 12px;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.08);
+    font:
+      13px/1.35 -apple-system,
+      BlinkMacSystemFont,
+      'Inter',
+      sans-serif;
+    color: #2b2a27;
+    overflow: hidden;
+    text-align: left;
+  }
+  .pk .search {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    border-bottom: 1px solid #e9e4da;
+    padding: 0 12px;
+    height: 40px;
+    color: #9a958b;
+    font-size: 14px;
+  }
+  .pk .list {
+    padding: 4px;
+    max-height: 470px;
+    overflow: hidden;
+  }
+  .pk .gh {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 8px 8px 4px;
+    font-size: 12px;
+    font-weight: 500;
+    color: #8a857b;
+  }
+  .pk .gh .where {
+    font-weight: 400;
+    color: #aaa59b;
+  }
+  .pk .row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 6px 8px;
+    border-radius: 6px;
+  }
+  .pk .row:hover {
+    background: #f1ede5;
+  }
+  .pk .row .chk {
+    width: 16px;
+    color: #c96442;
+    font-weight: 700;
+  }
+  .pk .row .nm {
+    font-size: 14px;
+  }
+  .pk .row .sub {
+    font-size: 12px;
+    color: #9a958b;
+  }
+  .pk .row .caps {
+    margin-left: auto;
+    display: flex;
+    gap: 4px;
+    color: #aaa59b;
+    font-size: 11px;
+  }
+  .pk .err {
+    margin: 2px 8px 6px;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: #fbeee9;
+    color: #b4492d;
+    font-size: 12px;
+    display: flex;
+    justify-content: space-between;
+  }
+  .pk .err u {
+    cursor: pointer;
+  }
+  .pk .foot {
+    display: flex;
+    justify-content: space-between;
+    border-top: 1px solid #e9e4da;
+    padding: 6px 10px;
+    font-size: 12px;
+    color: #8a857b;
+  }
+  .pk .chips {
+    display: flex;
+    gap: 6px;
+    padding: 8px 10px 4px;
+    flex-wrap: wrap;
+  }
+  .pk .chip {
+    font-size: 12px;
+    padding: 2px 9px;
+    border-radius: 999px;
+    border: 1px solid #e3ded4;
+    color: #6f6a61;
+  }
+  .pk .chip.on {
+    background: #2b2a27;
+    color: #fbfaf7;
+    border-color: #2b2a27;
+  }
+  .pk .chip.off {
+    color: #c9a59a;
+    border-style: dashed;
+  }
+  .trig {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 32px;
+    padding: 0 8px;
+    border-radius: 8px;
+    background: #f1ede5;
+    color: #5f5a52;
+    font:
+      13px -apple-system,
+      sans-serif;
+    margin: 0 0 12px;
+  }
+  .trig .ep {
+    color: #aaa59b;
+  }
+  .ico {
+    width: 13px;
+    height: 13px;
+    display: inline-block;
+    vertical-align: -2px;
+  }
+  .mock-wrap {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 16px;
+    background: #f4f1ea;
+    border-radius: 10px;
+  }
+  .note {
+    font-size: 12px;
+    color: #8a857b;
+    margin-top: 10px;
+    max-width: 340px;
+    text-align: left;
+  }
+</style>
+
+<h2>Model picker with several endpoints</h2>
+<p class="subtitle">
+  Same data in both: Ollama (cloud + this Mac), LM Studio on this Mac, a vLLM "GPU box" on the network, and llama.cpp which is offline. Note
+  qwen3 8B lives on both Ollama and LM Studio.
+</p>
+
+<div class="cards">
+  <div class="card" data-choice="a" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mock-wrap">
+        <div class="trig">qwen3-8b <span class="ep">· LM Studio</span> ⌄</div>
+        <div class="pk">
+          <div class="search">⌕ Search models</div>
+          <div class="list">
+            <div class="gh">☁ Ollama cloud</div>
+            <div class="row">
+              <span class="chk"></span>
+              <div>
+                <div class="nm">gpt-oss:120b</div>
+                <div class="sub">120B · 128K context · $0.15 / $0.60 per M</div>
+              </div>
+              <span class="caps">🔧 💭</span>
+            </div>
+            <div class="row">
+              <span class="chk"></span>
+              <div>
+                <div class="nm">kimi-k3</div>
+                <div class="sub">1T · 256K context · $0.60 / $2.50 per M</div>
+              </div>
+              <span class="caps">🔧 👁 💭</span>
+            </div>
+
+            <div class="gh">🖴 Ollama <span class="where">· On this Mac</span></div>
+            <div class="row">
+              <span class="chk"></span>
+              <div>
+                <div class="nm">qwen3:8b</div>
+                <div class="sub">8B · 32K context</div>
+              </div>
+              <span class="caps">🔧 💭</span>
+            </div>
+
+            <div class="gh">🖴 LM Studio <span class="where">· On this Mac</span></div>
+            <div class="row" style="background: #f1ede5">
+              <span class="chk">✓</span>
+              <div>
+                <div class="nm">qwen/qwen3-8b</div>
+                <div class="sub">8B · 32K context · loaded</div>
+              </div>
+              <span class="caps">🔧 💭</span>
+            </div>
+            <div class="row">
+              <span class="chk"></span>
+              <div>
+                <div class="nm">google/gemma-3-12b</div>
+                <div class="sub">12B · 128K context</div>
+              </div>
+              <span class="caps">🔧 👁</span>
+            </div>
+
+            <div class="gh">🖧 GPU box <span class="where">· 192.168.1.20</span></div>
+            <div class="row">
+              <span class="chk"></span>
+              <div>
+                <div class="nm">Qwen/Qwen3-32B</div>
+                <div class="sub">32K context</div>
+              </div>
+              <span class="caps">🔧</span>
+            </div>
+
+            <div class="gh">🖴 llama.cpp <span class="where">· On this Mac</span></div>
+            <div class="err"><span>Can't reach llama.cpp at localhost:8080</span><u>Retry</u></div>
+          </div>
+          <div class="foot"><span>↻ Refresh</span><span>Model settings</span></div>
+        </div>
+        <div class="note">
+          One flat list, a section per endpoint (Ollama keeps its Cloud / On this Mac split). Offline endpoints show inline. Trigger names
+          the endpoint only when it isn't Ollama.
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>A · Sections per endpoint</h3>
+      <p>Closest to today's picker; just more section headers.</p>
+    </div>
+  </div>
+
+  <div class="card" data-choice="b" onclick="toggleSelect(this)">
+    <div class="card-image">
+      <div class="mock-wrap">
+        <div class="trig">qwen3-8b <span class="ep">· LM Studio</span> ⌄</div>
+        <div class="pk">
+          <div class="search">⌕ Search models</div>
+          <div class="chips">
+            <span class="chip on">All</span><span class="chip">Ollama</span><span class="chip">LM Studio</span
+            ><span class="chip">GPU box</span><span class="chip off">llama.cpp ⚠</span>
+          </div>
+          <div class="list">
+            <div class="gh">🖴 LM Studio <span class="where">· On this Mac</span></div>
+            <div class="row" style="background: #f1ede5">
+              <span class="chk">✓</span>
+              <div>
+                <div class="nm">qwen/qwen3-8b</div>
+                <div class="sub">8B · 32K context · loaded</div>
+              </div>
+              <span class="caps">🔧 💭</span>
+            </div>
+            <div class="row">
+              <span class="chk"></span>
+              <div>
+                <div class="nm">google/gemma-3-12b</div>
+                <div class="sub">12B · 128K context</div>
+              </div>
+              <span class="caps">🔧 👁</span>
+            </div>
+
+            <div class="gh">☁ Ollama cloud</div>
+            <div class="row">
+              <span class="chk"></span>
+              <div>
+                <div class="nm">gpt-oss:120b</div>
+                <div class="sub">120B · 128K context · $0.15 / $0.60 per M</div>
+              </div>
+              <span class="caps">🔧 💭</span>
+            </div>
+            <div class="row">
+              <span class="chk"></span>
+              <div>
+                <div class="nm">kimi-k3</div>
+                <div class="sub">1T · 256K context · $0.60 / $2.50 per M</div>
+              </div>
+              <span class="caps">🔧 👁 💭</span>
+            </div>
+
+            <div class="gh">🖴 Ollama <span class="where">· On this Mac</span></div>
+            <div class="row">
+              <span class="chk"></span>
+              <div>
+                <div class="nm">qwen3:8b</div>
+                <div class="sub">8B · 32K context</div>
+              </div>
+              <span class="caps">🔧 💭</span>
+            </div>
+
+            <div class="gh">🖧 GPU box <span class="where">· 192.168.1.20</span></div>
+            <div class="row">
+              <span class="chk"></span>
+              <div>
+                <div class="nm">Qwen/Qwen3-32B</div>
+                <div class="sub">32K context</div>
+              </div>
+              <span class="caps">🔧</span>
+            </div>
+          </div>
+          <div class="foot"><span>↻ Refresh</span><span>Model settings</span></div>
+        </div>
+        <div class="note">
+          Endpoint chips filter the list (handy once an endpoint lists hundreds of models). The current model's endpoint floats to the top.
+          Offline endpoints show as a dashed ⚠ chip; clicking it shows the error + Retry.
+        </div>
+      </div>
+    </div>
+    <div class="card-body">
+      <h3>B · Endpoint chips + sections</h3>
+      <p>Adds a filter row; scales to long lists, one more thing on screen.</p>
+    </div>
+  </div>
+</div>
