@@ -359,7 +359,7 @@ export interface UsageSummary {
 
 // ---- Debugger traces -----------------------------------------------------
 
-export type TraceKind = 'chat' | 'title' | 'tool' | 'replay' | 'compact'
+export type TraceKind = 'chat' | 'title' | 'tool' | 'replay' | 'compact' | 'delegate'
 export type TraceStatus = 'running' | 'ok' | 'error' | 'aborted'
 
 export interface TraceSummary {

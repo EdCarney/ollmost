@@ -3,7 +3,9 @@ import type { ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChatEvent } from '@shared/types'
+import type { ChatEvent, MessageStats } from '@shared/types'
+import type { RoundsInput } from '../src/main/chat/rounds'
+import type { ToolProvider } from '../src/main/chat/tools'
 import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMock'
 
 // Everything above the Electron line is real: SQLite (in memory), settings, prompt assembly, the
@@ -28,7 +30,7 @@ vi.mock('electron', () => ({
 const ollama: MockOllama = await startMockOllama()
 process.env.OLLMOST_WEB_URL = ollama.url
 
-const { openDatabase } = await import('../src/main/db/index')
+const { all, openDatabase } = await import('../src/main/db/index')
 const { updateSettings, setApiKey } = await import('../src/main/settings')
 const service = await import('../src/main/chat/service')
 const { listTraces } = await import('../src/main/debug/traces')
@@ -44,6 +46,9 @@ const {
   updateMessage
 } = await import('../src/main/db/conversations')
 const { registerToolProvider } = await import('../src/main/chat/tools')
+const { runRounds } = await import('../src/main/chat/rounds')
+const { getModelInfo } = await import('../src/main/ollama/models')
+const { conversationUsage } = await import('../src/main/db/usage')
 const approvals = await import('../src/main/chat/approvals')
 const mcpConfig = await import('../src/main/mcp/config')
 const mcpManager = await import('../src/main/mcp/manager')
@@ -1681,5 +1686,131 @@ describe('markInterruptedReplies', () => {
     // Checkpoints skip search indexing; marking the reply indexes the text it kept.
     expect(search('so far').map((h) => h.conversationId)).toContain(c.id)
     expect(getMessage(finished.id)!.error).toBeNull()
+  })
+})
+
+describe('runRounds', () => {
+  // A tool that runs unasked and says back what it was given.
+  const echo: ToolProvider = {
+    id: 'echo-test',
+    tools: () => [
+      {
+        type: 'function',
+        function: { name: 'echo', description: 'echo', parameters: { type: 'object', properties: { text: { type: 'string' } } } }
+      }
+    ],
+    pending: (call) => ({ tool: 'echo', args: call.args, ok: true, pending: true, summary: 'echoing' }),
+    approval: () => 'auto',
+    run: async (call) => ({
+      content: `echo: ${String(call.args.text)}`,
+      event: { tool: 'echo', args: call.args, ok: true, summary: 'echoed' }
+    })
+  }
+
+  async function setup() {
+    const conversation = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], mode: 'chat' })
+    const message = insertMessage({ conversationId: conversation.id, parentId: null, role: 'assistant', content: '', model: 'llama3.2' })
+    const model = await getModelInfo('llama3.2')
+    const body: RoundsInput['body'] = {
+      model: 'llama3.2',
+      messages: [
+        { role: 'system', content: 'test' },
+        { role: 'user', content: 'hi' }
+      ],
+      tools: echo.tools({ mode: 'chat', skills: false, web: false, sources: [], workspace: null })
+    }
+    const stats: MessageStats = { promptTokens: 0, completionTokens: 0 }
+    const seen: Array<[number, boolean]> = []
+    const usage: number[] = []
+    const input: RoundsInput = {
+      conversationId: conversation.id,
+      messageId: message.id,
+      loopId: 'loop-1',
+      modelName: 'llama3.2',
+      model,
+      body,
+      budget: 8000,
+      maxRounds: 4,
+      toolContext: { mode: 'chat', skills: false, web: false, sources: [], workspace: null },
+      signal: new AbortController().signal,
+      stats,
+      usageKind: 'delegate',
+      traceKind: 'delegate',
+      onDelta: () => {},
+      onToolEvent: (index, event) => seen.push([index, !!event.pending]),
+      onUsage: () => usage.push(1),
+      onLoadedSkill: () => {},
+      checkpoint: () => {}
+    }
+    return { conversation, message, body, stats, seen, usage, input }
+  }
+
+  it('runs a tool round then an answer, keyed by its own loop id and usage kind', async () => {
+    const off = registerToolProvider(echo)
+    try {
+      chat = (b, res, n) => (n === 1 ? void res.writeHead(200).end(toolCall('echo', { text: 'hi' })) : reply('done')(b, res, n))
+      const { conversation, message, body, stats, seen, usage, input } = await setup()
+      const out = await runRounds(input)
+      expect(out.content).toBe('done')
+      expect(out.rounds).toBe(2)
+      expect(out.error).toBeNull()
+      expect(out.toolEvents).toEqual([expect.objectContaining({ tool: 'echo', ok: true, at: 0 })])
+      expect(seen).toEqual([
+        [0, true],
+        [0, false]
+      ])
+      expect(usage).toHaveLength(1)
+      expect(body.messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'tool'])
+      expect(stats.promptTokens).toBeGreaterThan(0)
+      // Traces go under the loop's id; usage rows under the message, with the loop's kind.
+      const traces = listTraces(conversation.id)
+      expect(traces.filter((t) => t.kind === 'delegate').map((t) => t.messageId)).toEqual(['loop-1', 'loop-1'])
+      expect(traces.filter((t) => t.kind === 'tool').map((t) => t.messageId)).toEqual(['loop-1'])
+      const rows = all<{ kind: string; message_id: string }>(
+        'SELECT kind, message_id FROM usage_events WHERE conversation_id = ?',
+        conversation.id
+      )
+      expect(rows).toEqual([
+        { kind: 'delegate', message_id: message.id },
+        { kind: 'delegate', message_id: message.id }
+      ])
+      expect(conversationUsage(conversation.id).promptTokens).toBeGreaterThan(0)
+    } finally {
+      off()
+    }
+  })
+
+  it('withdraws tools on the last round', async () => {
+    const off = registerToolProvider(echo)
+    try {
+      chat = (b, res, n) => (n < 2 ? void res.writeHead(200).end(toolCall('echo', { text: String(n) })) : reply('end')(b, res, n))
+      const { input, stats } = await setup()
+      const out = await runRounds({ ...input, maxRounds: 2 })
+      expect(out.content).toBe('end')
+      expect(out.rounds).toBe(2)
+      expect(chatCalls[0].tools).toBeDefined()
+      expect(chatCalls[1].tools).toBeUndefined()
+      expect(stats.toolRoundLimit).toBe(2)
+    } finally {
+      off()
+    }
+  })
+
+  it('ends quietly when stopped mid-stream, with the round traced as aborted', async () => {
+    const controller = new AbortController()
+    // Sends a first piece and then hangs, as a model still writing does; the first piece stops it.
+    chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'part' }, done: false })])
+    const { conversation, input } = await setup()
+    const out = await runRounds({
+      ...input,
+      signal: controller.signal,
+      onDelta: (d) => {
+        if (d.content) controller.abort()
+      }
+    })
+    expect(out.content).toBe('part')
+    expect(out.error).toBeNull()
+    expect(out.rounds).toBe(1)
+    expect(listTraces(conversation.id).find((t) => t.kind === 'delegate')?.status).toBe('aborted')
   })
 })
