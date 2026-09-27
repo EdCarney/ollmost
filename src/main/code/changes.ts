@@ -27,12 +27,13 @@ const DIFF = `${GIT} diff --no-ext-diff --no-textconv --no-color`
 const NOT_A_REPOSITORY = 128
 const NO_ANSWER = 5
 const GIT_FAILED = 4
-/** Longer than this, waiting for the sandbox included, and the answer is that git took too long. */
 /**
- * How long one git run may take, the wait for the network-rules slot included. Ten seconds is plenty on a Mac
- * of the user's; a CI runner's sandbox can be far slower, so the tests may lengthen it (OLLMOST_GIT_MS).
+ * How long one git run may take, the wait for the sandbox included. Ten seconds is plenty on a Mac of the user's;
+ * a CI runner's sandbox can be far slower, so OLLMOST_GIT_MS lengthens it there. Nothing gates the variable to
+ * tests: a positive number in the app's own environment would apply too, like the other OLLMOST_* knobs.
  */
-export const GIT_MS = Number(process.env.OLLMOST_GIT_MS) || 10_000
+const configuredGitMs = Number(process.env.OLLMOST_GIT_MS)
+export const GIT_MS = Number.isFinite(configuredGitMs) && configuredGitMs > 0 ? configuredGitMs : 10_000
 export const FILES_LIMIT = 500
 /** More than an edit's diff keeps (files.ts): this one is shown in the panel, not given to the model. */
 export const DIFF_LIMIT_CHARS = 200_000
