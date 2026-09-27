@@ -367,6 +367,13 @@ async function generate(
 
     const project = conversation.projectId ? getProject(conversation.projectId) : null
     const messages = listMessages(conversationId)
+    const running = new Set(serverIds)
+    const servers = readyTools()
+      .filter((r) => running.has(r.server.id))
+      .map((r) => r.server.name)
+    // A code session's prompt input matches what a reply's own assemble() gets (its stage and plan aren't on the
+    // session record itself).
+    const codeSessionForPrompt = codeSession ? { ...codeSession, stage: conversation.stage, plan: conversation.plan } : null
     const toolContext: ToolContext = {
       mode: policy.mode,
       stage: conversation.stage,
@@ -376,15 +383,28 @@ async function generate(
       // Files the user shared are private, and a fetch URL could carry them out (#62).
       privateFiles: hasPrivateFiles(conversation, messages),
       workspace,
-      signal: controller.signal
+      signal: controller.signal,
+      reply: {
+        conversationId,
+        messageId,
+        model: modelName,
+        think,
+        maxRounds: policy.maxRounds,
+        prompt: {
+          userName: settings.userName,
+          model: modelName,
+          contextLength: numCtx,
+          web,
+          mcpServers: servers,
+          codeRunner,
+          codeSession: codeSessionForPrompt,
+          skillIndex
+        }
+      }
     }
     const grants = toolGrants(toolContext)
     const tools = toolsFor(toolContext)
     const maxRounds = policy.maxRounds
-    const running = new Set(serverIds)
-    const servers = readyTools()
-      .filter((r) => running.has(r.server.id))
-      .map((r) => r.server.name)
 
     // After a /compact, the request replays the summary in the system prompt and only the messages that followed.
     const compaction = conversation.compaction
@@ -405,7 +425,7 @@ async function generate(
       grants: [...grants],
       mcpServers: servers,
       codeRunner,
-      codeSession: codeSession ? { ...codeSession, stage: conversation.stage, plan: conversation.plan } : null,
+      codeSession: codeSessionForPrompt,
       toolTokens: toolsTokens(tools),
       pastTools: toolsCapable,
       project: project ? { name: project.name, instructions: project.instructions } : null,

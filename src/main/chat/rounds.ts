@@ -311,7 +311,17 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         else {
           try {
             const maxResultChars = Math.min(TOOL_RESULT_CHARS, Math.max(MIN_RESULT_CHARS, Math.floor(roomChars / callsLeft)))
-            result = await runTool(call, { ...toolContext, maxResultChars })
+            result = await runTool(call, {
+              ...toolContext,
+              maxResultChars,
+              callIndex: index,
+              progress: (event) => {
+                // Still pending, and still where it was in the text: only what the card shows changes.
+                toolEvents[index] = { ...event, pending: true, at: pending.at }
+                input.onToolEvent(index, toolEvents[index])
+                input.checkpoint({ content, thinking, thinkingSegments: segmentsNow(), toolEvents })
+              }
+            })
           } catch (err) {
             // Only a stop gets here (tool failures come back as results); close the trace before unwinding.
             toolTrace.finish({ status: 'aborted', response: { error: 'Stopped by you' }, summary: `${pending.tool}: stopped` })

@@ -340,6 +340,39 @@ describe('reply loop', () => {
     ])
   })
 
+  it('lets a running tool replace its pending event, and tells it its index', async () => {
+    const seen: number[] = []
+    const slow: ToolProvider = {
+      id: 'slow-test',
+      tools: () => [{ type: 'function', function: { name: 'slow', description: 'slow', parameters: { type: 'object', properties: {} } } }],
+      pending: () => ({ tool: 'slow', args: {}, ok: true, pending: true, summary: 'starting' }),
+      approval: () => 'auto',
+      run: async (_call, ctx) => {
+        seen.push(ctx.callIndex!)
+        ctx.progress?.({ tool: 'slow', args: {}, ok: true, summary: 'halfway' })
+        return { content: 'slow done', event: { tool: 'slow', args: {}, ok: true, summary: 'finished' } }
+      }
+    }
+    const off = registerToolProvider(slow)
+    try {
+      chat = (_b, res, n) => (n === 1 ? void res.writeHead(200).end(toolCall('slow', {})) : reply('ok')(_b, res, n))
+      const r = start('go slow')
+      const done = await doneEvent(r.conversation.id)
+      expect(seen).toEqual([0])
+      const live = events.filter(
+        (e): e is Extract<ChatEvent, { type: 'tool' }> => e.type === 'tool' && e.conversationId === r.conversation.id
+      )
+      expect(live.map((e) => [e.event.summary, e.event.pending ?? false])).toEqual([
+        ['starting', true],
+        ['halfway', true],
+        ['finished', false]
+      ])
+      expect(done.message.toolEvents[0]).toMatchObject({ summary: 'finished', at: 0 })
+    } finally {
+      off()
+    }
+  })
+
   it('keeps each round’s thinking with where the round began, live and saved', async () => {
     setApiKey('test-key')
     const thought = (text: string) => line({ message: { role: 'assistant', content: '', thinking: text }, done: false })

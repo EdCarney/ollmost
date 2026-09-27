@@ -1,7 +1,7 @@
-import type { ToolEvent } from '@shared/types'
+import type { ThinkSetting, ToolEvent } from '@shared/types'
 import type { OllamaTool, ToolCall } from '../ollama/client'
 import { errorMessage } from '../util'
-import type { PastToolCall } from './assemble'
+import type { AssembleInput, PastToolCall } from './assemble'
 import { capText, TOOL_RESULT_CHARS } from './results'
 import { codeTools } from '../code/tools'
 import { mcpTools } from '../mcp/provider'
@@ -35,6 +35,25 @@ export interface ToolContext {
    * Defaults to TOOL_RESULT_CHARS.
    */
   maxResultChars?: number
+  /**
+   * The reply this call is part of, for a tool that runs a reply loop of its own (delegate): what a child needs to
+   * make the same requests. Unset for a sub-agent's own calls.
+   */
+  reply?: {
+    conversationId: string
+    messageId: string
+    model: string
+    think: ThinkSetting | null
+    maxRounds: number
+    /** The parts of the parent's prompt input a child's prompt is built from. */
+    prompt: Pick<AssembleInput, 'userName' | 'model' | 'contextLength' | 'web' | 'mcpServers' | 'codeRunner' | 'codeSession' | 'skillIndex'>
+  }
+  /** Set for a sub-agent's own rounds: it is offered no delegate of its own. */
+  child?: boolean
+  /** This call's index in the reply's tool events, set by the loop for each run. */
+  callIndex?: number
+  /** A long call may replace what its card shows while it runs (a sub-agent reports its child's calls). */
+  progress?: (event: ToolEvent) => void
 }
 
 /** A tool's run also knows what the whole request grants (a skill with scripts needs to know if code can run). */
