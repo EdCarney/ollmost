@@ -24,6 +24,7 @@ import {
   insertProjectFile,
   listProjectFiles,
   moveProjectFile,
+  projectFileOnDisk,
   projectKnowledge
 } from '../src/main/db/projects'
 import { insertUsageEvent, usageSummary } from '../src/main/db/usage'
@@ -279,5 +280,15 @@ describe('a project’s files in folders', () => {
     expect(moveProjectFile(f.id, 'archive/2026').folder).toBe('archive/2026')
     expect(moveProjectFile(f.id, '').folder).toBe('')
     expect(listProjectFiles(p.id)[0].folder).toBe('')
+    expect(() => moveProjectFile('missing', 'docs')).toThrow('File not found')
+  })
+
+  it('says where a file is kept and what it is called, and nothing for a missing id', () => {
+    const p = createProject({ name: 'Disk' })
+    const f = file(p.id, 'notes.md', 'docs')
+    const onDisk = projectFileOnDisk(f.id)
+    expect(onDisk?.name).toBe('notes.md')
+    expect(onDisk?.path.startsWith(paths.data)).toBe(true)
+    expect(projectFileOnDisk('missing')).toBeNull()
   })
 })

@@ -1,12 +1,13 @@
 import { FolderClosed, MessageSquare, PanelLeft, Plus, Settings, Shapes, Sparkles, SquareTerminal } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { type ReactNode, useEffect } from 'react'
 import { cn } from '@/lib/format'
 import { type Route, useApp } from '@/stores/app'
 import { useArtifactPanel } from '@/stores/artifactPanel'
-import { ProjectExplorer } from './ProjectExplorer'
 import { useChat } from '@/stores/chat'
+import { useExplorer } from '@/stores/explorer'
 import { ConversationRow } from './ConversationMenu'
 import { OllmostMark } from './OllmostMark'
+import { ProjectExplorer } from './ProjectExplorer'
 import { IconButton } from './ui'
 
 function NavItem({
@@ -49,12 +50,18 @@ export function Sidebar() {
     navigate(r)
   }
 
-  // The explorer shows the pinned projects and the one open on the project page: the sidebar is narrow.
-  const openProject = route.name === 'project' ? projects.find((p) => p.id === route.id) : null
+  // The explorer shows the pinned projects and the one in view (open on its page, or the open chat's): the sidebar is
+  // narrow, and a project's tree must not vanish when one of its chats is opened from it.
+  const activeChatId = route.name === 'chat' ? route.id : null
+  const openChat = useChat((s) => s.conversation)
+  const viewedProjectId = route.name === 'project' ? route.id : activeChatId && openChat?.id === activeChatId ? openChat.projectId : null
+  const openProject = viewedProjectId ? projects.find((p) => p.id === viewedProjectId) : null
   const shownProjects = [...projects.filter((p) => p.pinned), ...(openProject && !openProject.pinned ? [openProject] : [])]
   const pinnedChats = conversations.filter((c) => c.pinned)
   const recents = conversations.filter((c) => !c.pinned).slice(0, 40)
-  const activeChatId = route.name === 'chat' ? route.id : null
+  useEffect(() => {
+    if (projects.length) useExplorer.getState().prune(projects.map((p) => p.id))
+  }, [projects])
   const name = settings?.userName?.trim()
 
   const row = (c: (typeof conversations)[number]) => (

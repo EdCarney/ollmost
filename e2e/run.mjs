@@ -247,7 +247,7 @@ try {
   // 6b. The sidebar's explorer: the open project as a tree of its files in folders, and its chats.
   const explorer = win.locator('[data-testid="explorer-project"]').first()
   check('the open project shows in the sidebar', (await explorer.count()) === 1)
-  await explorer.locator('[data-testid="explorer-root"] button[aria-label="Expand"]').click()
+  await explorer.locator('[data-testid="explorer-root"] button[aria-label="Expand Heron launch"]').click()
   await win.waitForSelector('[data-testid="explorer-file"]')
   check('expanding it lists its files', (await explorer.locator('[data-testid="explorer-file"]').innerText()).includes('brief.txt'))
   await explorer.locator('[data-testid="explorer-root"] button[aria-label="Heron launch menu"]').click()
@@ -282,6 +282,10 @@ try {
   const codename = await send(win, 'What is the internal codename of this project? Answer in a few words.')
   // gpt-oss often writes U+202F (narrow no-break space) between words; \s matches it.
   check('project knowledge reaches the model', /blue\s+heron/i.test(codename), codename.slice(0, 60))
+  check(
+    'the project stays in the sidebar while one of its chats is open',
+    (await win.locator('[data-testid="explorer-project"]').count()) === 1
+  )
 
   // 7. Chat cost in the title bar
   await win.locator('aside [role="button"]').first().click()

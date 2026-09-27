@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildTree, normalizeFolder } from '../src/shared/fileTree'
+import { buildTree, folderAfterRemoving, normalizeFolder } from '../src/shared/fileTree'
 
 describe('a folder path', () => {
   it('is trimmed of slashes and spaces, never climbs, and is empty at the root', () => {
@@ -10,6 +10,19 @@ describe('a folder path', () => {
     expect(normalizeFolder('../etc')).toBe('etc')
     expect(normalizeFolder('docs/../../x')).toBe('docs/x')
     expect(normalizeFolder('.')).toBe('')
+  })
+
+  it('takes a backslash as a separator and drops control characters', () => {
+    expect(normalizeFolder('docs\\notes')).toBe('docs/notes')
+    expect(normalizeFolder('do\ncs/\tnotes\u0000')).toBe('docs/notes')
+  })
+
+  it('moves a removed folder’s files up into its parent, keeping what was under them', () => {
+    expect(folderAfterRemoving('docs', 'docs')).toBe('')
+    expect(folderAfterRemoving('docs', 'docs/meetings')).toBe('meetings')
+    expect(folderAfterRemoving('docs/meetings', 'docs/meetings/2026')).toBe('docs/2026')
+    expect(folderAfterRemoving('docs', 'other')).toBe('other')
+    expect(folderAfterRemoving('docs', 'docsier')).toBe('docsier')
   })
 })
 

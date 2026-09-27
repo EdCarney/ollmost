@@ -67,8 +67,8 @@ export function ProjectView({ id }: { id: string }) {
     try {
       const { errors } = await api.projects.addFiles(id, sources)
       errors.forEach(reportError)
-      await Promise.all([loadFiles(), loadProjects()])
-      touchProjectFiles()
+      await loadProjects()
+      touchProjectFiles() // reloads the list here and in the explorer
     } catch (err) {
       reportError(err)
     } finally {
@@ -222,7 +222,6 @@ export function ProjectView({ id }: { id: string }) {
                         aria-label={`Remove ${f.name}`}
                         onClick={async () => {
                           await api.projects.removeFile(f.id).catch(reportError)
-                          await loadFiles()
                           touchProjectFiles()
                         }}
                         className="hidden rounded p-1 text-subtle hover:text-fg group-hover:block"

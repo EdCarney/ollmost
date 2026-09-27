@@ -1,8 +1,9 @@
-import { realpath, rm, writeFile } from 'node:fs/promises'
+import { lstat, realpath, rm, writeFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { basename, dirname } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type OpenDialogOptions, shell } from 'electron'
 import { artifactExtension, slugify } from '@shared/artifactParser'
+import { normalizeFolder } from '@shared/fileTree'
 import { EVENT_CHANNELS, type OllmostApi } from '@shared/ipc'
 import { parseServersJson } from '@shared/mcpImport'
 import { openWith } from '@shared/workspace'
@@ -37,7 +38,7 @@ import {
   listProjectFiles,
   listProjects,
   moveProjectFile,
-  projectFilePath,
+  projectFileOnDisk,
   updateProject
 } from './db/projects'
 import { ingestAll, removeFiles } from './files/ingest'
@@ -107,6 +108,17 @@ import {
 } from './skills/library'
 
 type Impl = { [G in Exclude<keyof OllmostApi, 'events' | 'files'>]: OllmostApi[G] }
+
+/** A project file's stored copy, checked and marked as downloaded before Finder or Quick Look sees it. */
+async function projectFileForShowing(fileId: string): Promise<{ path: string; name: string }> {
+  const file = projectFileOnDisk(fileId)
+  const gone = 'That file is no longer in Ollmost’s data. Remove it from the project and add it again.'
+  if (!file) throw new Error(gone)
+  const info = await lstat(file.path).catch(() => null)
+  if (!info?.isFile()) throw new Error(gone)
+  await quarantine(file.path)
+  return file
+}
 
 function broadcastSkillsChanged(): void {
   for (const w of BrowserWindow.getAllWindows()) w.webContents.send(EVENT_CHANNELS.skills)
@@ -210,6 +222,9 @@ const impl: Impl = {
     },
     files: async (id) => listProjectFiles(id),
     addFiles: async (id, sources, folder = '') => {
+      // Checked before any file is copied, so a bad folder leaves nothing on disk without a row.
+      if (typeof folder !== 'string') throw new Error('Ollmost expected a folder path.')
+      const target = normalizeFolder(folder)
       const { ok, errors } = await ingestAll(sources)
       const added = ok.map((f) => {
         if (f.kind === 'image') {
@@ -226,7 +241,7 @@ const impl: Impl = {
           path: f.path,
           text: f.text,
           token_est: f.tokenEst,
-          folder
+          folder: target
         })
       })
       return { added: added.filter((f) => f !== null), errors }
@@ -237,14 +252,15 @@ const impl: Impl = {
     },
     moveFile: async (fileId, folder) => moveProjectFile(fileId, folder),
     openFile: async (fileId) => {
-      const path = projectFilePath(fileId)
-      if (!path) throw new Error('File not found')
-      const failure = await shell.openPath(path)
-      if (failure) throw new Error(failure)
+      const { path, name } = await projectFileForShowing(fileId)
+      // Shown with Quick Look under its own name, never handed to the app for its type: the stored copy lost the
+      // mark its original may have carried, and a launcher document would run without a word (#67).
+      const win = BrowserWindow.getFocusedWindow() ?? BrowserWindow.getAllWindows()[0]
+      if (!win) throw new Error('There’s no window to preview the file in.')
+      win.previewFile(path, name)
     },
     revealFile: async (fileId) => {
-      const path = projectFilePath(fileId)
-      if (!path) throw new Error('File not found')
+      const { path } = await projectFileForShowing(fileId)
       shell.showItemInFolder(path)
     }
   },

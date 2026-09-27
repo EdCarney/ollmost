@@ -1,53 +1,28 @@
 import { ChevronRight, FileText, FolderClosed, FolderOpen, FolderPlus, MoreHorizontal } from 'lucide-react'
 import { type DragEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useState } from 'react'
-import { buildTree, normalizeFolder, type TreeNode } from '@shared/fileTree'
+import { buildTree, folderAfterRemoving, normalizeFolder, type TreeNode } from '@shared/fileTree'
 import type { Project, ProjectFile } from '@shared/types'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/format'
 import { toSources } from '@/lib/sources'
 import { reportError, useApp } from '@/stores/app'
 import { useChat } from '@/stores/chat'
-import { ConversationMenu, ConversationRow } from './ConversationMenu'
+import { useExplorer } from '@/stores/explorer'
+import { ConversationRow } from './ConversationMenu'
 import { Menu, MenuContent, MenuItem, MenuSeparator, MenuSub, MenuTrigger } from './ui'
-
-const EXPANDED_KEY = 'ollmost.explorer.expanded'
-const FOLDERS_KEY = 'ollmost.explorer.folders'
-
-/** Per-viewer conveniences kept in browser storage: which nodes are open, and empty folders not yet filled. */
-function readJson<T>(key: string, fallback: T): T {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? (JSON.parse(raw) as T) : fallback
-  } catch {
-    return fallback
-  }
-}
-function writeJson(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // Storage may be unavailable; the state is a convenience.
-  }
-}
 
 /** The projects in the sidebar: each one a tree of its files' folders, then its chats. */
 export function ProjectExplorer({ project }: { project: Project }) {
   const { route, navigate, conversations, projectFilesVersion, touchProjectFiles } = useApp()
   const streams = useChat((s) => s.streams)
-  const [expanded, setExpanded] = useState<string[]>(() => readJson(EXPANDED_KEY, []))
-  const [emptyFolders, setEmptyFolders] = useState<Record<string, string[]>>(() => readJson(FOLDERS_KEY, {}))
+  const { expanded, emptyFolders, toggle: toggleKey, rememberFolder: rememberKey, forgetFolder: forgetKey } = useExplorer()
   const [files, setFiles] = useState<ProjectFile[] | null>(null)
   const [naming, setNaming] = useState<{ parent: string; name: string } | null>(null)
   const [over, setOver] = useState<string | null>(null)
 
   const key = (folder: string) => (folder ? `${project.id}/${folder}` : project.id)
   const isOpen = (folder: string) => expanded.includes(key(folder))
-  const toggle = (folder: string) => {
-    const k = key(folder)
-    const next = expanded.includes(k) ? expanded.filter((x) => x !== k) : [...expanded, k]
-    setExpanded(next)
-    writeJson(EXPANDED_KEY, next)
-  }
+  const toggle = (folder: string) => toggleKey(key(folder))
   const open = isOpen('')
 
   const load = useCallback(() => api.projects.files(project.id).then(setFiles).catch(reportError), [project.id])
@@ -71,17 +46,9 @@ export function ProjectExplorer({ project }: { project: Project }) {
   }, [tree])
   const chats = conversations.filter((c) => c.projectId === project.id)
 
-  const rememberFolder = (folder: string) => {
-    const list = [...new Set([...extra, folder])]
-    const next = { ...emptyFolders, [project.id]: list }
-    setEmptyFolders(next)
-    writeJson(FOLDERS_KEY, next)
-  }
-  const forgetFolder = (folder: string) => {
-    const next = { ...emptyFolders, [project.id]: extra.filter((f) => f !== folder && !f.startsWith(`${folder}/`)) }
-    setEmptyFolders(next)
-    writeJson(FOLDERS_KEY, next)
-  }
+  const rememberFolder = (folder: string) => rememberKey(project.id, folder)
+  const forgetFolder = (folder: string) => forgetKey(project.id, folder)
+  const preview = (file: ProjectFile) => void api.projects.openFile(file.id).catch(reportError)
 
   const addTo = async (folder: string, sources = null as Awaited<ReturnType<typeof toSources>> | null) => {
     try {
@@ -114,10 +81,12 @@ export function ProjectExplorer({ project }: { project: Project }) {
     }
   }
   const removeFolder = async (folder: string) => {
-    // A folder is its files' paths: removing it moves them up a level and forgets it if it was empty.
-    const parent = folder.split('/').slice(0, -1).join('/')
+    // A folder is its files' paths: removing it moves them (one at a time) up into its parent and forgets it if it was empty.
     try {
-      for (const f of files ?? []) if (f.folder === folder || f.folder.startsWith(`${folder}/`)) await api.projects.moveFile(f.id, parent)
+      for (const f of files ?? []) {
+        const to = folderAfterRemoving(folder, f.folder)
+        if (to !== f.folder) await api.projects.moveFile(f.id, to)
+      }
       forgetFolder(folder)
       touchProjectFiles()
     } catch (err) {
@@ -128,12 +97,15 @@ export function ProjectExplorer({ project }: { project: Project }) {
   const dropProps = (folder: string) => ({
     onDragOver: (e: DragEvent) => {
       if (!e.dataTransfer.types.includes('Files')) return
+      // Taken here, so the composer's window-wide drop target leaves these files alone.
       e.preventDefault()
+      e.stopPropagation()
       setOver(folder)
     },
     onDragLeave: () => setOver((o) => (o === folder ? null : o)),
     onDrop: async (e: DragEvent) => {
       e.preventDefault()
+      e.stopPropagation()
       setOver(null)
       const dropped = [...e.dataTransfer.files]
       if (dropped.length) await addTo(folder, await toSources(dropped))
@@ -186,7 +158,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
             menu={folderMenu(n.path)}
           />
           {isOpen(n.path) && (
-            <>
+            <div role="group">
               {naming?.parent === n.path && (
                 <NameInput
                   depth={depth + 1}
@@ -196,7 +168,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
                 />
               )}
               {renderNodes(n.children, depth + 1)}
-            </>
+            </div>
           )}
         </div>
       ) : (
@@ -204,12 +176,13 @@ export function ProjectExplorer({ project }: { project: Project }) {
           key={`f:${n.file.id}`}
           depth={depth}
           testid="explorer-file"
-          onClick={() => void api.projects.openFile(n.file.id).catch(reportError)}
+          {...dropProps(n.file.folder)}
+          onClick={() => preview(n.file)}
           icon={<FileText className="size-3.5 shrink-0" />}
           label={n.name}
           menu={
             <>
-              <MenuItem onSelect={() => void api.projects.openFile(n.file.id).catch(reportError)}>Open</MenuItem>
+              <MenuItem onSelect={() => preview(n.file)}>Preview</MenuItem>
               <MenuItem onSelect={() => void api.projects.revealFile(n.file.id).catch(reportError)}>Reveal in Finder</MenuItem>
               {moveTargets(n.file).length > 0 && (
                 <MenuSub label="Move to">
@@ -232,7 +205,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
 
   const active = route.name === 'project' && route.id === project.id
   return (
-    <div data-testid="explorer-project">
+    <div data-testid="explorer-project" role="tree" aria-label={project.name}>
       <Row
         depth={0}
         testid="explorer-root"
@@ -253,7 +226,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
         }
       />
       {open && (
-        <div>
+        <div role="group">
           {naming?.parent === '' && (
             <NameInput depth={1} value={naming.name} onChange={(name) => setNaming({ parent: '', name })} onKeyDown={finishNaming} />
           )}
@@ -322,6 +295,9 @@ function Row({
     <div
       {...drop}
       data-testid={testid}
+      role="treeitem"
+      aria-expanded={chevron}
+      aria-selected={active}
       className={cn(
         'group flex h-7 items-center gap-1 rounded-lg pr-1 text-[13px]',
         active ? 'bg-hover text-fg' : 'text-muted hover:bg-hover hover:text-fg',
@@ -335,7 +311,7 @@ function Row({
             e.stopPropagation()
             ;(onToggle ?? onClick)()
           }}
-          aria-label={chevron ? 'Collapse' : 'Expand'}
+          aria-label={`${chevron ? 'Collapse' : 'Expand'} ${label}`}
           className="flex size-4 shrink-0 items-center justify-center rounded text-subtle hover:text-fg"
         >
           <ChevronRight className={cn('size-3.5 transition-transform', chevron && 'rotate-90')} />
@@ -351,7 +327,7 @@ function Row({
         <MenuTrigger asChild>
           <button
             aria-label={`${label} menu`}
-            className="flex size-5 shrink-0 items-center justify-center rounded text-subtle opacity-0 hover:text-fg group-hover:opacity-100 data-[state=open]:opacity-100"
+            className="flex size-5 shrink-0 items-center justify-center rounded text-subtle opacity-0 hover:text-fg group-hover:opacity-100 focus-visible:opacity-100 data-[state=open]:opacity-100"
           >
             <MoreHorizontal className="size-3.5" />
           </button>
@@ -389,5 +365,3 @@ function NameInput({
     </div>
   )
 }
-
-export { ConversationMenu }

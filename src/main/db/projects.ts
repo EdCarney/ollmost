@@ -157,10 +157,10 @@ export function moveProjectFile(id: string, folder: string): ProjectFile {
   return toFile(row)
 }
 
-/** Where a project file is kept on disk, or null when there's no such file. */
-export function projectFilePath(id: string): string | null {
-  const row = get<{ path: string }>('SELECT path FROM project_files WHERE id = ?', id)
-  return row ? fromStored(row.path) : null
+/** Where a project file is kept on disk and what it's called, or null when there's no such file. */
+export function projectFileOnDisk(id: string): { path: string; name: string } | null {
+  const row = get<{ path: string; name: string }>('SELECT path, name FROM project_files WHERE id = ?', id)
+  return row ? { path: fromStored(row.path), name: row.name } : null
 }
 
 export function deleteProjectFile(id: string): string | null {

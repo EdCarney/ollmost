@@ -10,13 +10,26 @@ export interface TreeFile {
 export type TreeNode<F extends TreeFile = TreeFile> =
   { kind: 'folder'; name: string; path: string; children: TreeNode<F>[] } | { kind: 'file'; name: string; file: F }
 
-/** A folder path as stored: segments joined by '/', no empty, '.' or '..' segments, '' for the root. */
+/**
+ * A folder path as stored: segments joined by '/', no empty, '.' or '..' segments, '' for the root. A backslash
+ * separates too, and control characters (which would break the name the model sees) are dropped.
+ */
 export function normalizeFolder(folder: string): string {
-  return folder
+  return [...folder.replace(/\\/g, '/')]
+    .filter((ch) => ch.charCodeAt(0) > 31 && ch.charCodeAt(0) !== 127)
+    .join('')
     .split('/')
     .map((s) => s.trim())
     .filter((s) => s && s !== '.' && s !== '..')
     .join('/')
+}
+
+/** Where a file in `folder` goes when `removed` (a folder at or above it) is removed: up into the removed folder's parent. */
+export function folderAfterRemoving(removed: string, folder: string): string {
+  if (folder !== removed && !folder.startsWith(`${removed}/`)) return folder
+  const parent = removed.split('/').slice(0, -1).join('/')
+  const rest = folder.slice(removed.length + 1)
+  return [parent, rest].filter(Boolean).join('/')
 }
 
 const byName = (a: string, b: string) => a.localeCompare(b, undefined, { sensitivity: 'base' })
