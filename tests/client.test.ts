@@ -60,6 +60,15 @@ describe('chatStream', () => {
     await expect(collect()).rejects.toThrow('model runner has unexpectedly stopped')
   })
 
+  it('turns a not-enough-memory error chunk into a friendly, model-naming message', async () => {
+    ollama.handler = (_req, res) =>
+      streamChunks(res, [line({ error: 'model requires more system memory (9.1 GiB) than is available (6.0 GiB)' })]).then(() => res.end())
+    const err = await collect().catch((e) => e)
+    expect(err.message).toBe(
+      'Not enough memory to load “llama3.2”. Lower the context window in Settings → Models, or pick a smaller or more quantized model.'
+    )
+  })
+
   it('turns an unreadable line into a friendly error', async () => {
     ollama.handler = (_req, res) => streamChunks(res, ['{"message": {"content": "a"}\n', 'this is not json\n']).then(() => res.end())
     const err = await collect().catch((e) => e)
@@ -70,6 +79,15 @@ describe('chatStream', () => {
   it('reports HTTP errors with the daemon message', async () => {
     ollama.handler = (_req, res) => void res.writeHead(404).end(JSON.stringify({ error: "model 'nope' not found" }))
     await expect(collect()).rejects.toThrow(/was not found/)
+  })
+
+  it('turns a not-enough-memory HTTP error into a friendly, model-naming message', async () => {
+    ollama.handler = (_req, res) =>
+      void res.writeHead(500).end(JSON.stringify({ error: 'model requires more system memory (9.1 GiB) than is available (6.0 GiB)' }))
+    const err = await collect().catch((e) => e)
+    expect(err.message).toBe(
+      'Not enough memory to load “llama3.2”. Lower the context window in Settings → Models, or pick a smaller or more quantized model.'
+    )
   })
 
   it('gives up when the first byte never arrives', async () => {

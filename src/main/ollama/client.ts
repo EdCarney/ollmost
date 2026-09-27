@@ -58,6 +58,16 @@ function target(): { base: string; headers: Record<string, string> } {
   return { base: s.connection.host.replace(/\/+$/, ''), headers: {} }
 }
 
+const NOT_ENOUGH_MEMORY_RE = /model requires more system memory/i
+
+/** Ollama's daemon says the model needs more RAM than the machine has; point at the two real fixes. */
+function notEnoughMemory(detail: string, model?: string): string | undefined {
+  if (!NOT_ENOUGH_MEMORY_RE.test(detail)) return undefined
+  return model
+    ? `Not enough memory to load “${model}”. Lower the context window in Settings → Models, or pick a smaller or more quantized model.`
+    : `Not enough memory to load the model. Lower the context window in Settings → Models, or pick a smaller or more quantized model.`
+}
+
 function friendly(status: number, body: string, model?: string): OllamaError {
   let detail = body
   try {
@@ -75,7 +85,7 @@ function friendly(status: number, body: string, model?: string): OllamaError {
   if (status === 429) return new OllamaError('Ollama cloud usage limit reached. Try again later, or switch to a local model.', status)
   if (status === 404 && /not found/i.test(detail))
     return new OllamaError(model ? `Model “${model}” was not found by Ollama.` : detail, status)
-  return new OllamaError(detail || `Ollama returned HTTP ${status}`, status)
+  return new OllamaError(notEnoughMemory(detail, model) ?? (detail || `Ollama returned HTTP ${status}`), status)
 }
 
 // Short calls (model lists, /api/show) should never hang the UI on a wedged daemon.
@@ -188,7 +198,7 @@ export async function* chatStream(
         buffer = buffer.slice(nl + 1)
         if (!line) continue
         const chunk = parseChunk(line)
-        if (chunk.error) throw new OllamaError(chunk.error)
+        if (chunk.error) throw new OllamaError(notEnoughMemory(chunk.error, body.model) ?? chunk.error)
         if (chunk.done) finished = true
         yield chunk
       }
@@ -196,7 +206,7 @@ export async function* chatStream(
     buffer += decoder.decode()
     if (buffer.trim()) {
       const chunk = parseChunk(buffer.trim())
-      if (chunk.error) throw new OllamaError(chunk.error)
+      if (chunk.error) throw new OllamaError(notEnoughMemory(chunk.error, body.model) ?? chunk.error)
       if (chunk.done) finished = true
       yield chunk
     }
