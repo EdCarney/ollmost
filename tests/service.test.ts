@@ -1072,6 +1072,51 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(getConversation(session.id)!.allowedTools).toEqual(['code:edits'])
   }, 120_000)
 
+  it('doesn’t ask about an edit that can’t be made: the model gets the failure', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync, writeFileSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-refused-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    writeFileSync(join(folder, 'hello.py'), 'print("hello")\n')
+    chat = (b, res, n) =>
+      n === 1
+        ? void res.writeHead(200).end(toolCall('edit_file', { path: 'hello.py', old_string: 'goodbye', new_string: 'bonjour' }))
+        : reply('Nothing to change.')(b, res, n)
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    const r = service.send({
+      conversationId: session.id,
+      projectId: null,
+      content: 'say bonjour instead of goodbye',
+      attachmentIds: [],
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      toolSources: []
+    })
+    const done = await waitFor(
+      () => events.find((e): e is Extract<ChatEvent, { type: 'done' }> => e.type === 'done' && e.conversationId === r.conversation.id),
+      60_000
+    )
+    expect(events.filter((e) => e.type === 'tool' && e.conversationId === r.conversation.id && e.event.awaiting)).toEqual([])
+    expect(done.message.toolEvents.map((e) => [e.tool, e.ok, e.summary])).toEqual([['edit_file', false, 'old_string not found']])
+    const results = (chatCalls[1].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
+    expect(results[0].content).toMatch(/^Error: old_string was not found in hello\.py/)
+    expect(readFileSync(join(folder, 'hello.py'), 'utf8')).toBe('print("hello")\n')
+    expect(getConversation(session.id)!.allowedTools).toEqual([])
+  }, 60_000)
+
   it('says when a session’s folder is gone, and offers no code tools that turn', async () => {
     const { mkdtempSync, realpathSync, rmSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')

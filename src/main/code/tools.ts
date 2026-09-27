@@ -1,7 +1,4 @@
-import { realpath } from 'node:fs/promises'
-import { homedir } from 'node:os'
 import type { ToolEvent } from '@shared/types'
-import { childPath } from '../env'
 import { getConversation } from '../db/conversations'
 import type { OllamaTool } from '../ollama/client'
 import { getSettings } from '../settings'
@@ -9,12 +6,11 @@ import { capText, TOOL_RESULT_CHARS } from '../chat/results'
 import type { ToolContext, ToolProvider, ToolResult } from '../chat/tools'
 import { errorMessage } from '../util'
 import { CodeRunningError } from '../runner/lock'
-import { firstLine, readableFolders } from '../runner/provider'
+import { firstLine } from '../runner/provider'
 import { runSandboxed } from '../runner/sandbox'
-import { readyForRun, realRoot, RootMissingError, sessionDir, type Workspace } from '../runner/workspace'
+import { RootMissingError, type Workspace } from '../runner/workspace'
 import * as files from './files'
-import { codePolicyFor, toolchainFolders } from './policy'
-import { sessionEnv } from './session'
+import { sandboxFor } from './session'
 
 // A code session's tools (#88, #93): run_command in the sandbox, and the file tools, which work in the folder outside
 // it under Ollmost's own confinement (see files.ts). Offered only in a session, never in a chat, whose run_code works
@@ -229,29 +225,17 @@ async function runCommand(command: string, timeoutSec: number | undefined, ws: W
   const network = getConversation(ws.id)?.network ?? 'none'
 
   // The folder is where it was, the scratch is in order, and none of the session's code is still running.
+  let sandbox: Awaited<ReturnType<typeof sandboxFor>>
   try {
-    await readyForRun(ws)
+    sandbox = await sandboxFor(ws, network)
   } catch (err) {
     return failed(errorMessage(err), 'not run')
   }
   const n = ++runs
-  const path = await childPath()
-  const home = homedir()
-  const toolchains = toolchainFolders(path, home)
-  // Real paths: the sandbox matches those (see CodePolicyInput). The scratch was just made a real folder.
-  const policy = codePolicyFor({
-    root: await realRoot(ws),
-    session: await realpath(sessionDir(ws.id)),
-    home,
-    readable: [...(await readableFolders()), ...toolchains.roots],
-    denied: toolchains.denied,
-    network
-  })
   const result = await runSandboxed({
     command,
-    policy,
+    ...sandbox,
     workspace: ws,
-    env: sessionEnv(ws, path, toolchains.env),
     timeoutMs: limit * 1000,
     signal,
     id: `run_command:${n}`
@@ -347,17 +331,33 @@ async function fileTool(name: string, c: Call, ws: Workspace, ctx: ToolContext):
     return await fileToolResult(name, c, ws, ctx)
   } catch (err) {
     if (ctx.signal?.aborted) throw err
-    const reason =
-      err instanceof files.Refused
-        ? err.reason
-        : err instanceof RootMissingError
-          ? 'folder missing'
-          : err instanceof CodeRunningError
-            ? 'code running'
-            : short(errorMessage(err))
-    return { content: `Error: ${errorMessage(err)}`, event: { tool: name, args: c.event, ok: false, summary: reason } }
+    return failure(name, c, err)
   }
 }
+
+/** A file tool's answer when it failed: the message, and the reason in a word or two as the summary. */
+function failure(name: string, c: Call, err: unknown): ToolResult {
+  const reason =
+    err instanceof files.Refused
+      ? err.reason
+      : err instanceof RootMissingError
+        ? 'folder missing'
+        : err instanceof CodeRunningError
+          ? 'code running'
+          : short(errorMessage(err))
+  return { content: `Error: ${errorMessage(err)}`, event: { tool: name, args: c.event, ok: false, summary: reason } }
+}
+
+/**
+ * Edits whose preview failed, by the turn's workspace and the call: such a call answers with the failure instead of
+ * asking first (the user would see no diff, and the file isn't touched either way). Kept until the call runs, so the
+ * run gives the answer the preview settled on rather than trying the file again. The workspace, not the context: the
+ * runner hands a provider a copy of the context, with the same workspace in it.
+ */
+const previewFailures = new WeakMap<Workspace, Map<string, ToolResult>>()
+const callKey = (name: string, args: Record<string, unknown>) => `${name}\0${JSON.stringify(args)}`
+const previewFailure = (ctx: ToolContext, name: string, args: Record<string, unknown>) =>
+  (ctx.workspace && previewFailures.get(ctx.workspace)?.get(callKey(name, args))) ?? null
 
 export const codeTools: ToolProvider = {
   id: 'code',
@@ -377,22 +377,40 @@ export const codeTools: ToolProvider = {
       case 'read_file':
         return { ...base, summary: short(c.path) }
       default: {
-        // The diff the edit would make, shown while the call asks; null when it can't be made, and the call says why.
+        // The diff the edit would make, shown while the call asks. When it can't be made, the call won't ask: it
+        // answers with the failure (see previewFailures).
         const ws = ctx.workspace
-        const diff = !ws ? null : name === 'edit_file' ? await files.previewEdit(ws, c.edit!) : await files.previewWrite(ws, c.write!)
-        return { ...base, summary: short(c.path), ...(diff !== null && { diff }) }
+        if (!ws) return { ...base, summary: short(c.path) }
+        const key = callKey(name, args)
+        const failures = previewFailures.get(ws) ?? new Map<string, ToolResult>()
+        previewFailures.set(ws, failures)
+        failures.delete(key)
+        try {
+          const diff = name === 'edit_file' ? await files.editDiff(ws, c.edit!) : await files.writeDiff(ws, c.write!)
+          return { ...base, summary: short(c.path), diff }
+        } catch (err) {
+          if (ctx.signal?.aborted) throw err
+          // A folder that's busy or missing may not be by the time the call runs: it asks as usual and tries then.
+          if (!(err instanceof CodeRunningError || err instanceof RootMissingError)) failures.set(key, failure(name, c, err))
+          return { ...base, summary: short(c.path) }
+        }
       }
     }
   },
   run: async ({ name, args }, ctx) => {
     const c = readCall(name, args)
     if (name === 'run_command') return runCommand(c.command, c.timeoutSec, ctx.workspace!, ctx.signal)
+    const failed = previewFailure(ctx, name, args)
+    if (failed) {
+      previewFailures.get(ctx.workspace!)!.delete(callKey(name, args))
+      return failed
+    }
     return fileTool(name, c, ctx.workspace!, ctx)
   },
-  approval: ({ name }) => {
+  approval: ({ name, args }, ctx) => {
     const settings = getSettings().code
     if (name === 'run_command') return settings.commands === 'allow' ? 'auto' : 'ask'
-    if (EDIT_TOOLS.has(name)) return settings.edits === 'allow' ? 'auto' : 'ask'
+    if (EDIT_TOOLS.has(name)) return settings.edits === 'allow' || previewFailure(ctx, name, args) ? 'auto' : 'ask'
     return 'auto'
   },
   allowKey: ({ name }) => (name === 'run_command' ? COMMANDS_KEY : EDIT_TOOLS.has(name) ? EDITS_KEY : name),

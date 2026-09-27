@@ -170,6 +170,26 @@ describe('getting a session ready for a reply', () => {
     expect(readFileSync(join(dir, 'CLAUDE.md'), 'utf8')).toBe('Use tabs.')
   })
 
+  it('stops the Changes panel’s git in the folder first, and waits for it to end', async () => {
+    const { panelRun, panelRunStarted } = await import('../src/main/code/panelRuns')
+    const c = newSession(userFolder())
+    const ws = workspace.workspaceFor(c.id)
+    const { signal } = panelRun(ws.key)
+    let ended = false
+    const run = new Promise<void>((resolve) =>
+      signal.addEventListener('abort', () =>
+        setTimeout(() => {
+          ended = true
+          resolve()
+        }, 50)
+      )
+    )
+    panelRunStarted(ws.key, run)
+    await session.prepareCodeSession(ws, { network: 'none', timeoutSec: 30 })
+    expect(signal.aborted).toBe(true)
+    expect(ended).toBe(true)
+  })
+
   it('prefers OLLMOST.md, cuts a long file, and takes none through a link that leaves the folder', async () => {
     const dir = userFolder()
     writeFileSync(join(dir, 'OLLMOST.md'), 'x'.repeat(40 * 1024))

@@ -153,6 +153,29 @@ describe('a session’s folder', () => {
     await expect(call('status', 'no-such-id')).rejects.toThrow(/no longer exists/)
   })
 
+  it('tells its changes and a file’s diff only for a session, between replies, while it’s there', async () => {
+    const dir = folder()
+    const c = session(dir)
+    await expect(call('changes', chat().id)).rejects.toThrow(/isn.t a code session/)
+    await expect(call('diff', chat().id, 'README.md')).rejects.toThrow(/isn.t a code session/)
+    fake.replying.add(c.id)
+    await expect(call('changes', c.id)).rejects.toThrow(/still responding.*look again/)
+    await expect(call('diff', c.id, 'README.md')).rejects.toThrow(/still responding/)
+    fake.replying.clear()
+    renameSync(dir, `${dir}-moved`)
+    expect(await call('changes', c.id)).toEqual({ repo: false, files: [], cut: false, error: expect.stringMatching(/no longer at/) })
+    await expect(call('diff', c.id, 'README.md')).rejects.toThrow(/no longer at/)
+  })
+
+  it('tells no changes while a reply runs in another session on the same folder', async () => {
+    const dir = folder()
+    const a = session(dir)
+    const b = session(dir)
+    fake.replying.add(b.id)
+    await expect(call('changes', a.id)).rejects.toThrow(/in a session on this folder/)
+    await expect(call('diff', a.id, 'README.md')).rejects.toThrow(/in a session on this folder/)
+  })
+
   it('is shown in Finder while it’s where it was, and not after it moved', async () => {
     const dir = folder()
     const c = session(dir)

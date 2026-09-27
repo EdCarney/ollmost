@@ -29,6 +29,32 @@ export type ThinkSetting = 'off' | 'on' | 'low' | 'medium' | 'high'
 /** What a code session's commands may reach: nothing, package registries, or those and the git hosts. */
 export type CodeNetwork = 'none' | 'registries' | 'registries-git'
 
+/** A changed file's state in a session's repository, as git status reports it. */
+export type ChangeStatus = 'modified' | 'added' | 'deleted' | 'renamed' | 'untracked' | 'conflict'
+export interface ChangedFile {
+  /** Relative to the session's folder. */
+  path: string
+  status: ChangeStatus
+  /** Renamed: where it was. */
+  from?: string
+}
+/** What changed in a session's folder, asked of git run inside the session's sandbox. */
+export interface CodeChanges {
+  /** Whether git found a repository at the folder. */
+  repo: boolean
+  files: ChangedFile[]
+  /** More files changed than listed. */
+  cut: boolean
+  /** Why git couldn't answer (no Command Line Tools, the folder is missing, git failed or took too long); null when it did. */
+  error: string | null
+}
+/** One changed file's unified diff against HEAD, or against nothing for a file git doesn't track yet. */
+export interface CodeDiff {
+  diff: string
+  /** The diff was longer than shown. */
+  cut: boolean
+}
+
 export interface Conversation {
   id: ID
   projectId: ID | null
