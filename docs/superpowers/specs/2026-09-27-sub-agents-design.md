@@ -52,10 +52,10 @@ A child's thinking is not kept. Its tool results follow the parent's rules (`max
 
 `src/main/chat/rounds.ts` exports `runRounds(input): Promise<RoundsResult>`. It is the body of today's `for (round …)` loop in `generate()`, moved without change of behaviour; `generate()` calls it and keeps everything before (setup, prompt assembly) and after (saving, usage totals, title, plan capture, artifacts). The interface is what the loop already closes over:
 
-- in: `conversationId`, `messageId`, `model`, `think`, `options`, `tools`, `toolContext`, `messages` (the history to send), `maxRounds`, `finalRoundWithoutTools`, `controller`, the readers `allowedInChat()` and `declined`, the callbacks `onDelta(text, round)`, `onThinking(piece)`, `onToolEvent(index, event)`, `onUsage(promptTokens, completionTokens)`, and `trace` (a factory taking the round number).
-- out: `content`, `toolEvents`, `rounds`, `stats` (the last request's numbers), `stoppedAt` (`'done' | 'rounds' | 'aborted' | 'error'`), `error?`.
+- in (`RoundsInput`): `conversationId`, `messageId` (the row the records and checkpoints belong to), `loopId` (what traces and approvals are keyed by: the message id for a reply, the child id for a sub-agent), `modelName` and `model`, `body` (the request, with its messages, tools, think and options), `budget` (the context guard's window), `maxRounds`, `toolContext`, `signal`, `stats`, `usageKind` and `traceKind` (`'chat'` or `'delegate'`), and the callbacks `onDelta`, `onToolEvent(index, event)`, `onUsage`, `onLoadedSkill` and `checkpoint(state)`.
+- out (`RoundsResult`): `content`, `thinking` and `thinkingSegments`, `toolEvents`, `rounds`, `error` (null when the loop ended cleanly; a stop is read from the signal), the timing numbers `generate()` saves (`evalNs`, `thinkStart`, `thinkEnd`), and `triedUnknown` (tool names the model called that nothing offers).
 
-`generate()`'s callbacks emit the `delta`/`tool`/`usage` events and keep the message rows as they do today. The child's callbacks update the parent's `delegate` tool event instead (next section). The approval flow inside the loop keys `waitForDecision` by `messageId:index`, so the child passes its child id as `messageId` and its own event index; `decide` from the renderer carries the same pair with the parent's conversation id.
+`generate()`'s callbacks emit the `delta`/`tool`/`usage` events and keep the message rows as they do today. The child's callbacks update the parent's `delegate` tool event instead (next section). The approval flow inside the loop keys `waitForDecision` by `loopId` and index, so the child passes its child id as `loopId` (keeping the parent's `messageId` for records) and its own event index; `decide` from the renderer carries the same pair with the parent's conversation id.
 
 ### What the user sees
 
@@ -94,7 +94,7 @@ The child's system prompt (`childPrompt` in `prompts.ts`) replaces the base prom
 
 `settings.delegate: { enabled: boolean; maxRounds: number }`, defaults `{ enabled: true, maxRounds: 20 }`, in Settings → Tools under "Sub-agents", with one line saying what a sub-agent is and that it runs one at a time and counts toward the chat's usage.
 
-- Stop: the parent's controller is the child's; a stopped child ends with `stoppedAt: 'aborted'`, its pending events are settled "(stopped)" like the parent's, and the parent's loop ends as it does today.
+- Stop: the parent's controller is the child's; a stopped child's loop ends on the aborted signal with no error, its pending events are settled "(stopped)" like the parent's, the parent's `delegate` event is saved "(stopped)", and the parent's loop ends as it does today.
 - Usage: `kind: 'delegate'` rows count in `conversationUsage` totals and in the account summary; `lastContextTokens` keeps reading only `kind: 'chat'` rows, so the chat's context chip shows the parent's window, not the child's.
 - Round and result caps as above. A child's tool results use the parent's `maxResultChars`.
 - Compaction: `assertIdle` already covers the whole reply, child included, because the child runs inside the parent's `active` entry.
@@ -106,7 +106,7 @@ A `model` argument; parallel children; depth beyond one; a child that continues 
 
 ## Testing
 
-- `tests/rounds.test.ts` (new) and every existing test in `tests/service.test.ts` unchanged and green after the loop moves: the invariant for PR 1.
+- Every existing test in `tests/service.test.ts` unchanged and green after the loop moves, plus a `runRounds` block in the same file (it shares the mock Ollama): the invariant for PR 1.
 - Service tests against the mock Ollama for PR 2: a parent that calls `delegate` and a child that makes a `web_search` then answers, checked for the parent's tool event with `child.events` and `child.result`, the parent's final text using the result, `usage_events` rows of kind `delegate` on the parent's conversation, and traces with the child id; Stop during the child (both settle, child event "(stopped)"); an approval inside the child answered with `'chat'` storing the key on the parent's conversation; a child never offered `delegate`; the round limit reached (result with the note); `settings.delegate.enabled = false` offering no `delegate`.
 - e2e (mock-tools model): a scripted delegation with one web search inside the child; checks the sub-agent card shows the search and the result, the parent's answer cites the result, and the debugger lists a "Sub-agent" turn.
 - Live (`OLLMOST_E2E_MODEL`): one delegated research task, checked only for a card with a result.
