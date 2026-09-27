@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react'
 import { usesDark } from '@shared/themes'
 import { resolveThinkProfile } from '@shared/thinking'
 import type { ModelInfo, ModelOverrides, PriceTable, Settings, ThemeDef, UsageSummary } from '@shared/types'
-import { creditPool, formatDollars, formatPercent } from '@shared/usage'
+import { creditPool, formatDollars, formatPercent, spendPeriod } from '@shared/usage'
 import { ThemeEditor } from '@/components/ThemeEditor'
 import { TopBar } from '@/components/TopBar'
 import { Badge, Button, Field, Spinner, Switch, TextArea, TextField } from '@/components/ui'
@@ -390,11 +390,17 @@ function UsageTab({ settings }: { settings: Settings }) {
   const activity = (account?.windows ?? []).filter((w) => w.models.length > 0)
   const anchor = u.anchors.weekly
 
+  // The same period as the popover's Ollmost line, so the two say the same thing.
+  const period = account ? spendPeriod(account) : null
+  const since = period?.since ?? null
+  const until = period?.until ?? null
   useEffect(() => {
     void api.usage.prices().then(setPrices)
-    void api.usage.summary(30).then(setSummary)
     void load(true)
   }, [load])
+  useEffect(() => {
+    void api.usage.summary(30, since ?? undefined, until).then(setSummary)
+  }, [since, until])
 
   const setAnchors = async (patch: Settings['usage']['anchors']) => {
     await update({ usage: { anchors: patch } })
@@ -536,8 +542,8 @@ function UsageTab({ settings }: { settings: Settings }) {
       )}
 
       <Section
-        title="Spend in Ollmost, last 30 days"
-        description="From token counts Ollmost recorded. Other apps using your Ollama account aren't included."
+        title={`Spend in Ollmost, ${period?.label ?? 'last 30 days'}`}
+        description="From token counts Ollmost recorded, every prompt token at the full rate, so an upper bound: Ollama charges cached prompt tokens far less. Other apps using your Ollama account aren't included."
       >
         {summary && summary.total.requests > 0 ? (
           <table className="w-full text-[13px] tabular-nums">

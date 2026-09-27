@@ -546,6 +546,8 @@ async function generate(
       if (final?.prompt_eval_count) lastCount = { actual: final.prompt_eval_count, estimated: openRound.promptEstimate }
       if (roundThinking) thinkingSegments.push({ text: roundThinking, ...roundAt, ms: roundThinkMs() })
       const billed = recordRound(final)
+      // Another round follows a tool call: show the chat's totals now rather than when the reply ends (the done carries them).
+      if (calls.length) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
       // The last round's reason is the reply's: "length" means the model was cut off mid-answer.
       if (final?.done_reason) stats.doneReason = final.done_reason
       const { message: _message, ...finalStats } = final ?? { done: true }
@@ -822,6 +824,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       costUsd,
       estimated: res.eval_count === undefined
     })
+    emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
     const { message: titleMessage, ...titleStats } = res
     titleTrace.finish({
       status: 'ok',

@@ -627,6 +627,8 @@ export type ChatEvent =
     }
   | { type: 'tool'; conversationId: ID; messageId: ID; index: number; event: ToolEvent }
   | { type: 'done'; conversationId: ID; message: Message; artifacts: Artifact[]; conversation: Conversation; usage: ChatUsage }
+  /** The chat's totals so far, sent as a round ends with more to come, and after a title request: the chip moves during a reply. */
+  | { type: 'usage'; conversationId: ID; usage: ChatUsage }
   | { type: 'error'; conversationId: ID; messageId: ID; error: string }
   | { type: 'title'; conversationId: ID; title: string }
 

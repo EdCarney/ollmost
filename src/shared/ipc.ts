@@ -166,7 +166,8 @@ export interface OllmostApi {
     /** Quota windows and recent spend from ollama.com (needs an API key). */
     account(refresh?: boolean): Promise<AccountUsage>
     /** Ollmost's own ledger of requests over the last N days. */
-    summary(days: number): Promise<UsageSummary>
+    /** Ollmost's own totals over the last `days`, or between `since` and `until` (ms) when given. */
+    summary(days: number, since?: number, until?: number | null): Promise<UsageSummary>
     /** Last raw /api/usage response, for troubleshooting the undocumented endpoint. */
     raw(): Promise<{ at: number; json: unknown } | null>
     prices(): Promise<PriceTable>

@@ -9,7 +9,7 @@ import { useChat } from '@/stores/chat'
 import { EMPTY_DRAFT, type PendingFile, useDrafts } from '@/stores/drafts'
 import { ModelPicker } from './ModelPicker'
 import { ThinkingControl } from './ThinkingControl'
-import { Menu, MenuCheckItem, MenuContent, MenuItem, MenuLabel, MenuSeparator, MenuSub, MenuTrigger, Spinner, Tooltip } from './ui'
+import { Menu, MenuCheckItem, MenuContent, MenuItem, MenuLabel, MenuSub, MenuTrigger, Spinner, Tooltip } from './ui'
 
 export interface ComposerSubmit {
   content: string
@@ -442,7 +442,11 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
                   Add files or photos
                 </MenuItem>
               )}
-              <MenuSub label="Skills" icon={<Sparkles className="size-4" />}>
+              <MenuSub
+                label="Skills"
+                icon={<Sparkles className="size-4" />}
+                footer={<MenuItem onSelect={() => navigate({ name: 'skills' })}>Manage skills…</MenuItem>}
+              >
                 {enabledSkills.length === 0 && <MenuLabel>No skills yet</MenuLabel>}
                 {enabledSkills.map((s) => (
                   <MenuCheckItem
@@ -456,10 +460,12 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
                     {s.name}
                   </MenuCheckItem>
                 ))}
-                <MenuSeparator />
-                <MenuItem onSelect={() => navigate({ name: 'skills' })}>Manage skills…</MenuItem>
               </MenuSub>
-              <MenuSub label="Tools" icon={<Wrench className="size-4" />}>
+              <MenuSub
+                label="Tools"
+                icon={<Wrench className="size-4" />}
+                footer={<MenuItem onSelect={() => navigate({ name: 'settings', tab: 'tools' })}>Manage tools…</MenuItem>}
+              >
                 {chatMode && runnerOn && (
                   <MenuCheckItem
                     checked={settings.toolSources.includes(CODE)}
@@ -480,8 +486,6 @@ export function Composer({ conversation, draftKey, streaming, onSubmit, onStop, 
                     {s.name}
                   </MenuCheckItem>
                 ))}
-                <MenuSeparator />
-                <MenuItem onSelect={() => navigate({ name: 'settings', tab: 'tools' })}>Manage tools…</MenuItem>
               </MenuSub>
             </MenuContent>
           </Menu>

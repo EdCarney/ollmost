@@ -16,7 +16,8 @@ import {
   paceOf,
   parsePricingHtml,
   parseUsageResponse,
-  priceFor
+  priceFor,
+  spendPeriod
 } from '@shared/usage'
 
 const HOUR = 3_600_000
@@ -226,5 +227,58 @@ describe('reset schedule', () => {
     expect(session).toMatchObject({ label: '5-hour session', resetAt: null })
     expect(weekly).toMatchObject({ label: 'Weekly', resetAt: now + 5 * DAY, resetSource: 'detected' })
     expect(elapsedFraction(weekly, now)).toBeCloseTo(2 / 7)
+  })
+})
+
+describe('the period Ollmost sums its own estimate over, to sit beside the account\u2019s spend', () => {
+  const now = Date.parse('2026-09-27T12:00:00Z')
+  const base = { plan: 'pro', fetchedAt: now, needsKey: false, error: null }
+  const monthly = (extra: object) => ({
+    id: 'monthly',
+    label: 'Monthly',
+    usage: 0.111,
+    models: [],
+    periodMs: 30 * DAY,
+    resetAt: now + 10 * DAY,
+    resetSource: 'configured' as const,
+    ...extra
+  })
+  const credits = { cost: 6.66, label: 'This month', source: 'credits' as const, pool: 60, periodStart: null, periodEnd: null, models: [] }
+
+  it('uses the monthly window\u2019s current period on a credit plan whose reset day is known', () => {
+    expect(spendPeriod({ ...base, windows: [monthly({})], spend: credits })).toEqual({
+      since: now - 20 * DAY,
+      until: null,
+      label: 'this month'
+    })
+  })
+
+  it('uses the activity period Ollama reports on a legacy plan, to its end when that has passed', () => {
+    const spend = {
+      ...credits,
+      source: 'activity' as const,
+      label: 'Last 4 weeks',
+      pool: null,
+      periodStart: now - 28 * DAY,
+      periodEnd: now
+    }
+    expect(spendPeriod({ ...base, windows: [], spend })).toEqual({ since: now - 28 * DAY, until: now, label: 'last 4 weeks' })
+    const stale = { ...spend, periodStart: now - 40 * DAY, periodEnd: now - 12 * DAY }
+    expect(spendPeriod({ ...base, windows: [], spend: stale })).toEqual({
+      since: now - 40 * DAY,
+      until: now - 12 * DAY,
+      label: 'last 4 weeks'
+    })
+    expect(spendPeriod({ ...base, windows: [], spend: { ...spend, periodEnd: null } })).toEqual({
+      since: now - 28 * DAY,
+      until: null,
+      label: 'last 4 weeks'
+    })
+  })
+
+  it('has no period when the reset day is unknown, when there is no spend line, or when the activity period has no start', () => {
+    expect(spendPeriod({ ...base, windows: [monthly({ resetAt: null, resetSource: null })], spend: credits })).toBeNull()
+    expect(spendPeriod({ ...base, windows: [monthly({})], spend: null })).toBeNull()
+    expect(spendPeriod({ ...base, windows: [], spend: { ...credits, source: 'activity', periodStart: null } })).toBeNull()
   })
 })
