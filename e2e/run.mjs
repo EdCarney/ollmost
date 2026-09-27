@@ -244,10 +244,48 @@ try {
   await stubOpenDialog(app, [join(fixtures, 'brief.txt')])
   await win.click('button[aria-label="Add files"]')
   await win.waitForSelector('text=brief.txt')
+  // 6b. The sidebar's explorer: the open project as a tree of its files in folders, and its chats.
+  const explorer = win.locator('[data-testid="explorer-project"]').first()
+  check('the open project shows in the sidebar', (await explorer.count()) === 1)
+  await explorer.locator('[data-testid="explorer-root"] button[aria-label="Expand Heron launch"]').click()
+  await win.waitForSelector('[data-testid="explorer-file"]')
+  check('expanding it lists its files', (await explorer.locator('[data-testid="explorer-file"]').innerText()).includes('brief.txt'))
+  await explorer.locator('[data-testid="explorer-root"] button[aria-label="Heron launch menu"]').click()
+  await win.getByRole('menuitem', { name: 'New folder…' }).click()
+  await win.fill('[data-testid="explorer-new-folder"]', 'docs')
+  await win.keyboard.press('Enter')
+  await win.waitForSelector('[data-testid="explorer-folder"]')
+  check('a new folder appears in the tree', (await explorer.locator('[data-testid="explorer-folder"]').innerText()).includes('docs'))
+  await stubOpenDialog(app, [join(fixtures, 'brief.txt')])
+  await explorer.locator('[data-testid="explorer-folder"] button[aria-label="docs menu"]').click()
+  await win.getByRole('menuitem', { name: 'Add files here…' }).click()
+  await win.waitForFunction(() => document.querySelectorAll('[data-testid="explorer-file"]').length === 2, null, { timeout: 10000 })
+  const inFolders = await win.evaluate(async () => {
+    const [project] = await window.ollmost.projects.list()
+    return (await window.ollmost.projects.files(project.id)).map((f) => `${f.folder}|${f.name}`).sort()
+  })
+  check(
+    "a file added from a folder's menu lands in that folder",
+    JSON.stringify(inFolders) === JSON.stringify(['docs|brief.txt', '|brief.txt']),
+    JSON.stringify(inFolders)
+  )
+  check('the project page lists it by folder', await win.getByText('docs/').first().isVisible())
+  await explorer.locator('[data-testid="explorer-file"]').nth(1).locator('button[aria-label="brief.txt menu"]').click()
+  await win.getByRole('menuitem', { name: 'Remove from project' }).click()
+  await win.waitForFunction(() => document.querySelectorAll('[data-testid="explorer-file"]').length === 1, null, { timeout: 10000 })
+  check(
+    'removing it from the tree removes it from the project',
+    (await win.evaluate(async () => (await window.ollmost.projects.files((await window.ollmost.projects.list())[0].id)).length)) === 1
+  )
+  await win.screenshot({ path: join(SHOTS, 'project-explorer.png') })
   await pickModel(win, CHAT_MODEL)
   const codename = await send(win, 'What is the internal codename of this project? Answer in a few words.')
   // gpt-oss often writes U+202F (narrow no-break space) between words; \s matches it.
   check('project knowledge reaches the model', /blue\s+heron/i.test(codename), codename.slice(0, 60))
+  check(
+    'the project stays in the sidebar while one of its chats is open',
+    (await win.locator('[data-testid="explorer-project"]').count()) === 1
+  )
 
   // 7. Chat cost in the title bar
   await win.locator('aside [role="button"]').first().click()
@@ -1801,7 +1839,8 @@ const evilSvg = (port) =>
     // the schema is taken out first, or they'd fail on it. A new schema migration means updating this too.
     const KILN_DB_VERSION = 8
     const version = db.prepare('PRAGMA user_version').get().user_version
-    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 7, `database version ${version}`)
+    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 8, `database version ${version}`)
+    db.exec('ALTER TABLE project_files DROP COLUMN folder')
     db.exec('ALTER TABLE conversations DROP COLUMN plan; ALTER TABLE conversations DROP COLUMN stage')
     db.exec('ALTER TABLE conversations DROP COLUMN compaction')
     db.exec('ALTER TABLE messages DROP COLUMN thinking_segments')

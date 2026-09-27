@@ -64,6 +64,9 @@ export interface AppState {
 
   projects: Project[]
   loadProjects: () => Promise<void>
+  /** Bumped when a project's files change anywhere, so the sidebar's explorer reloads them. */
+  projectFilesVersion: number
+  touchProjectFiles: () => void
 
   /** Chats; code sessions are kept apart in `sessions`. */
   conversations: Conversation[]
@@ -140,6 +143,8 @@ export const useApp = create<AppState>((set, get) => ({
   setDraftThink: (draftThink) => set({ draftThink }),
 
   projects: [],
+  projectFilesVersion: 0,
+  touchProjectFiles: () => set((s) => ({ projectFilesVersion: s.projectFilesVersion + 1 })),
   loadProjects: async () => set({ projects: await api.projects.list() }),
 
   conversations: [],

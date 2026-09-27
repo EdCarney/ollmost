@@ -20,6 +20,8 @@ export interface ProjectFile {
   mime: string
   size: number
   tokenEstimate: number
+  /** The folder it sits in, a relative path ('docs/meetings'); '' at the root. */
+  folder: string
   createdAt: number
 }
 

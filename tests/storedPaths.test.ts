@@ -58,7 +58,8 @@ describe('stored file paths', () => {
       size: 1,
       path: file,
       text: 'a',
-      token_est: 1
+      token_est: 1,
+      folder: ''
     })
     expect(storedPath('project_files', 'pf1')).toBe('files/pf1.md')
     expect(projects.deleteProject(p.id)).toEqual([file])

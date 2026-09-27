@@ -12,7 +12,18 @@ import { contextWindowFor, findModel, reportError, useApp } from '@/stores/app'
 import { useDrafts } from '@/stores/drafts'
 
 export function ProjectView({ id }: { id: string }) {
-  const { projects, conversations, loadProjects, loadConversations, navigate, models, draftModel, settings } = useApp()
+  const {
+    projects,
+    conversations,
+    loadProjects,
+    loadConversations,
+    navigate,
+    models,
+    draftModel,
+    settings,
+    projectFilesVersion,
+    touchProjectFiles
+  } = useApp()
   const project = projects.find((p) => p.id === id)
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [uploading, setUploading] = useState(false)
@@ -21,9 +32,10 @@ export function ProjectView({ id }: { id: string }) {
   const [draft, setDraft] = useState({ name: '', description: '', instructions: '' })
 
   const loadFiles = useCallback(() => api.projects.files(id).then(setFiles), [id])
+  // Reloaded when the sidebar's explorer changes the files too.
   useEffect(() => {
     void loadFiles()
-  }, [loadFiles])
+  }, [loadFiles, projectFilesVersion])
 
   if (!project)
     return (
@@ -55,7 +67,8 @@ export function ProjectView({ id }: { id: string }) {
     try {
       const { errors } = await api.projects.addFiles(id, sources)
       errors.forEach(reportError)
-      await Promise.all([loadFiles(), loadProjects()])
+      await loadProjects()
+      touchProjectFiles() // reloads the list here and in the explorer
     } catch (err) {
       reportError(err)
     } finally {
@@ -191,27 +204,32 @@ export function ProjectView({ id }: { id: string }) {
             )}
             {files.length ? (
               <ul className="space-y-1">
-                {files.map((f) => (
-                  <li key={f.id} className="group flex items-center gap-2 rounded-lg px-1.5 py-1.5 hover:bg-hover">
-                    <FileText className="size-4 shrink-0 text-muted" />
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px]">{f.name}</div>
-                      <div className="text-[11px] text-subtle">
-                        {formatBytes(f.size)} · {f.tokenEstimate ? `${formatTokens(f.tokenEstimate)} tokens` : 'no text found'}
+                {[...files]
+                  .sort((a, b) => a.folder.localeCompare(b.folder) || a.name.localeCompare(b.name))
+                  .map((f) => (
+                    <li key={f.id} className="group flex items-center gap-2 rounded-lg px-1.5 py-1.5 hover:bg-hover">
+                      <FileText className="size-4 shrink-0 text-muted" />
+                      <div className="min-w-0 flex-1">
+                        <div className="truncate text-[13px]">
+                          {f.folder && <span className="text-subtle">{f.folder}/</span>}
+                          {f.name}
+                        </div>
+                        <div className="text-[11px] text-subtle">
+                          {formatBytes(f.size)} · {f.tokenEstimate ? `${formatTokens(f.tokenEstimate)} tokens` : 'no text found'}
+                        </div>
                       </div>
-                    </div>
-                    <button
-                      aria-label={`Remove ${f.name}`}
-                      onClick={async () => {
-                        await api.projects.removeFile(f.id).catch(reportError)
-                        await loadFiles()
-                      }}
-                      className="hidden rounded p-1 text-subtle hover:text-fg group-hover:block"
-                    >
-                      <X className="size-3.5" />
-                    </button>
-                  </li>
-                ))}
+                      <button
+                        aria-label={`Remove ${f.name}`}
+                        onClick={async () => {
+                          await api.projects.removeFile(f.id).catch(reportError)
+                          touchProjectFiles()
+                        }}
+                        className="hidden rounded p-1 text-subtle hover:text-fg group-hover:block"
+                      >
+                        <X className="size-3.5" />
+                      </button>
+                    </li>
+                  ))}
               </ul>
             ) : (
               <p className="text-[13px] text-muted">

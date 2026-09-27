@@ -1,5 +1,9 @@
+import { mkdtempSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { getDb, openDatabase, transaction } from '../src/main/db/index'
+import { paths } from '../src/main/paths'
 import {
   createConversation,
   deleteConversation,
@@ -14,7 +18,15 @@ import {
   setConversationRoot,
   updateConversation
 } from '../src/main/db/conversations'
-import { createProject, deleteProject } from '../src/main/db/projects'
+import {
+  createProject,
+  deleteProject,
+  insertProjectFile,
+  listProjectFiles,
+  moveProjectFile,
+  projectFileOnDisk,
+  projectKnowledge
+} from '../src/main/db/projects'
 import { insertUsageEvent, usageSummary } from '../src/main/db/usage'
 
 beforeAll(() => openDatabase(':memory:'))
@@ -233,5 +245,50 @@ describe('a code session’s stage', () => {
     // A patch that says nothing about them leaves them alone.
     expect(updateConversation(c.id, { title: 'Renamed' })).toMatchObject({ stage: 'work', plan: 'Read, then edit.' })
     expect(updateConversation(c.id, { plan: null })).toMatchObject({ plan: null })
+  })
+})
+
+describe('a project’s files in folders', () => {
+  const data = mkdtempSync(join(tmpdir(), 'ollmost-db-files-'))
+  beforeAll(() => {
+    paths.data = data
+  })
+  const file = (projectId: string, name: string, folder: string) =>
+    insertProjectFile({
+      id: `${projectId}-${folder}-${name}`,
+      project_id: projectId,
+      name,
+      mime: 'text/plain',
+      size: 3,
+      path: join(data, 'files', name),
+      text: 'hey',
+      token_est: 1,
+      folder
+    })
+
+  it('keeps each file’s folder, normalized, and names the knowledge by its path', () => {
+    const p = createProject({ name: 'Trip' })
+    expect(file(p.id, 'readme.md', '').folder).toBe('')
+    expect(file(p.id, 'brief.txt', '/docs/').folder).toBe('docs')
+    expect(listProjectFiles(p.id).map((f) => `${f.folder}|${f.name}`)).toEqual(['|readme.md', 'docs|brief.txt'])
+    expect(projectKnowledge(p.id).map((k) => k.name)).toEqual(['readme.md', 'docs/brief.txt'])
+  })
+
+  it('moves a file to another folder', () => {
+    const p = createProject({ name: 'Move' })
+    const f = file(p.id, 'notes.md', 'docs')
+    expect(moveProjectFile(f.id, 'archive/2026').folder).toBe('archive/2026')
+    expect(moveProjectFile(f.id, '').folder).toBe('')
+    expect(listProjectFiles(p.id)[0].folder).toBe('')
+    expect(() => moveProjectFile('missing', 'docs')).toThrow('File not found')
+  })
+
+  it('says where a file is kept and what it is called, and nothing for a missing id', () => {
+    const p = createProject({ name: 'Disk' })
+    const f = file(p.id, 'notes.md', 'docs')
+    const onDisk = projectFileOnDisk(f.id)
+    expect(onDisk?.name).toBe('notes.md')
+    expect(onDisk?.path.startsWith(paths.data)).toBe(true)
+    expect(projectFileOnDisk('missing')).toBeNull()
   })
 })
