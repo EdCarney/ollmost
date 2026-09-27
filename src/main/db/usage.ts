@@ -66,8 +66,9 @@ export function conversationUsage(conversationId: string): ChatUsage {
   return { ...rest, byModel, lastContextTokens: last?.tokens ?? null }
 }
 
-export function usageSummary(days: number): UsageSummary {
-  const since = Date.now() - days * 86_400_000
+/** Totals over the last `days`, or from `sinceMs` when given (the account's own period, to sit beside its spend). */
+export function usageSummary(days: number, sinceMs?: number): UsageSummary {
+  const since = sinceMs ?? Date.now() - days * 86_400_000
   const total = totals(get<TotalsRow>(`SELECT ${TOTALS_SQL} FROM usage_events WHERE created_at >= ?`, since))
   const byModel = all<TotalsRow & { model: string }>(
     `SELECT model, ${TOTALS_SQL} FROM usage_events WHERE created_at >= ? GROUP BY model ORDER BY SUM(cost_usd) DESC, SUM(completion_tokens) DESC`,

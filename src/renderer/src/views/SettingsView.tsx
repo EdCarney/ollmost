@@ -537,7 +537,7 @@ function UsageTab({ settings }: { settings: Settings }) {
 
       <Section
         title="Spend in Ollmost, last 30 days"
-        description="From token counts Ollmost recorded. Other apps using your Ollama account aren't included."
+        description="From token counts Ollmost recorded, every prompt token at the full rate, so an upper bound: Ollama charges cached prompt tokens far less. Other apps using your Ollama account aren't included."
       >
         {summary && summary.total.requests > 0 ? (
           <table className="w-full text-[13px] tabular-nums">

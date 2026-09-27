@@ -154,6 +154,22 @@ export function effectiveSpend(
   return activitySpend
 }
 
+/**
+ * The period to sum Ollmost's own estimate over so it sits beside the account's spend line: the monthly
+ * window's current period on a credit plan (known once the reset day is), or the activity period Ollama
+ * reports on a legacy plan. Null when neither is known; the caller falls back to a rolling 30 days.
+ */
+export function spendPeriod(account: AccountUsage): { since: number; label: string } | null {
+  const spend = account.spend
+  if (!spend) return null
+  if (spend.source === 'credits') {
+    const monthly = account.windows.find((w) => w.id === 'monthly')
+    if (!monthly?.resetAt || !monthly.periodMs) return null
+    return { since: monthly.resetAt - monthly.periodMs, label: spend.label.toLowerCase() }
+  }
+  return spend.periodStart ? { since: spend.periodStart, label: spend.label.toLowerCase() } : null
+}
+
 // ---- Reset schedule ---------------------------------------------------------
 
 /** First reset strictly after `now`, given any known reset moment and the window length. */

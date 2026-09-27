@@ -13,6 +13,7 @@ import {
   updateConversation
 } from '../src/main/db/conversations'
 import { createProject, deleteProject } from '../src/main/db/projects'
+import { insertUsageEvent, usageSummary } from '../src/main/db/usage'
 
 beforeAll(() => openDatabase(':memory:'))
 
@@ -177,5 +178,27 @@ describe('code sessions', () => {
       '/work/many-3',
       '/work/many-2'
     ])
+  })
+})
+
+describe('usage summary', () => {
+  it('sums from a given moment when asked, and over the last days otherwise', () => {
+    const event = {
+      conversationId: null,
+      messageId: null,
+      model: 'gpt-oss:120b',
+      kind: 'chat' as const,
+      completionTokens: 10,
+      estimated: false
+    }
+    insertUsageEvent({ ...event, promptTokens: 100, costUsd: 1 })
+    insertUsageEvent({ ...event, promptTokens: 200, costUsd: 2 })
+    const since = Date.now() - 5 * 86_400_000
+    // Backdate the first event to before the period.
+    getDb()
+      .prepare('UPDATE usage_events SET created_at = ? WHERE prompt_tokens = 100')
+      .run(since - 60_000)
+    expect(usageSummary(30).total).toMatchObject({ requests: 2, promptTokens: 300, costUsd: 3 })
+    expect(usageSummary(30, since).total).toMatchObject({ requests: 1, promptTokens: 200, costUsd: 2 })
   })
 })

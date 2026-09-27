@@ -1,6 +1,6 @@
 import { CircleCheck, CircleEqual, CircleHelp, ExternalLink, Gauge, KeyRound, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { formatCost, formatDollars, formatPercent, formatTimeLeft, type Pace, type PaceStatus, paceOf } from '@shared/usage'
+import { formatCost, formatDollars, formatPercent, formatTimeLeft, type Pace, type PaceStatus, paceOf, spendPeriod } from '@shared/usage'
 import type { AccountUsage, ChatUsage, UsageSummary, UsageWindow } from '@shared/types'
 import { api } from '@/lib/api'
 import { cn, displayModelName, formatContext, formatTokens, relativeTime } from '@/lib/format'
@@ -141,9 +141,12 @@ export function AccountQuota() {
   }, [])
   // Re-read the clock with each fetch, or a just-detected reset can look more than a period away.
   useEffect(() => setNow(Date.now()), [account])
+  // Ollmost's own figure is summed over the account's period when that's known, so the two spend lines compare.
+  const period = account ? spendPeriod(account) : null
+  const since = period?.since ?? null
   useEffect(() => {
-    if (open) void api.usage.summary(30).then(setLocal)
-  }, [open])
+    if (open) void api.usage.summary(30, since ?? undefined).then(setLocal)
+  }, [open, since])
 
   if (!settings?.usage.showInHeader) return null
   const w = headlineWindow(account, settings.usage.headerWindow)
@@ -253,13 +256,29 @@ export function AccountQuota() {
                 </div>
               )}
               {local && (
-                <div className="flex items-baseline justify-between gap-3">
-                  <span className="text-muted">Ollmost, last 30 days ({local.total.requests} requests)</span>
-                  <span className="font-medium tabular-nums">
-                    {local.total.costUsd === null
-                      ? '—'
-                      : `${local.total.requests && local.total.costUsd > 0 ? '≈' : ''}${formatDollars(local.total.costUsd)}`}
-                  </span>
+                <div>
+                  <div className="flex items-baseline justify-between gap-3">
+                    <span className="text-muted">
+                      Ollmost's estimate, {period?.label ?? 'last 30 days'} ({local.total.requests} requests)
+                    </span>
+                    <span
+                      className="font-medium tabular-nums"
+                      title="Every prompt token priced at the full input rate. Ollama charges cached prompt tokens far less, and doesn't say which were cached, so the real charge is lower."
+                    >
+                      {local.total.costUsd === null
+                        ? '—'
+                        : local.total.requests && local.total.costUsd > 0
+                          ? `up to ≈${formatDollars(local.total.costUsd)}`
+                          : formatDollars(local.total.costUsd)}
+                    </span>
+                  </div>
+                  {account?.spend && local.total.costUsd !== null && local.total.costUsd > account.spend.cost && (
+                    <div className="mt-0.5 text-xs text-subtle">
+                      {period
+                        ? "Above Ollama's figure because cached prompt tokens are priced in full here; long chats and code sessions resend most of their prompt."
+                        : "Above Ollama's figure: this counts 30 days, not the account's period, and prices cached prompt tokens in full."}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
