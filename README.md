@@ -128,7 +128,7 @@ tests/           Vitest unit tests      e2e/   live Playwright run against real 
 
   The debugger can also copy a request as `curl` (keys appear as `$OLLAMA_API_KEY`), export traces as JSON, and open Chromium DevTools. Traces are stored locally, deleted with their chat, and capped at the newest 500. Turn recording off under Settings → Data.
 - **Usage & cost.** The title bar shows two chips.
-  - **This chat:** tokens and estimated cost so far, including retries and title generation. Click it for a per-model breakdown and how full the context window is.
+  - **This chat:** tokens and estimated cost so far, including retries and title generation, updated as each round of a reply ends (every tool call) rather than only when the reply does. Click it for a per-model breakdown and how full the context window is.
   - **Your Ollama quota:** % used, and time left until the next reset. Its mini bar also marks how much of the period has passed.
 
   Details:

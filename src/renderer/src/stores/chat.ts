@@ -200,6 +200,9 @@ function handle(e: ChatEvent): void {
       useArtifactPanel.getState().settleLive(e.message.id, e.artifacts)
       break
     }
+    case 'usage':
+      if (useChat.getState().conversation?.id === e.conversationId) useChat.setState({ usage: e.usage })
+      break
     case 'error':
       if (useChat.getState().conversation?.id !== e.conversationId) useApp.getState().toast(e.error, 'error')
       break
