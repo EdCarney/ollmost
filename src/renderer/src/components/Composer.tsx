@@ -476,6 +476,8 @@ export function Composer({
           }}
           onKeyDown={onKeyDown}
           onPaste={(e) => {
+            // A code session has no attachments: a pasted file is refused like a dropped one, and any text with it pastes.
+            if (!chatMode) return
             const files = [...e.clipboardData.files]
             if (files.length) {
               e.preventDefault()

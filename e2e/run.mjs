@@ -1682,6 +1682,25 @@ const evilSvg = (port) =>
       await win.waitForSelector('textarea')
       await win.waitForTimeout(1500)
 
+      // 0. A file pasted or dropped on Home's composer (a chat's) is attached; the same on a session's, below, isn't.
+      const attached = () => win.locator('button[aria-label="Remove attachment"]').count()
+      const offerFiles = () =>
+        win.locator('textarea').evaluate((el) => {
+          const data = (name) => {
+            const d = new DataTransfer()
+            d.items.add(new File(['A file for the composer'], name, { type: 'text/plain' }))
+            return d
+          }
+          el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: data('pasted.txt'), bubbles: true, cancelable: true }))
+          const dropped = data('dropped.txt')
+          for (const type of ['dragenter', 'dragover', 'drop'])
+            el.dispatchEvent(new DragEvent(type, { dataTransfer: dropped, bubbles: true, cancelable: true }))
+        })
+      await offerFiles()
+      await win.waitForTimeout(1500)
+      const inChat = await attached()
+      check('a chat’s composer attaches a pasted and a dropped file', inChat === 2, `${inChat} attached`)
+
       // 1. Open the folder from the sidebar's Code pane.
       await win.getByRole('button', { name: 'Code', exact: true }).click()
       await stubOpenDialog(app, [repo])
@@ -1695,6 +1714,12 @@ const evilSvg = (port) =>
           /No network/.test(networkChip),
         networkChip
       )
+
+      // 1b. A session has no attachments: its composer refuses a pasted file as it does a dropped one.
+      await offerFiles()
+      await win.waitForTimeout(1500)
+      const inSession = await attached()
+      check('a code session’s composer attaches neither a pasted nor a dropped file', inSession === 0, `${inSession} attached`)
 
       // 2. Send a message that reads, then asks to edit, the file.
       const card = win.locator('[data-testid="approval-card"]')
