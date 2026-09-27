@@ -96,8 +96,10 @@ export interface ToolEvent {
   declined?: boolean
   /** Where the tool comes from, for its card: an MCP server's name. */
   source?: string
-  /** Files a code run created or changed, relative to the chat's workspace. */
+  /** Files a code run created or changed, relative to the chat's workspace (or, for a file tool, the file it wrote). */
   files?: Array<{ path: string; size: number }>
+  /** What edit_file or write_file changed, as a unified diff, for its card and for the approval that asks first. */
+  diff?: string
 }
 
 /** Your answer to a tool call that asked first. */

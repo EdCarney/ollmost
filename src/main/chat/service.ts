@@ -558,7 +558,7 @@ async function generate(
       for (const call of calls) {
         const index = toolEvents.length
         // `at` places the call in the reply's text, where the UI shows it.
-        const pending = { ...pendingEvent(call, toolContext), at: content.length }
+        const pending = { ...(await pendingEvent(call, toolContext)), at: content.length }
         toolEvents.push(pending)
         emit({ type: 'tool', conversationId, messageId, index, event: pending })
 

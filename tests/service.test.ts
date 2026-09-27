@@ -991,6 +991,87 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(getConversation(session.id)!.title).toBe('repo')
   }, 120_000)
 
+  // #93: a session's file tools in one turn: a read that runs unasked, an edit that asks and shows its diff, then a
+  // command that asks under its own key.
+  it('reads, edits after asking with a diff, and runs a command, in one turn', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync, writeFileSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-files-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    writeFileSync(join(folder, 'hello.py'), 'print("hello")\n')
+    chat = (b, res, n) =>
+      n === 1
+        ? void res.writeHead(200).end(toolCall('read_file', { path: 'hello.py' }))
+        : n === 2
+          ? void res.writeHead(200).end(toolCall('edit_file', { path: 'hello.py', old_string: 'hello', new_string: 'bonjour' }))
+          : n === 3
+            ? void res.writeHead(200).end(toolCall('run_command', { command: 'cat hello.py' }))
+            : reply('Changed the greeting.')(b, res, n)
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    const r = service.send({
+      conversationId: session.id,
+      projectId: null,
+      content: 'say bonjour instead',
+      attachmentIds: [],
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      toolSources: []
+    })
+    const asks = (index: number) =>
+      waitFor(
+        () =>
+          events.find(
+            (e): e is Extract<ChatEvent, { type: 'tool' }> =>
+              e.type === 'tool' && e.conversationId === r.conversation.id && e.index === index && !!e.event.awaiting
+          ),
+        30_000
+      )
+    const edit = await asks(1)
+    expect(edit.event).toMatchObject({
+      tool: 'edit_file',
+      args: { path: 'hello.py', old_string: 'hello', new_string: 'bonjour' },
+      diff: '--- a/hello.py\n+++ b/hello.py\n@@ -1,1 +1,1 @@\n-print("hello")\n+print("bonjour")'
+    })
+    // The read ran unasked, and the model got the numbered file.
+    const offered = ((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
+    expect(offered).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command'])
+    const results = (i: number) => (chatCalls[i].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
+    expect(results(1)[0].content).toBe('hello.py (1 line)\n\n     1\tprint("hello")')
+    approvals.decide(r.conversation.id, edit.messageId, edit.index, 'chat')
+    const command = await asks(2)
+    expect(command.event).toMatchObject({ tool: 'run_command', args: { command: 'cat hello.py' } })
+    expect(results(2)[1].content).toMatch(/^Edited hello\.py \(\+1 −1\)\.\n\n--- a\/hello\.py/)
+    approvals.decide(r.conversation.id, command.messageId, command.index, 'once')
+    const done = await waitFor(
+      () => events.find((e): e is Extract<ChatEvent, { type: 'done' }> => e.type === 'done' && e.conversationId === r.conversation.id),
+      60_000
+    )
+    expect(results(3)[2].content).toMatch(/^Exit code 0\.\n\nprint\("bonjour"\)/)
+    expect(done.message.toolEvents.map((e) => [e.tool, e.ok, e.summary])).toEqual([
+      ['read_file', true, '1 line'],
+      ['edit_file', true, '+1 −1'],
+      ['run_command', true, 'cat hello.py']
+    ])
+    expect(done.message.toolEvents[1]).toMatchObject({ files: [{ path: 'hello.py', size: 17 }] })
+    expect(done.message.toolEvents[1].diff).toMatch(/^--- a\/hello\.py/)
+    expect(readFileSync(join(folder, 'hello.py'), 'utf8')).toBe('print("bonjour")\n')
+    // Allow for this session covered the edit; the command was allowed once.
+    expect(getConversation(session.id)!.allowedTools).toEqual(['code:edits'])
+  }, 120_000)
+
   it('says when a session’s folder is gone, and offers no code tools that turn', async () => {
     const { mkdtempSync, realpathSync, rmSync } = await import('node:fs')
     const { tmpdir } = await import('node:os')
