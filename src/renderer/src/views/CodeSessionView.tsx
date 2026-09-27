@@ -117,6 +117,7 @@ export function CodeSessionView({ id }: { id: string }) {
   }, [id])
 
   const current = conversation?.id === id ? conversation : null
+  const [starting, setStarting] = useState(false)
   // A /compact summary ends after the last message it covers; the divider goes there.
   const compaction = current?.compaction ?? null
   const compactedAfter = compaction ? messages.filter((m) => m.createdAt <= compaction.upTo).at(-1)?.id : null
@@ -222,20 +223,23 @@ export function CodeSessionView({ id }: { id: string }) {
                 <MenuContent align="start" className="max-w-[280px]">
                   <MenuItem
                     icon={current.stage === 'plan' ? <Check className="size-4 text-accent" /> : null}
+                    disabled={!!stream}
                     onSelect={() => void setStage(id, 'plan')}
                   >
                     Plan
                   </MenuItem>
                   <MenuItem
                     icon={current.stage === 'work' ? <Check className="size-4 text-accent" /> : null}
+                    disabled={!!stream}
                     onSelect={() => void setStage(id, 'work')}
                   >
                     Work
                   </MenuItem>
                   <MenuSeparator />
                   <MenuLabel>
-                    In plan mode the model reads and searches the folder and writes a plan; edits and commands are withheld until you start
-                    working, which keeps its last reply as the plan.
+                    In plan mode the model reads and searches the folder and writes a plan; its edits and commands are withheld until you
+                    start working, which keeps that plan for the turns that follow. MCP tools stay on and still ask. You can switch once the
+                    reply ends.
                   </MenuLabel>
                 </MenuContent>
               </Menu>
@@ -308,11 +312,13 @@ export function CodeSessionView({ id }: { id: string }) {
                 {compaction && compactedAfter === m.id && <CompactionDivider compaction={compaction} />}
               </Fragment>
             ))}
-            {current?.stage === 'plan' && !stream && messages.at(-1)?.role === 'assistant' && !!messages.at(-1)?.content.trim() && (
+            {current?.stage === 'plan' && !!current.plan && !stream && (
               <PlanCard
+                disabled={starting}
                 onStart={() => {
                   pinned.current = true
-                  void approvePlan(id)
+                  setStarting(true)
+                  void approvePlan(id).finally(() => setStarting(false))
                 }}
               />
             )}

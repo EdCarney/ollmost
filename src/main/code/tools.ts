@@ -366,8 +366,11 @@ const PLAN_REFUSAL = 'Plan mode: edits and commands wait until the user approves
 export const codeTools: ToolProvider = {
   id: 'code',
   tools: (ctx) => (enabled(ctx) ? (ctx.stage === 'plan' ? CODE_TOOLS.filter((t) => !WRITES.has(t.function.name)) : CODE_TOOLS) : []),
+  // A write the model calls while plan mode withholds it is still this provider's: it's refused with the reason, not
+  // treated as a tool Ollmost lacks (which would take the reading tools away for the rest of the reply).
+  alias: (name) => (WRITES.has(name) ? name : null),
   grants: ['code'],
-  hint: 'Use read_file, list_files and search_files to look at the folder, edit_file and write_file to change it, and run_command to run a shell command in it.',
+  hint: 'Use read_file, list_files and search_files to look at the folder; when the session allows changes, edit_file and write_file change it and run_command runs a shell command in it.',
   pending: async ({ name, args }, ctx) => {
     const c = readCall(name, args)
     const base = { tool: name, args: c.event, ok: true, pending: true }
@@ -406,7 +409,7 @@ export const codeTools: ToolProvider = {
   run: async ({ name, args }, ctx) => {
     const c = readCall(name, args)
     if (ctx.stage === 'plan' && WRITES.has(name))
-      return { content: PLAN_REFUSAL, event: { tool: name, args: c.event, ok: false, summary: 'not in plan mode' } }
+      return { content: PLAN_REFUSAL, withheld: true, event: { tool: name, args: c.event, ok: false, summary: 'not in plan mode' } }
     if (name === 'run_command') return runCommand(c.command, c.timeoutSec, ctx.workspace!, ctx.signal)
     const failed = previewFailure(ctx, name, args)
     if (failed) {

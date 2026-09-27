@@ -256,9 +256,13 @@ const impl: Impl = {
       return conversation ? { conversation, messages: listMessages(id), artifacts: listArtifacts(id), usage: conversationUsage(id) } : null
     },
     update: async (id, { stage, ...patch }) => {
-      // The stage is the reply service's: starting work keeps the plan; the rest of the patch is a plain update.
-      if (stage !== undefined) setStage(id, stage)
-      return Object.keys(patch).length ? updateConversation(id, patch) : getConversation(id)!
+      // The stage is the reply service's (it keeps or drops the plan); the rest of the patch is a plain update.
+      const staged = stage !== undefined ? setStage(id, stage) : null
+      if (Object.keys(patch).length) return updateConversation(id, patch)
+      if (staged) return staged
+      const c = getConversation(id)
+      if (!c) throw new Error('Conversation not found')
+      return c
     },
     delete: async (id) => {
       // Wait for a reply in progress to stop and save, so it never writes to a deleted chat.

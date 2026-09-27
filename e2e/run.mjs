@@ -473,8 +473,11 @@ await second.win.screenshot({ path: join(SHOTS, 'home-nord-dark.png') })
   await w.keyboard.press('Meta+K')
   await w.waitForSelector('[data-testid="palette-rows"]')
   await search.fill('theme')
-  await w.keyboard.press('Enter')
+  // Opened with the mouse, the pointer left resting over the list: still on the value in force, nothing previewed.
+  await w.locator('[data-testid="palette-rows"] button', { hasText: 'Theme' }).first().click()
   await w.waitForSelector('input[placeholder="Choose…"]')
+  await w.waitForTimeout(400)
+  check('a list opened by a click still opens on the saved value', (await canvas()) === dracula, await canvas())
   await w.locator('input[placeholder="Choose…"]').fill('nord')
   await w.waitForTimeout(400)
   check('the list previews again', (await canvas()) === '#2e3440')
@@ -1655,6 +1658,7 @@ const evilSvg = (port) =>
         'the stage chip switches to Plan',
         (await win.locator('[data-testid="stage-chip"]').getAttribute('aria-label')) === 'Stage: Plan'
       )
+      check('no Start working card before a plan is written', (await win.getByRole('button', { name: 'Start working' }).count()) === 0)
       const requestsBefore = sessionChats.length
       const plan = await send(win, 'Plan a French greeting')
       const planRequest = sessionChats[requestsBefore]

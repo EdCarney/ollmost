@@ -25,9 +25,13 @@ export function matchScore(query: string, text: string): number {
 /** Words a query may carry that name no command: "set default model", "open settings", "go to chats". */
 const FILLER = new Set(['set', 'change', 'open', 'go', 'to', 'the', 'a', 'an', 'toggle', 'show', 'switch', 'my'])
 
-/** The words of a query, filler left out unless that leaves nothing. */
+/** The words of a query, punctuation on its own (→ › > /) dropped, and filler left out unless that leaves nothing. */
 function words(query: string): string[] {
-  const all = query.trim().toLowerCase().split(/\s+/).filter(Boolean)
+  const all = query
+    .trim()
+    .toLowerCase()
+    .split(/\s+/)
+    .filter((w) => /[\p{L}\p{N}]/u.test(w))
   const kept = all.filter((w) => !FILLER.has(w))
   return kept.length ? kept : all
 }
@@ -41,7 +45,8 @@ function commandScore(query: string, c: Rankable): number {
   for (const w of words(query)) {
     const inTitle = matchScore(w, c.title)
     const inKeyword = Math.max(0, ...(c.keywords ?? []).map((k) => matchScore(w, k)))
-    const best = Math.max(inTitle * 10, inKeyword)
+    // A whole match in the title beats any keyword; letters scattered through the title beat only the same in a keyword.
+    const best = Math.max(inTitle >= 2 ? inTitle * 10 : inTitle, inKeyword)
     if (!best) return 0
     total += best
   }
