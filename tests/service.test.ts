@@ -1268,6 +1268,9 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const system = (chatCalls[0].messages as Array<{ content: string }>)[0].content
     expect(system).toMatch(/<plan_mode>/)
     expect(system).not.toMatch(/<approved_plan>/)
+    // The working rules don't tell it to edit and run while it can't.
+    expect(system).not.toMatch(/edit_file replaces one exact passage/)
+    expect(system).toMatch(/read_file/)
     // Starting work keeps the plan the model wrote, and the next reply has every tool and the plan in front of it.
     await waitFor(() => !service.isReplying())
     expect(service.setStage(session.id, 'work')).toMatchObject({ stage: 'work', plan })
@@ -1312,6 +1315,13 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const done = await doneEvent(r.conversation.id)
     expect(readFileSync(join(folder, 'README.md'), 'utf8')).toBe('Hello\n')
     expect(done.message.toolEvents[0]).toMatchObject({ tool: 'edit_file', ok: false })
+    // A refusal, not an unknown tool: the model is told why, and keeps its reading tools for the rest of the reply.
+    expect(done.message.toolEvents[0].unknown).toBeUndefined()
+    const told = (chatCalls[1].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
+    expect(told[0].content).toMatch(/plan mode/i)
+    const offered = ((chatCalls[1].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
+    expect(offered).toEqual(expect.arrayContaining(['read_file', 'list_files', 'search_files']))
+    expect(offered).not.toContain('edit_file')
     expect(events.some((e) => e.type === 'tool' && e.conversationId === r.conversation.id && !!e.event.awaiting)).toBe(false)
   })
 
