@@ -3,7 +3,7 @@ import type { ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChatEvent, MessageStats } from '@shared/types'
+import type { ChatEvent, MessageStats, ToolEvent } from '@shared/types'
 import type { RoundsInput } from '../src/main/chat/rounds'
 import type { ToolProvider } from '../src/main/chat/tools'
 import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMock'
@@ -368,6 +368,37 @@ describe('reply loop', () => {
         ['finished', false]
       ])
       expect(done.message.toolEvents[0]).toMatchObject({ summary: 'finished', at: 0 })
+    } finally {
+      off()
+    }
+  })
+
+  it('ignores a report from a tool whose call has already finished', async () => {
+    let late: ((event: ToolEvent) => void) | undefined
+    const quick: ToolProvider = {
+      id: 'late-test',
+      tools: () => [
+        { type: 'function', function: { name: 'quick', description: 'quick', parameters: { type: 'object', properties: {} } } }
+      ],
+      pending: () => ({ tool: 'quick', args: {}, ok: true, pending: true, summary: 'starting' }),
+      approval: () => 'auto',
+      run: async (_call, ctx) => {
+        late = ctx.progress
+        return { content: 'quick done', event: { tool: 'quick', args: {}, ok: true, summary: 'finished' } }
+      }
+    }
+    const off = registerToolProvider(quick)
+    try {
+      chat = (b, res, n) => {
+        if (n === 1) return void res.writeHead(200).end(toolCall('quick', {}))
+        // The call finished before this request was made: a report now comes too late to count.
+        late?.({ tool: 'quick', args: {}, ok: true, summary: 'too late' })
+        return reply('ok')(b, res, n)
+      }
+      const r = start('go quick')
+      const done = await doneEvent(r.conversation.id)
+      expect(done.message.toolEvents[0]).toMatchObject({ tool: 'quick', ok: true, summary: 'finished' })
+      expect(events.some((e) => e.type === 'tool' && e.conversationId === r.conversation.id && e.event.summary === 'too late')).toBe(false)
     } finally {
       off()
     }

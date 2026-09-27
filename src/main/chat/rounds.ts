@@ -309,6 +309,8 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         let result: ToolResult
         if (decision === 'deny') result = declinedResult(call, toolEvents[index])
         else {
+          // A report that comes after the call has finished is ignored: it would put back a running card.
+          let settled = false
           try {
             const maxResultChars = Math.min(TOOL_RESULT_CHARS, Math.max(MIN_RESULT_CHARS, Math.floor(roomChars / callsLeft)))
             result = await runTool(call, {
@@ -316,6 +318,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
               maxResultChars,
               callIndex: index,
               progress: (event) => {
+                if (settled) return
                 // Still pending, and still where it was in the text: only what the card shows changes.
                 toolEvents[index] = { ...event, pending: true, at: pending.at }
                 input.onToolEvent(index, toolEvents[index])
@@ -326,6 +329,8 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
             // Only a stop gets here (tool failures come back as results); close the trace before unwinding.
             toolTrace.finish({ status: 'aborted', response: { error: 'Stopped by you' }, summary: `${pending.tool}: stopped` })
             throw err
+          } finally {
+            settled = true
           }
         }
         toolTrace.finish({
