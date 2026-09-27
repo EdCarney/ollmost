@@ -764,6 +764,28 @@ describe('/compact', () => {
     }
   })
 
+  it('marks the compaction later than a reply’s usage row even when the clock hasn’t ticked', async () => {
+    chat = reply('an answer')
+    const r = start('q1')
+    await doneEvent(r.conversation.id)
+    // Freeze the clock: every timestamp from here on comes from now()'s monotonic counter, not Date.now(), the
+    // same as several rows landing within one real millisecond on a fast machine.
+    const frozen = vi.spyOn(Date, 'now').mockReturnValue(Date.now())
+    try {
+      await exchanges(r.conversation.id, ['q2'])
+      const restore = summarizer(['Two questions.'], [])
+      try {
+        await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+        // The meter reads null right after compacting; it doesn't still count the pre-compaction reply.
+        expect(conversationUsage(r.conversation.id).lastContextTokens).toBeNull()
+      } finally {
+        restore()
+      }
+    } finally {
+      frozen.mockRestore()
+    }
+  })
+
   it('summarizes every message but a failed reply that saved nothing', async () => {
     chat = reply('an answer')
     const r = start('q1')

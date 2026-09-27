@@ -15,6 +15,7 @@ import {
   listConversations,
   listMessages,
   search,
+  setCompaction,
   setConversationRoot,
   updateConversation
 } from '../src/main/db/conversations'
@@ -27,7 +28,7 @@ import {
   projectFileOnDisk,
   projectKnowledge
 } from '../src/main/db/projects'
-import { insertUsageEvent, usageSummary } from '../src/main/db/usage'
+import { conversationUsage, insertUsageEvent, usageSummary } from '../src/main/db/usage'
 
 beforeAll(() => openDatabase(':memory:'))
 
@@ -216,6 +217,86 @@ describe('usage summary', () => {
     expect(mine(usageSummary(30))).toMatchObject({ requests: 3, promptTokens: 700, costUsd: 7 })
     expect(mine(usageSummary(30, since))).toMatchObject({ requests: 2, promptTokens: 600, costUsd: 6 })
     expect(mine(usageSummary(30, since, until))).toMatchObject({ requests: 1, promptTokens: 200, costUsd: 2 })
+  })
+})
+
+describe('a chat’s last context tokens (the meter) after history changes', () => {
+  const usageCreatedAt = (messageId: string) =>
+    (getDb().prepare('SELECT created_at AS c FROM usage_events WHERE message_id = ?').get(messageId) as { c: number }).c
+
+  it('goes null right after a compaction, not the stale pre-compaction total', () => {
+    const c = chat()
+    const m1 = say(c.id, 'before compacting')
+    insertUsageEvent({
+      conversationId: c.id,
+      messageId: m1.id,
+      model: 'm',
+      kind: 'chat',
+      promptTokens: 90_000,
+      completionTokens: 10_000,
+      costUsd: 0,
+      estimated: false
+    })
+    const at1 = usageCreatedAt(m1.id)
+    setCompaction(c.id, { summary: 'so far…', upTo: at1, messages: 1, at: at1 + 1 })
+    expect(conversationUsage(c.id).lastContextTokens).toBeNull()
+  })
+
+  it('counts again once a reply lands after the compaction', () => {
+    const c = chat()
+    const m1 = say(c.id, 'before compacting')
+    insertUsageEvent({
+      conversationId: c.id,
+      messageId: m1.id,
+      model: 'm',
+      kind: 'chat',
+      promptTokens: 90_000,
+      completionTokens: 10_000,
+      costUsd: 0,
+      estimated: false
+    })
+    const at1 = usageCreatedAt(m1.id)
+    setCompaction(c.id, { summary: 'so far…', upTo: at1, messages: 1, at: at1 + 1 })
+    const m2 = say(c.id, 'after compacting')
+    insertUsageEvent({
+      conversationId: c.id,
+      messageId: m2.id,
+      model: 'm',
+      kind: 'chat',
+      promptTokens: 4_000,
+      completionTokens: 1_000,
+      costUsd: 0,
+      estimated: false
+    })
+    expect(conversationUsage(c.id).lastContextTokens).toBe(5_000)
+  })
+
+  it('skips a row whose message was deleted (an Edit or Retry), falling back to an earlier one', () => {
+    const c = chat()
+    const m1 = say(c.id, 'kept')
+    insertUsageEvent({
+      conversationId: c.id,
+      messageId: m1.id,
+      model: 'm',
+      kind: 'chat',
+      promptTokens: 2_000,
+      completionTokens: 500,
+      costUsd: 0,
+      estimated: false
+    })
+    const m2 = say(c.id, 'edited away')
+    insertUsageEvent({
+      conversationId: c.id,
+      messageId: m2.id,
+      model: 'm',
+      kind: 'chat',
+      promptTokens: 9_000,
+      completionTokens: 1_000,
+      costUsd: 0,
+      estimated: false
+    })
+    deleteMessagesFrom(c.id, m2.createdAt)
+    expect(conversationUsage(c.id).lastContextTokens).toBe(2_500)
   })
 })
 
