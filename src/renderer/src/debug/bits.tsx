@@ -15,7 +15,9 @@ export function StatusIcon({ status, className }: { status: TraceSummary['status
 }
 
 export function kindLabel(t: Pick<TraceSummary, 'kind' | 'round'>): string {
-  return t.kind === 'chat' ? `chat · round ${(t.round ?? 0) + 1}` : t.kind
+  if (t.kind === 'chat') return `chat · round ${(t.round ?? 0) + 1}`
+  if (t.kind === 'delegate') return 'sub-agent'
+  return t.kind
 }
 
 export const ms = (v: number | null | undefined) => (v == null ? '—' : v < 1000 ? `${v} ms` : `${(v / 1000).toFixed(2)} s`)

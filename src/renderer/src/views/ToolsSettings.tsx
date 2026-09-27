@@ -580,7 +580,7 @@ function SubAgentsSection() {
   const { settings, updateSettings } = useApp()
   if (!settings) return null
   const d = settings.delegate
-  const updateDelegate = (patch: Partial<Settings['delegate']>) => void updateSettings({ delegate: { ...d, ...patch } })
+  const updateDelegate = (patch: Partial<Settings['delegate']>) => void updateSettings({ delegate: patch })
 
   return (
     <Section
@@ -590,7 +590,10 @@ function SubAgentsSection() {
       <Row label="Sub-agents">
         <Switch label="Sub-agents" checked={d.enabled} onChange={(enabled) => updateDelegate({ enabled })} />
       </Row>
-      <Row label="Requests per task" hint="A sub-agent stops after this many and returns what it has.">
+      <Row
+        label="Requests per task"
+        hint="The most a sub-agent may make before it stops and returns what it has; it never gets more than the chat's own reply may make."
+      >
         <Segmented
           label="Requests per task"
           value={String(d.maxRounds)}
