@@ -102,6 +102,16 @@ describe('historyLoss', () => {
     expect(historyLoss(messages, 0, null, []).fileEditsMade).toBe(true)
   })
 
+  it('flags an edit_file call a sub-agent made inside a deleted reply', () => {
+    const edit = { tool: 'edit_file', args: {}, ok: true, summary: 'Edited x.ts' }
+    const child = { task: 'Fix x.ts.', events: [edit], result: 'Fixed.', rounds: 2 }
+    const messages = [
+      msg('user', 1),
+      msg('assistant', 2, { toolEvents: [{ tool: 'delegate', args: {}, ok: true, summary: 'Fix x.ts. · 1 tool call', child }] })
+    ]
+    expect(historyLoss(messages, 0, null, []).fileEditsMade).toBe(true)
+  })
+
   it('does not flag a deleted reply whose tool calls never touched a file', () => {
     const messages = [
       msg('user', 1),

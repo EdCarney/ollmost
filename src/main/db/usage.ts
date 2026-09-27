@@ -6,7 +6,7 @@ export function insertUsageEvent(e: {
   conversationId: string | null
   messageId: string | null
   model: string
-  kind: 'chat' | 'title' | 'replay' | 'compact'
+  kind: 'chat' | 'title' | 'replay' | 'compact' | 'delegate'
   promptTokens: number
   completionTokens: number
   costUsd: number | null

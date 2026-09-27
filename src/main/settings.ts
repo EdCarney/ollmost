@@ -20,6 +20,7 @@ const DEFAULTS: StoredSettings = {
   web: { enabled: true },
   runner: { mode: 'ask', defaultOn: false, pypi: false, timeoutSec: 120 },
   code: { edits: 'ask', commands: 'ask', timeoutSec: 300, maxRounds: 60, defaultNetwork: 'none' },
+  delegate: { enabled: true, maxRounds: 20 },
   debug: { record: true },
   links: { previews: false },
   usage: { showInHeader: true, headerWindow: 'auto', anchors: {}, monthlyDay: null, poolUsd: null }

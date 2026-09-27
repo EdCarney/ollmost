@@ -147,6 +147,9 @@ export interface ToolEvent {
   files?: Array<{ path: string; size: number }>
   /** What edit_file or write_file changed, as a unified diff, for its card and for the approval that asks first. */
   diff?: string
+  /** A sub-agent's run (the delegate tool): its task, its own tool calls, and the reply it returned (or, when its
+   *  request failed, why). */
+  child?: { task: string; context?: string; events: ToolEvent[]; result: string; rounds: number; error?: string }
 }
 
 /** Your answer to a tool call that asked first. */
@@ -359,7 +362,7 @@ export interface UsageSummary {
 
 // ---- Debugger traces -----------------------------------------------------
 
-export type TraceKind = 'chat' | 'title' | 'tool' | 'replay' | 'compact'
+export type TraceKind = 'chat' | 'title' | 'tool' | 'replay' | 'compact' | 'delegate'
 export type TraceStatus = 'running' | 'ok' | 'error' | 'aborted'
 
 export interface TraceSummary {
@@ -598,6 +601,8 @@ export interface Settings {
    * a command may run, how many tool calls a reply may make, and the network preset new sessions start with.
    */
   code: { edits: 'ask' | 'allow'; commands: 'ask' | 'allow'; timeoutSec: number; maxRounds: number; defaultNetwork: CodeNetwork }
+  /** Whether a model may delegate to a sub-agent (the delegate tool), and how many requests one may make. */
+  delegate: { enabled: boolean; maxRounds: number }
   /** Record every request for the debugger window. */
   debug: { record: boolean }
   /** Hover cards on links; `previews` fetches page title/image from this Mac (off by default for privacy). */

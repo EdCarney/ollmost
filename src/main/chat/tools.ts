@@ -1,7 +1,7 @@
-import type { ToolEvent } from '@shared/types'
+import type { ThinkSetting, ToolEvent } from '@shared/types'
 import type { OllamaTool, ToolCall } from '../ollama/client'
 import { errorMessage } from '../util'
-import type { PastToolCall } from './assemble'
+import type { AssembleInput, PastToolCall } from './assemble'
 import { capText, TOOL_RESULT_CHARS } from './results'
 import { codeTools } from '../code/tools'
 import { mcpTools } from '../mcp/provider'
@@ -35,6 +35,27 @@ export interface ToolContext {
    * Defaults to TOOL_RESULT_CHARS.
    */
   maxResultChars?: number
+  /**
+   * The reply this call is part of, for a tool that runs a reply loop of its own (delegate): what a child needs to
+   * make the same requests. Unset for a sub-agent's own calls.
+   */
+  reply?: {
+    conversationId: string
+    messageId: string
+    model: string
+    think: ThinkSetting | null
+    maxRounds: number
+    /** The parts of the parent's prompt input a child's prompt is built from. */
+    prompt: Pick<AssembleInput, 'userName' | 'model' | 'contextLength' | 'web' | 'mcpServers' | 'codeRunner' | 'codeSession' | 'skillIndex'>
+    /** Tell the chat its usage moved: called on a child's own requests too, not only the parent's rounds. */
+    onUsage?: () => void
+  }
+  /** Set for a sub-agent's own rounds: it is offered no delegate of its own. */
+  child?: boolean
+  /** This call's index in the reply's tool events, set by the loop for each run. */
+  callIndex?: number
+  /** A long call may replace what its card shows while it runs (a sub-agent reports its child's calls). */
+  progress?: (event: ToolEvent) => void
 }
 
 /** A tool's run also knows what the whole request grants (a skill with scripts needs to know if code can run). */
@@ -196,14 +217,20 @@ const preview = (content: string) => (content.length > PREVIEW_CHARS ? `${conten
 
 /**
  * A call the reply stopped on: one still running shows as stopped, not spinning forever; one still waiting for an
- * answer never ran.
+ * answer never ran. A sub-agent's own calls settle with it, so none is left asking a question nobody can answer; the
+ * sub-agent itself ran, so a question it carried up from one of them leaves it stopped, as Stop does, not "not run".
  */
-export function settleToolEvent(e: ToolEvent): ToolEvent {
-  if (e.awaiting) {
-    const { awaiting: _awaiting, everyTime: _everyTime, ...rest } = e
-    return { ...rest, pending: false, ok: false, summary: `${e.summary} (not run)` }
+export function settleToolEvent(event: ToolEvent): ToolEvent {
+  if (event.child) {
+    const { awaiting, everyTime: _everyTime, ...rest } = event
+    const e = { ...rest, child: { ...event.child, events: event.child.events.map(settleToolEvent) } }
+    return e.pending || awaiting ? { ...e, pending: false, ok: false, summary: `${e.summary} (stopped)` } : e
   }
-  return e.pending ? { ...e, pending: false, ok: false, summary: `${e.summary} (stopped)` } : e
+  if (event.awaiting) {
+    const { awaiting: _awaiting, everyTime: _everyTime, ...rest } = event
+    return { ...rest, pending: false, ok: false, summary: `${event.summary} (not run)` }
+  }
+  return event.pending ? { ...event, pending: false, ok: false, summary: `${event.summary} (stopped)` } : event
 }
 
 /** What to show while a call runs, before its result is known. */

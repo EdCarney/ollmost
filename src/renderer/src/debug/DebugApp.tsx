@@ -10,7 +10,7 @@ import { useTheme } from '@/theme/useTheme'
 import { kindLabel, ms, StatusIcon } from './bits'
 import { TraceView } from './TraceView'
 
-const KINDS: TraceKind[] = ['chat', 'tool', 'title', 'compact', 'replay']
+const KINDS: TraceKind[] = ['chat', 'tool', 'title', 'compact', 'replay', 'delegate']
 
 function initialConversation(): string | null {
   const match = window.location.hash.match(/[?&]c=([^&]+)/)
@@ -133,9 +133,14 @@ export function DebugApp() {
                 key={k}
                 onClick={() => toggleKind(k)}
                 aria-pressed={kinds.has(k)}
-                className={cn('rounded-md px-2 py-1 capitalize', kinds.has(k) ? 'bg-panel text-fg shadow-sm' : 'text-subtle hover:text-fg')}
+                className={cn(
+                  'rounded-md px-2 py-1',
+                  // Not capitalized by CSS: it would read "Sub-Agent".
+                  k !== 'delegate' && 'capitalize',
+                  kinds.has(k) ? 'bg-panel text-fg shadow-sm' : 'text-subtle hover:text-fg'
+                )}
               >
-                {k}
+                {k === 'delegate' ? 'Sub-agent' : k}
               </button>
             ))}
           </div>
@@ -190,7 +195,8 @@ export function DebugApp() {
                   <div key={t.id}>
                     {newTurn && (
                       <div className="sticky top-0 z-10 border-b border-line bg-sidebar px-3 py-1 text-[11px] font-medium text-subtle">
-                        {t.messageId ? 'Turn' : t.kind === 'title' ? 'Title' : 'Other'} · {new Date(t.startedAt).toLocaleTimeString()}
+                        {t.kind === 'delegate' ? 'Sub-agent' : t.messageId ? 'Turn' : t.kind === 'title' ? 'Title' : 'Other'} ·{' '}
+                        {new Date(t.startedAt).toLocaleTimeString()}
                       </div>
                     )}
                     <button

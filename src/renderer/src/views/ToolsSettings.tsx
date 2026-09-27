@@ -570,6 +570,41 @@ function CodeSessionsSection() {
   )
 }
 
+const DELEGATE_LIMITS = [
+  { value: '10', label: '10' },
+  { value: '20', label: '20' },
+  { value: '40', label: '40' }
+]
+
+function SubAgentsSection() {
+  const { settings, updateSettings } = useApp()
+  if (!settings) return null
+  const d = settings.delegate
+  const updateDelegate = (patch: Partial<Settings['delegate']>) => void updateSettings({ delegate: patch })
+
+  return (
+    <Section
+      title="Sub-agents"
+      description="Lets a model hand a task to a sub-agent: a fresh reply with the same tools, which does the task and returns only its result, so a long piece of research or a survey of many files doesn't fill the chat. A sub-agent asks for the same approvals, runs one task at a time, and its requests count toward the chat's usage."
+    >
+      <Row label="Sub-agents">
+        <Switch label="Sub-agents" checked={d.enabled} onChange={(enabled) => updateDelegate({ enabled })} />
+      </Row>
+      <Row
+        label="Requests per task"
+        hint="The most a sub-agent may make before it stops and returns what it has; it never gets more than the chat's own reply may make."
+      >
+        <Segmented
+          label="Requests per task"
+          value={String(d.maxRounds)}
+          options={DELEGATE_LIMITS}
+          onChange={(v) => updateDelegate({ maxRounds: Number(v) })}
+        />
+      </Row>
+    </Section>
+  )
+}
+
 export function ToolsTab() {
   const { mcpServers, mcpStatus, loadMcp } = useApp()
   const [editing, setEditing] = useState<McpServer | 'new' | null>(null)
@@ -584,6 +619,7 @@ export function ToolsTab() {
     <>
       <RunnerSection />
       <CodeSessionsSection />
+      <SubAgentsSection />
       <Section
         title="MCP servers"
         description="Local servers that give models more tools: files, notes, calendars, developer tools. Ollmost starts them on this Mac when a chat uses them. They run with your permissions and aren't sandboxed, so add only servers you trust. Models ask before using a tool."

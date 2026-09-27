@@ -1,9 +1,12 @@
-import { mkdtempSync } from 'node:fs'
+import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
 import type { ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChatEvent } from '@shared/types'
+import type { ChatEvent, MessageStats, ToolEvent } from '@shared/types'
+import type { RoundsInput } from '../src/main/chat/rounds'
+import type { ToolContext, ToolProvider } from '../src/main/chat/tools'
+import type { Workspace } from '../src/main/runner/workspace'
 import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMock'
 
 // Everything above the Electron line is real: SQLite (in memory), settings, prompt assembly, the
@@ -28,8 +31,8 @@ vi.mock('electron', () => ({
 const ollama: MockOllama = await startMockOllama()
 process.env.OLLMOST_WEB_URL = ollama.url
 
-const { openDatabase } = await import('../src/main/db/index')
-const { updateSettings, setApiKey } = await import('../src/main/settings')
+const { all, openDatabase } = await import('../src/main/db/index')
+const { updateSettings, setApiKey, getSettings } = await import('../src/main/settings')
 const service = await import('../src/main/chat/service')
 const { listTraces } = await import('../src/main/debug/traces')
 const {
@@ -44,6 +47,9 @@ const {
   updateMessage
 } = await import('../src/main/db/conversations')
 const { registerToolProvider } = await import('../src/main/chat/tools')
+const { runRounds } = await import('../src/main/chat/rounds')
+const { getModelInfo } = await import('../src/main/ollama/models')
+const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
 const approvals = await import('../src/main/chat/approvals')
 const mcpConfig = await import('../src/main/mcp/config')
 const mcpManager = await import('../src/main/mcp/manager')
@@ -333,6 +339,70 @@ describe('reply loop', () => {
       [true, 13],
       [false, 13]
     ])
+  })
+
+  it('lets a running tool replace its pending event, and tells it its index', async () => {
+    const seen: number[] = []
+    const slow: ToolProvider = {
+      id: 'slow-test',
+      tools: () => [{ type: 'function', function: { name: 'slow', description: 'slow', parameters: { type: 'object', properties: {} } } }],
+      pending: () => ({ tool: 'slow', args: {}, ok: true, pending: true, summary: 'starting' }),
+      approval: () => 'auto',
+      run: async (_call, ctx) => {
+        seen.push(ctx.callIndex!)
+        ctx.progress?.({ tool: 'slow', args: {}, ok: true, summary: 'halfway' })
+        return { content: 'slow done', event: { tool: 'slow', args: {}, ok: true, summary: 'finished' } }
+      }
+    }
+    const off = registerToolProvider(slow)
+    try {
+      chat = (_b, res, n) => (n === 1 ? void res.writeHead(200).end(toolCall('slow', {})) : reply('ok')(_b, res, n))
+      const r = start('go slow')
+      const done = await doneEvent(r.conversation.id)
+      expect(seen).toEqual([0])
+      const live = events.filter(
+        (e): e is Extract<ChatEvent, { type: 'tool' }> => e.type === 'tool' && e.conversationId === r.conversation.id
+      )
+      expect(live.map((e) => [e.event.summary, e.event.pending ?? false])).toEqual([
+        ['starting', true],
+        ['halfway', true],
+        ['finished', false]
+      ])
+      expect(done.message.toolEvents[0]).toMatchObject({ summary: 'finished', at: 0 })
+    } finally {
+      off()
+    }
+  })
+
+  it('ignores a report from a tool whose call has already finished', async () => {
+    let late: ((event: ToolEvent) => void) | undefined
+    const quick: ToolProvider = {
+      id: 'late-test',
+      tools: () => [
+        { type: 'function', function: { name: 'quick', description: 'quick', parameters: { type: 'object', properties: {} } } }
+      ],
+      pending: () => ({ tool: 'quick', args: {}, ok: true, pending: true, summary: 'starting' }),
+      approval: () => 'auto',
+      run: async (_call, ctx) => {
+        late = ctx.progress
+        return { content: 'quick done', event: { tool: 'quick', args: {}, ok: true, summary: 'finished' } }
+      }
+    }
+    const off = registerToolProvider(quick)
+    try {
+      chat = (b, res, n) => {
+        if (n === 1) return void res.writeHead(200).end(toolCall('quick', {}))
+        // The call finished before this request was made: a report now comes too late to count.
+        late?.({ tool: 'quick', args: {}, ok: true, summary: 'too late' })
+        return reply('ok')(b, res, n)
+      }
+      const r = start('go quick')
+      const done = await doneEvent(r.conversation.id)
+      expect(done.message.toolEvents[0]).toMatchObject({ tool: 'quick', ok: true, summary: 'finished' })
+      expect(events.some((e) => e.type === 'tool' && e.conversationId === r.conversation.id && e.event.summary === 'too late')).toBe(false)
+    } finally {
+      off()
+    }
   })
 
   it('keeps each round’s thinking with where the round began, live and saved', async () => {
@@ -1465,7 +1535,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const r = service.send({ ...sendBody(session.id), content: 'plan a greeting change' })
     await doneEvent(r.conversation.id)
     const offered = (calls: number) => ((chatCalls[calls].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
-    expect(offered(0)).toEqual(['read_file', 'list_files', 'search_files'])
+    expect(offered(0)).toEqual(['read_file', 'list_files', 'search_files', 'delegate'])
     const system = (chatCalls[0].messages as Array<{ content: string }>)[0].content
     expect(system).toMatch(/<plan_mode>/)
     expect(system).not.toMatch(/<approved_plan>/)
@@ -1481,7 +1551,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     events.length = 0
     const next = service.send({ ...sendBody(session.id), content: 'go ahead' })
     await doneEvent(next.conversation.id)
-    expect(offered(1)).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command'])
+    expect(offered(1)).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command', 'delegate'])
     const later = (chatCalls[1].messages as Array<{ content: string }>)[0].content
     expect(later).toMatch(/<approved_plan>[\s\S]*Change the greeting[\s\S]*<\/approved_plan>/)
     expect(later).not.toMatch(/<plan_mode>/)
@@ -1751,7 +1821,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     })
     // The read ran unasked, and the model got the numbered file.
     const offered = ((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
-    expect(offered).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command'])
+    expect(offered).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command', 'delegate'])
     const results = (i: number) => (chatCalls[i].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
     expect(results(1)[0].content).toBe('hello.py (1 line)\n\n     1\tprint("hello")')
     approvals.decide(r.conversation.id, edit.messageId, edit.index, 'chat')
@@ -1882,5 +1952,625 @@ describe('markInterruptedReplies', () => {
     // Checkpoints skip search indexing; marking the reply indexes the text it kept.
     expect(search('so far').map((h) => h.conversationId)).toContain(c.id)
     expect(getMessage(finished.id)!.error).toBeNull()
+  })
+})
+
+describe('sub-agent settings and usage', () => {
+  it('defaults sub-agents to on, capped at 20 rounds', () => {
+    expect(getSettings().delegate).toEqual({ enabled: true, maxRounds: 20 })
+  })
+
+  it('counts a sub-agent’s rows in the chat’s totals but not as its context', () => {
+    const c = createConversation({ projectId: null, model: 'm', think: null, skills: [], mode: 'chat' })
+    insertUsageEvent({
+      conversationId: c.id,
+      messageId: null,
+      model: 'm',
+      kind: 'chat',
+      promptTokens: 100,
+      completionTokens: 10,
+      costUsd: null,
+      estimated: false
+    })
+    insertUsageEvent({
+      conversationId: c.id,
+      messageId: null,
+      model: 'm',
+      kind: 'delegate',
+      promptTokens: 5000,
+      completionTokens: 50,
+      costUsd: null,
+      estimated: false
+    })
+    const u = conversationUsage(c.id)
+    expect(u.promptTokens + u.completionTokens).toBe(5160)
+    expect(u.lastContextTokens).toBe(110)
+  })
+})
+
+describe('runRounds', () => {
+  // A tool that runs unasked and says back what it was given.
+  const echo: ToolProvider = {
+    id: 'echo-test',
+    tools: () => [
+      {
+        type: 'function',
+        function: { name: 'echo', description: 'echo', parameters: { type: 'object', properties: { text: { type: 'string' } } } }
+      }
+    ],
+    pending: (call) => ({ tool: 'echo', args: call.args, ok: true, pending: true, summary: 'echoing' }),
+    approval: () => 'auto',
+    run: async (call) => ({
+      content: `echo: ${String(call.args.text)}`,
+      event: { tool: 'echo', args: call.args, ok: true, summary: 'echoed' }
+    })
+  }
+
+  async function setup() {
+    const conversation = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], mode: 'chat' })
+    const message = insertMessage({ conversationId: conversation.id, parentId: null, role: 'assistant', content: '', model: 'llama3.2' })
+    const model = await getModelInfo('llama3.2')
+    const body: RoundsInput['body'] = {
+      model: 'llama3.2',
+      messages: [
+        { role: 'system', content: 'test' },
+        { role: 'user', content: 'hi' }
+      ],
+      tools: echo.tools({ mode: 'chat', skills: false, web: false, sources: [], workspace: null })
+    }
+    const stats: MessageStats = { promptTokens: 0, completionTokens: 0 }
+    const seen: Array<[number, boolean]> = []
+    const usage: number[] = []
+    const input: RoundsInput = {
+      conversationId: conversation.id,
+      messageId: message.id,
+      loopId: 'loop-1',
+      modelName: 'llama3.2',
+      model,
+      body,
+      budget: 8000,
+      maxRounds: 4,
+      toolContext: { mode: 'chat', skills: false, web: false, sources: [], workspace: null },
+      signal: new AbortController().signal,
+      stats,
+      usageKind: 'delegate',
+      traceKind: 'delegate',
+      onDelta: () => {},
+      onToolEvent: (index, event) => seen.push([index, !!event.pending]),
+      onUsage: () => usage.push(1),
+      onLoadedSkill: () => {},
+      checkpoint: () => {}
+    }
+    return { conversation, message, body, stats, seen, usage, input }
+  }
+
+  it('runs a tool round then an answer, keyed by its own loop id and usage kind', async () => {
+    const off = registerToolProvider(echo)
+    try {
+      chat = (b, res, n) => (n === 1 ? void res.writeHead(200).end(toolCall('echo', { text: 'hi' })) : reply('done')(b, res, n))
+      const { conversation, message, body, stats, seen, usage, input } = await setup()
+      const out = await runRounds(input)
+      expect(out.content).toBe('done')
+      expect(out.rounds).toBe(2)
+      expect(out.error).toBeNull()
+      expect(out.toolEvents).toEqual([expect.objectContaining({ tool: 'echo', ok: true, at: 0 })])
+      expect(seen).toEqual([
+        [0, true],
+        [0, false]
+      ])
+      expect(usage).toHaveLength(1)
+      expect(body.messages.map((m) => m.role)).toEqual(['system', 'user', 'assistant', 'tool'])
+      expect(stats.promptTokens).toBeGreaterThan(0)
+      // Traces go under the loop's id; usage rows under the message, with the loop's kind.
+      const traces = listTraces(conversation.id)
+      expect(traces.filter((t) => t.kind === 'delegate').map((t) => t.messageId)).toEqual(['loop-1', 'loop-1'])
+      expect(traces.filter((t) => t.kind === 'tool').map((t) => t.messageId)).toEqual(['loop-1'])
+      const rows = all<{ kind: string; message_id: string }>(
+        'SELECT kind, message_id FROM usage_events WHERE conversation_id = ?',
+        conversation.id
+      )
+      expect(rows).toEqual([
+        { kind: 'delegate', message_id: message.id },
+        { kind: 'delegate', message_id: message.id }
+      ])
+      expect(conversationUsage(conversation.id).promptTokens).toBeGreaterThan(0)
+    } finally {
+      off()
+    }
+  })
+
+  it('withdraws tools on the last round', async () => {
+    const off = registerToolProvider(echo)
+    try {
+      chat = (b, res, n) => (n < 2 ? void res.writeHead(200).end(toolCall('echo', { text: String(n) })) : reply('end')(b, res, n))
+      const { input, stats } = await setup()
+      const out = await runRounds({ ...input, maxRounds: 2 })
+      expect(out.content).toBe('end')
+      expect(out.rounds).toBe(2)
+      expect(chatCalls[0].tools).toBeDefined()
+      expect(chatCalls[1].tools).toBeUndefined()
+      expect(stats.toolRoundLimit).toBe(2)
+    } finally {
+      off()
+    }
+  })
+
+  it('ends quietly when stopped mid-stream, with the round traced as aborted', async () => {
+    const controller = new AbortController()
+    // Sends a first piece and then hangs, as a model still writing does; the first piece stops it.
+    chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'part' }, done: false })])
+    const { conversation, input } = await setup()
+    const out = await runRounds({
+      ...input,
+      signal: controller.signal,
+      onDelta: (d) => {
+        if (d.content) controller.abort()
+      }
+    })
+    expect(out.content).toBe('part')
+    expect(out.error).toBeNull()
+    expect(out.rounds).toBe(1)
+    expect(listTraces(conversation.id).find((t) => t.kind === 'delegate')?.status).toBe('aborted')
+  })
+})
+
+describe('sub-agents', () => {
+  const isChild = (b: Record<string, unknown>) => String((b.messages as Array<{ content: string }>)[0].content).includes('<sub_agent>')
+  const hasToolResult = (b: Record<string, unknown>) => (b.messages as Array<{ role: string }>).some((m) => m.role === 'tool')
+  const toolResults = (b: Record<string, unknown>) => (b.messages as Array<{ role: string }>).filter((m) => m.role === 'tool').length
+  const delegateCall = (task: string) => toolCall('delegate', { task })
+  const offeredIn = (b: Record<string, unknown>) => ((b.tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
+  const toolEventsIn = (conversationId: string) =>
+    events.filter((e): e is Extract<ChatEvent, { type: 'tool' }> => e.type === 'tool' && e.conversationId === conversationId)
+  const toolMessageIn = (b: Record<string, unknown>) =>
+    (b.messages as Array<{ role: string; content: string }>).find((m) => m.role === 'tool')!.content
+  /** The reply a delegate call belongs to, as generate() describes it. */
+  const parentReply = (conversationId: string, messageId: string): ToolContext['reply'] => ({
+    conversationId,
+    messageId,
+    model: 'llama3.2',
+    think: null,
+    maxRounds: 10,
+    prompt: { userName: '', model: 'llama3.2', contextLength: 8192, web: 'on', skillIndex: [] }
+  })
+  /** A tool that acts on this Mac: it asks first, and can be allowed for the chat. */
+  const registerWipe = () => {
+    const runs: string[] = []
+    const off = registerToolProvider({
+      id: 'wipe-test',
+      tools: () => [{ type: 'function', function: { name: 'notes__wipe', description: 'Wipe a note', parameters: { type: 'object' } } }],
+      pending: ({ name, args }) => ({ tool: name, args, ok: true, pending: true, summary: 'wiping' }),
+      run: async ({ name, args }) => {
+        runs.push(name)
+        return { content: 'Wiped.', event: { tool: name, args, ok: true, summary: 'wiped' } }
+      },
+      approval: () => 'ask'
+    })
+    return { runs, off }
+  }
+
+  beforeEach(() => setApiKey('test-key')) // web tools on, so delegate is offered
+
+  it('runs a child on the task and gives the parent only its result', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b))
+        return hasToolResult(b)
+          ? reply('The headline is OLLMOST-CHILD-OK.')(b, res, n)
+          : void res.writeHead(200).end(toolCall('web_search', { query: 'ollmost' }))
+      return hasToolResult(b)
+        ? reply('The sub-agent found: OLLMOST-CHILD-OK.')(b, res, n)
+        : void res.writeHead(200).end(delegateCall('Search for ollmost and report the headline.'))
+    }
+    web = (_p, res) =>
+      res.writeHead(200).end(JSON.stringify({ results: [{ title: 'Ollmost', url: 'https://k.io', content: 'OLLMOST-CHILD-OK' }] }))
+    const r = start('find the headline')
+    const done = await doneEvent(r.conversation.id)
+    expect(done.message.content).toBe('The sub-agent found: OLLMOST-CHILD-OK.')
+    const [event] = done.message.toolEvents
+    expect(event).toMatchObject({ tool: 'delegate', ok: true, summary: 'Search for ollmost and report the headline. · 1 tool call' })
+    expect(event.pending).toBeUndefined()
+    expect(event.child).toMatchObject({
+      task: 'Search for ollmost and report the headline.',
+      result: 'The headline is OLLMOST-CHILD-OK.',
+      rounds: 2
+    })
+    expect(event.child!.events).toEqual([expect.objectContaining({ tool: 'web_search', ok: true })])
+    // The parent's request after the call carries the child's reply, not its reading.
+    const parentAfter = chatCalls.find((b) => !isChild(b) && hasToolResult(b))!
+    const toolMsg = (parentAfter.messages as Array<{ role: string; content: string }>).find((m) => m.role === 'tool')!
+    expect(toolMsg.content).toBe('The headline is OLLMOST-CHILD-OK.')
+    expect(toolMsg.content).not.toContain('k.io')
+    // The child was offered no delegate of its own; the parent was.
+    const childReq = chatCalls.find(isChild)!
+    expect(offeredIn(childReq)).not.toContain('delegate')
+    expect(offeredIn(chatCalls[0])).toContain('delegate')
+    expect(String((chatCalls[0].messages as Array<{ content: string }>)[0].content)).toContain('<sub_agents>')
+    // Billed on the chat as delegate rows; traced as the child's own turn.
+    const rows = all<{ kind: string; message_id: string }>(
+      'SELECT kind, message_id FROM usage_events WHERE conversation_id = ? AND kind = ?',
+      r.conversation.id,
+      'delegate'
+    )
+    expect(rows).toEqual([
+      { kind: 'delegate', message_id: r.assistantMessageId },
+      { kind: 'delegate', message_id: r.assistantMessageId }
+    ])
+    const traces = listTraces(r.conversation.id)
+    expect(traces.filter((t) => t.kind === 'delegate').every((t) => t.messageId === `${r.assistantMessageId}#0`)).toBe(true)
+    expect(traces.filter((t) => t.kind === 'delegate')).toHaveLength(2)
+    // The chat's title request starts after done, so wait for it; a trace stuck running still fails here.
+    await waitFor(() => listTraces(r.conversation.id).every((t) => t.status !== 'running'))
+    // Live: the parent's event was re-emitted with the child's search while it ran.
+    const live = toolEventsIn(r.conversation.id).find((e) => e.event.pending && e.event.child?.events.some((c) => c.tool === 'web_search'))
+    // Its search came from the child's first request.
+    expect(live?.event.child?.rounds).toBe(1)
+  })
+
+  it('moves the chat’s usage chip on a child’s own request, not only when the parent’s round ends', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b))
+        return hasToolResult(b)
+          ? reply('The headline is OLLMOST-CHILD-OK.')(b, res, n)
+          : void res.writeHead(200).end(toolCall('web_search', { query: 'ollmost' }))
+      return hasToolResult(b)
+        ? reply('The sub-agent found: OLLMOST-CHILD-OK.')(b, res, n)
+        : void res.writeHead(200).end(delegateCall('Search for ollmost and report the headline.'))
+    }
+    web = (_p, res) =>
+      res.writeHead(200).end(JSON.stringify({ results: [{ title: 'Ollmost', url: 'https://k.io', content: 'OLLMOST-CHILD-OK' }] }))
+    const r = start('find the headline')
+    const done = await doneEvent(r.conversation.id)
+    const doneIndex = events.indexOf(done)
+    // Before the reply is done (a title request afterwards ticks the chip too, but that's not what's under test).
+    const usage = events
+      .slice(0, doneIndex)
+      .filter((e): e is Extract<ChatEvent, { type: 'usage' }> => e.type === 'usage' && e.conversationId === r.conversation.id)
+    // One tick for the parent's own round (the delegate call itself), and a second for the child's first
+    // request — not just the one tick the parent's round alone would give.
+    expect(usage.length).toBeGreaterThanOrEqual(2)
+    const rows = all<{ kind: string }>(
+      'SELECT kind FROM usage_events WHERE conversation_id = ? AND kind = ?',
+      r.conversation.id,
+      'delegate'
+    )
+    expect(rows.length).toBeGreaterThan(0)
+    // The second tick already counts the child's row: its running total is past the first tick's.
+    expect(usage[1].usage.promptTokens + usage[1].usage.completionTokens).toBeGreaterThan(
+      usage[0].usage.promptTokens + usage[0].usage.completionTokens
+    )
+  })
+
+  it('is offered beside another tool, and never to a child or outside a reply', async () => {
+    const { delegateTools } = await import('../src/main/chat/delegate')
+    const offered = (over: Partial<ToolContext>) =>
+      delegateTools
+        .tools({ mode: 'chat', skills: false, web: false, sources: [], workspace: null, reply: parentReply('c', 'm'), ...over })
+        .map((t) => t.function.name)
+    expect(offered({ web: true })).toEqual(['delegate'])
+    // Skills alone give a sub-agent nothing to do.
+    expect(offered({ skills: true })).toEqual([])
+    // The code runner, when run_code is offered: switched on with a workspace of Ollmost's own readied.
+    expect(offered({ sources: ['code'], workspace: { owned: true } as Workspace })).toEqual(['delegate'])
+    expect(offered({ sources: ['code'] })).toEqual([])
+    // An MCP server switched on counts by the tools it offers.
+    expect(offered({ sources: ['mcp:not-running'] })).toEqual([])
+    const off = registerToolProvider({
+      id: 'notes',
+      tools: () => [{ type: 'function', function: { name: 'notes__search', description: 'Search notes', parameters: { type: 'object' } } }],
+      pending: ({ name, args }) => ({ tool: name, args, ok: true, pending: true, summary: '' }),
+      run: async ({ name, args }) => ({ content: '', event: { tool: name, args, ok: true, summary: '' } })
+    })
+    try {
+      expect(offered({})).toEqual(['delegate'])
+    } finally {
+      off()
+    }
+    expect(offered({ web: true, child: true })).toEqual([])
+    expect(offered({ web: true, reply: undefined })).toEqual([])
+  })
+
+  it('is not offered without tools to delegate to, nor when switched off', async () => {
+    setApiKey('')
+    chat = reply('plain')
+    const r = start('hi')
+    await doneEvent(r.conversation.id)
+    expect(offeredIn(chatCalls[0])).not.toContain('delegate')
+    expect(String((chatCalls[0].messages as Array<{ content: string }>)[0].content)).not.toContain('<sub_agents>')
+    setApiKey('test-key')
+    updateSettings({ delegate: { enabled: false, maxRounds: 20 } })
+    try {
+      chat = reply('plain')
+      const r2 = start('hi again')
+      await doneEvent(r2.conversation.id)
+      expect(offeredIn(chatCalls.at(-1)!)).toContain('web_search')
+      expect(offeredIn(chatCalls.at(-1)!)).not.toContain('delegate')
+    } finally {
+      updateSettings({ delegate: { enabled: true, maxRounds: 20 } })
+    }
+  })
+
+  it('a child that runs out of rounds returns what it had, with a note', async () => {
+    updateSettings({ delegate: { enabled: true, maxRounds: 2 } })
+    try {
+      chat = (b, res, n) => {
+        if (isChild(b))
+          return b.tools
+            ? void res
+                .writeHead(200)
+                .end(line({ message: { role: 'assistant', content: 'Partial. ' }, done: false }) + toolCall('web_search', { query: 'x' }))
+            : reply('Still partial.')(b, res, n)
+        return hasToolResult(b) ? reply('ok')(b, res, n) : void res.writeHead(200).end(delegateCall('Loop forever.'))
+      }
+      web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] }))
+      const r = start('loop')
+      const done = await doneEvent(r.conversation.id)
+      expect(done.message.toolEvents[0].child?.result).toContain('stopped at its limit of 2 requests')
+      expect(done.message.toolEvents[0].child?.result).toContain('Still partial.')
+      expect(done.message.toolEvents[0].child?.rounds).toBe(2)
+    } finally {
+      updateSettings({ delegate: { enabled: true, maxRounds: 20 } })
+    }
+  })
+
+  it('an approval inside the child is keyed by the child’s id and stored on the chat', async () => {
+    const { childId } = await import('../src/shared/toolEvents')
+    const { runs, off } = registerWipe()
+    try {
+      chat = (b, res, n) => {
+        if (isChild(b)) return hasToolResult(b) ? reply('Wiped it.')(b, res, n) : void res.writeHead(200).end(toolCall('notes__wipe', {}))
+        // Then the parent calls the same tool itself: allowed for the chat inside the child, it runs unasked.
+        const results = toolResults(b)
+        if (results === 0) return void res.writeHead(200).end(delegateCall('Wipe the note.'))
+        if (results === 1) return void res.writeHead(200).end(toolCall('notes__wipe', {}))
+        return reply('done')(b, res, n)
+      }
+      const r = start('wipe it')
+      const waiting = await waitFor(() => toolEventsIn(r.conversation.id).find((e) => !!e.event.child?.events.some((c) => c.awaiting)))
+      // The parent's card carries the question up, and is saved at once, as the parent's own questions are.
+      expect(waiting).toMatchObject({ index: 0, event: { tool: 'delegate', awaiting: true, pending: true } })
+      expect(getMessage(r.assistantMessageId)!.toolEvents[0].child?.events[0]).toMatchObject({ tool: 'notes__wipe', awaiting: true })
+      expect(runs).toEqual([])
+      // The renderer answers with the child's id and the child's index; the parent's own id is not waiting.
+      expect(() => approvals.decide(r.conversation.id, r.assistantMessageId, 0, 'chat')).toThrow(/isn't waiting/)
+      approvals.decide(r.conversation.id, childId(r.assistantMessageId, 0), 0, 'chat')
+      const done = await doneEvent(r.conversation.id)
+      expect(done.message.toolEvents[0].child?.events[0]).toMatchObject({ tool: 'notes__wipe', ok: true })
+      expect(done.message.toolEvents[0].awaiting).toBeUndefined()
+      expect(done.conversation.allowedTools).toEqual(['notes__wipe'])
+      expect(done.message.toolEvents[1]).toMatchObject({ tool: 'notes__wipe', ok: true })
+      expect(runs).toEqual(['notes__wipe', 'notes__wipe'])
+      expect(toolEventsIn(r.conversation.id).some((e) => e.index === 1 && e.event.awaiting)).toBe(false)
+    } finally {
+      off()
+    }
+  })
+
+  it('Stop during the child settles both', async () => {
+    chat = (b, res) => {
+      if (isChild(b)) return streamChunks(res, [line({ message: { role: 'assistant', content: 'thinking' }, done: false })]) // hangs
+      return void res.writeHead(200).end(delegateCall('Take forever.'))
+    }
+    const r = start('stop me')
+    await waitFor(() => chatCalls.some(isChild))
+    await service.stop(r.conversation.id)
+    const saved = getMessage(r.assistantMessageId)!
+    expect(saved.stats).toBeTruthy()
+    expect(saved.error).toBeNull()
+    expect(saved.toolEvents[0]).toMatchObject({ tool: 'delegate', pending: false, ok: false })
+    expect(saved.toolEvents[0].summary).toContain('stopped')
+    expect(listTraces(r.conversation.id).every((t) => t.status !== 'running')).toBe(true)
+    expect(listTraces(r.conversation.id).find((t) => t.kind === 'delegate')?.status).toBe('aborted')
+  })
+
+  it('Stop while a child’s call waits for approval settles the call and the parent’s question', async () => {
+    const { off } = registerWipe()
+    try {
+      chat = (b, res) => void res.writeHead(200).end(isChild(b) ? toolCall('notes__wipe', {}) : delegateCall('Wipe the note.'))
+      const r = start('wipe it')
+      await waitFor(() => toolEventsIn(r.conversation.id).find((e) => e.event.awaiting))
+      await service.stop(r.conversation.id)
+      const [event] = getMessage(r.assistantMessageId)!.toolEvents
+      expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: 'Wipe the note. (stopped)' })
+      expect(event.awaiting).toBeUndefined()
+      // The call that waited never ran.
+      expect(event.child!.events).toEqual([
+        { tool: 'notes__wipe', args: {}, ok: false, pending: false, summary: 'wiping (not run)', at: 0 }
+      ])
+      expect(approvals.waitingCount()).toBe(0)
+      expect(listTraces(r.conversation.id).every((t) => t.status !== 'running')).toBe(true)
+    } finally {
+      off()
+    }
+  })
+
+  it('settles a child’s waiting call in a reply Ollmost closed on', () => {
+    const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+    const user = insertMessage({ conversationId: c.id, parentId: null, role: 'user', content: 'wipe it' })
+    const cut = insertMessage({ conversationId: c.id, parentId: user.id, role: 'assistant', content: '' })
+    // A checkpoint saved the child's question, then the app died.
+    const waiting = { tool: 'notes__wipe', args: {}, ok: true, pending: true, awaiting: true, summary: 'wiping' }
+    const child = { task: 'Wipe the note.', events: [waiting], result: '', rounds: 1 }
+    updateMessage(cut.id, {
+      toolEvents: [
+        { tool: 'delegate', args: { task: 'Wipe the note.' }, ok: true, pending: true, awaiting: true, summary: 'Wipe the note.', child }
+      ]
+    })
+    service.markInterruptedReplies()
+    const [event] = getMessage(cut.id)!.toolEvents
+    // The sub-agent ran, so it stopped; only the call it was waiting on never ran.
+    expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: 'Wipe the note. (stopped)' })
+    expect(event.awaiting).toBeUndefined()
+    expect(event.child!.events).toEqual([{ tool: 'notes__wipe', args: {}, ok: false, pending: false, summary: 'wiping (not run)' }])
+  })
+
+  it('refuses to run a child that nothing could stop', async () => {
+    const { delegateTools } = await import('../src/main/chat/delegate')
+    const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: '', model: 'llama3.2' })
+    chat = reply('A child answered.')
+    const result = await delegateTools.run(
+      { provider: delegateTools, name: 'delegate', via: null, args: { task: 'Look it up.' } },
+      {
+        mode: 'chat',
+        skills: false,
+        web: true,
+        sources: [],
+        workspace: null,
+        reply: parentReply(c.id, m.id),
+        callIndex: 0,
+        grants: new Set()
+      }
+    )
+    expect(result.event).toMatchObject({ tool: 'delegate', ok: false })
+    expect(chatCalls).toHaveLength(0)
+  })
+
+  it('cuts a child’s long reply, with a mark, before the parent gets it', async () => {
+    const { DELEGATE_RESULT_CHARS } = await import('../src/main/chat/delegate')
+    const long = 'word '.repeat(3_000).trim()
+    chat = (b, res, n) =>
+      isChild(b)
+        ? reply(long)(b, res, n)
+        : hasToolResult(b)
+          ? reply('ok')(b, res, n)
+          : void res.writeHead(200).end(delegateCall('Write at length.'))
+    const r = start('long')
+    const done = await doneEvent(r.conversation.id)
+    const result = done.message.toolEvents[0].child!.result
+    expect(result).toBe(`${long.slice(0, DELEGATE_RESULT_CHARS)}\n\n[… the sub-agent’s reply was cut here]`)
+    expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
+  })
+
+  it('cuts a child’s reply to the room its call has, so the card shows what the parent got', async () => {
+    const { runTool } = await import('../src/main/chat/tools')
+    const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: '', model: 'llama3.2' })
+    chat = reply('word '.repeat(3_000).trim())
+    const result = await runTool(
+      { function: { name: 'delegate', arguments: { task: 'Write at length.' } } },
+      {
+        mode: 'chat',
+        skills: false,
+        web: true,
+        sources: [],
+        workspace: null,
+        reply: parentReply(c.id, m.id),
+        callIndex: 0,
+        signal: new AbortController().signal,
+        maxResultChars: 2_000
+      }
+    )
+    expect(result.content.length).toBeLessThanOrEqual(2_000)
+    expect(result.content).toMatch(/\[… the sub-agent’s reply was cut here\]$/)
+    expect(result.event.child!.result).toBe(result.content)
+  })
+
+  it('a child whose request fails gives the parent a failure, with its calls settled', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b))
+        return void (hasToolResult(b) ? res.writeHead(500).end('boom') : res.writeHead(200).end(toolCall('web_search', { query: 'x' })))
+      return hasToolResult(b) ? reply('It failed.')(b, res, n) : void res.writeHead(200).end(delegateCall('Search, then fail.'))
+    }
+    web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] }))
+    const r = start('fail')
+    const done = await doneEvent(r.conversation.id)
+    expect(done.message.error).toBeNull()
+    const [event] = done.message.toolEvents
+    expect(event).toMatchObject({ tool: 'delegate', ok: false, summary: 'Search, then fail. · failed' })
+    expect(event.child!.events).toEqual([expect.objectContaining({ tool: 'web_search', ok: true })])
+    expect(event.child!.events.some((e) => e.pending || e.awaiting)).toBe(false)
+    // The reason is kept on the child, for its card, and is what the parent was told.
+    expect(event.child!.error).toBeTruthy()
+    expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(`The sub-agent failed: ${event.child!.error}`)
+    // The chat's title request starts after done, so wait for it; a trace stuck running still fails here.
+    await waitFor(() => listTraces(r.conversation.id).every((t) => t.status !== 'running'))
+  })
+
+  it('a child’s prompt doesn’t name the user, who isn’t reading it', async () => {
+    updateSettings({ userName: 'Ada' })
+    try {
+      chat = (b, res, n) =>
+        isChild(b)
+          ? reply('Done.')(b, res, n)
+          : hasToolResult(b)
+            ? reply('ok')(b, res, n)
+            : void res.writeHead(200).end(delegateCall('Look.'))
+      const r = start('look')
+      await doneEvent(r.conversation.id)
+      const system = (b: Record<string, unknown>) => String((b.messages as Array<{ content: string }>)[0].content)
+      expect(system(chatCalls[0])).toContain('You are talking with Ada.')
+      expect(system(chatCalls.find(isChild)!)).not.toContain('Ada')
+      expect(system(chatCalls.find(isChild)!)).not.toContain('talking with')
+    } finally {
+      updateSettings({ userName: '' })
+    }
+  })
+
+  it('two delegations in one round run in order', async () => {
+    const order: string[] = []
+    chat = (b, res, n) => {
+      if (isChild(b)) {
+        const task = String((b.messages as Array<{ content: string }>).at(-1)!.content)
+        order.push(task.includes('first') ? 'first' : 'second')
+        return reply(task.includes('first') ? 'A' : 'B')(b, res, n)
+      }
+      return hasToolResult(b)
+        ? reply('A then B')(b, res, n)
+        : void res.writeHead(200).end(
+            line({
+              message: {
+                role: 'assistant',
+                content: '',
+                tool_calls: [
+                  { function: { name: 'delegate', arguments: { task: 'the first' } } },
+                  { function: { name: 'delegate', arguments: { task: 'the second' } } }
+                ]
+              },
+              done: false
+            }) + line({ done: true })
+          )
+    }
+    const r = start('two')
+    const done = await doneEvent(r.conversation.id)
+    expect(order).toEqual(['first', 'second'])
+    expect(done.message.toolEvents.map((e) => e.child?.result)).toEqual(['A', 'B'])
+    const traces = listTraces(r.conversation.id).filter((t) => t.kind === 'delegate')
+    expect(traces.map((t) => t.messageId)).toEqual([`${r.assistantMessageId}#0`, `${r.assistantMessageId}#1`])
+  })
+
+  // A code session needs the macOS sandbox, as the session tests above do.
+  it.runIf(process.platform === 'darwin')('a child in plan mode gets no write tools', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    writeFileSync(join(folder, 'README.md'), 'Hello\n')
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    service.setStage(session.id, 'plan')
+    chat = (b, res, n) =>
+      isChild(b)
+        ? reply('Surveyed.')(b, res, n)
+        : hasToolResult(b)
+          ? reply('done')(b, res, n)
+          : void res.writeHead(200).end(delegateCall('Survey the folder.'))
+    const r = service.send({ ...sendBody(session.id), content: 'survey it' })
+    const done = await doneEvent(r.conversation.id)
+    expect(done.message.toolEvents[0]).toMatchObject({ tool: 'delegate', ok: true })
+    expect(offeredIn(chatCalls[0])).toContain('delegate')
+    const childReq = chatCalls.find(isChild)!
+    expect(offeredIn(childReq)).toEqual(expect.arrayContaining(['read_file', 'list_files', 'search_files']))
+    expect(offeredIn(childReq)).toEqual(expect.not.arrayContaining(['edit_file', 'write_file', 'run_command']))
+    // The child works under the session's prompt, in plan mode, with its task.
+    const system = String((childReq.messages as Array<{ content: string }>)[0].content)
+    expect(system).toMatch(/<plan_mode>/)
+    expect(system).toMatch(/<sub_agent>[\s\S]*Survey the folder\./)
   })
 })

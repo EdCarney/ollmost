@@ -34,6 +34,7 @@ import { type StreamState, useChat } from '@/stores/chat'
 import { ArtifactCard } from './ArtifactCard'
 import { CodeBlock, useCopy } from './CodeBlock'
 import { CommandCard, EditCard, FileEvent } from './CodeCards'
+import { DelegateCard } from './DelegateCard'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { Button, IconButton, TextArea, Tooltip } from './ui'
@@ -372,7 +373,8 @@ export function ApprovalCard({
   conversationId,
   messageId,
   index,
-  scope = 'chat'
+  scope = 'chat',
+  child = false
 }: {
   e: ToolEvent
   conversationId: string
@@ -380,6 +382,8 @@ export function ApprovalCard({
   index: number
   /** What "Allow for this …" allows for, e.g. a code session reusing this card would pass 'session'. */
   scope?: string
+  /** The call is one of a sub-agent's own, so the question is labelled as the sub-agent's, not the model's. */
+  child?: boolean
 }) {
   const [answering, setAnswering] = useState(false)
   const args = argsText(e)
@@ -402,6 +406,7 @@ export function ApprovalCard({
       <div className="flex items-center gap-2">
         <Hand className="size-4 shrink-0 text-warn" />
         <span className="min-w-0 flex-1">
+          {child && <span className="text-muted">The sub-agent asks: </span>}
           {e.tool === 'run_command' ? (
             <>
               Run this command in the sandbox?
@@ -481,13 +486,19 @@ export function ToolGroup({
   events,
   conversationId,
   messageId,
-  scope = 'chat'
+  scope = 'chat',
+  depth = 0,
+  child = false
 }: {
   events: IndexedToolEvent[]
   conversationId: string
   messageId: string
   /** Passed through to ApprovalCard; see its scope prop. */
   scope?: string
+  /** Nesting inside a sub-agent's card: 0 at the top level, 1 for a child's own calls (which can delegate no further). */
+  depth?: number
+  /** This group is a sub-agent's own calls; passed through to ApprovalCard so its question reads as the sub-agent's. */
+  child?: boolean
 }) {
   const shown = events.filter(({ event }) => !isUnavailable(event))
   // Tools the model invented collapse into one note instead of a row of errors.
@@ -496,8 +507,10 @@ export function ToolGroup({
   return (
     <div data-testid="tool-group" className="my-3 flex flex-wrap gap-1.5 first:mt-0">
       {shown.map(({ event: e, index }) =>
-        e.awaiting ? (
-          <ApprovalCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} scope={scope} />
+        e.tool === 'delegate' && depth === 0 ? (
+          <DelegateCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} scope={scope} />
+        ) : e.awaiting ? (
+          <ApprovalCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} scope={scope} child={child} />
         ) : e.tool === 'run_code' ? (
           <CodeRunCard key={index} e={e} conversationId={conversationId} />
         ) : e.tool === 'run_command' ? (

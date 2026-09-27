@@ -1,3 +1,4 @@
+import { withChildEvents } from './toolEvents'
 import type { Artifact, Message } from './types'
 
 const FILE_EDIT_TOOLS = new Set(['edit_file', 'write_file'])
@@ -8,7 +9,8 @@ export interface HistoryLoss {
   /** Artifacts that would be lost outright: every version they have came from a message this would delete (an
    *  artifact with a version from an earlier, surviving message just reverts to it, per `pruneEmptyArtifacts`). */
   lostArtifacts: Artifact[]
-  /** A deleted reply ran an `edit_file` or `write_file` call; those changes are on disk, not undone by losing it. */
+  /** A deleted reply (or a sub-agent inside it) ran an `edit_file` or `write_file` call; those changes are on disk,
+   *  not undone by losing it. */
   fileEditsMade: boolean
 }
 
@@ -33,7 +35,7 @@ export function historyLoss(messages: Message[], index: number, compaction: { up
     lostArtifacts: artifacts.filter(
       (a) => a.versions.length > 0 && a.versions.every((v) => v.messageId !== null && deletedIds.has(v.messageId))
     ),
-    fileEditsMade: deleted.some((m) => m.toolEvents.some((e) => FILE_EDIT_TOOLS.has(e.tool) && e.ok && !e.declined))
+    fileEditsMade: deleted.some((m) => withChildEvents(m.toolEvents).some((e) => FILE_EDIT_TOOLS.has(e.tool) && e.ok && !e.declined))
   }
 }
 
