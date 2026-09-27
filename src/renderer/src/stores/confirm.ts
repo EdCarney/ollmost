@@ -1,0 +1,27 @@
+import { create } from 'zustand'
+
+export interface ConfirmRequest {
+  title: string
+  /** One line per thing that would be lost. */
+  body: string[]
+  /** The destructive button's label; Cancel is always the other one. */
+  confirmLabel: string
+}
+
+interface ConfirmState {
+  request: (ConfirmRequest & { resolve: (ok: boolean) => void }) | null
+  /** Ask the user before a destructive action; resolves true for the destructive button, false for Cancel. */
+  ask: (request: ConfirmRequest) => Promise<boolean>
+  answer: (ok: boolean) => void
+}
+
+/** A single pending confirmation, rendered by the one `ConfirmDialog` mounted near the app root. Used only for
+ *  the history an Edit or a Retry would lose (see historyLoss) — keep it that narrow. */
+export const useConfirm = create<ConfirmState>((set, get) => ({
+  request: null,
+  ask: (request) => new Promise((resolve) => set({ request: { ...request, resolve } })),
+  answer: (ok) => {
+    get().request?.resolve(ok)
+    set({ request: null })
+  }
+}))

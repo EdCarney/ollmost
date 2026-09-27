@@ -154,6 +154,49 @@ try {
   check('the compacted messages stay in the transcript', (await win.locator('.prose-ollmost').count()) === 3)
   await win.screenshot({ path: join(SHOTS, 'compact.png') })
 
+  // 1c. Retry right after /compact: the last reply is covered by the summary, so it asks first; Cancel changes nothing.
+  await win.click('button[aria-label="Retry"]')
+  await win.waitForSelector('[role="dialog"]')
+  const retryAsk = (await win.locator('[role="dialog"]').innerText()).trim()
+  check(
+    'retrying the summarized reply asks first, and mentions the summary',
+    /Retry this reply\?/.test(retryAsk) && /summary/i.test(retryAsk),
+    retryAsk
+  )
+  await win.screenshot({ path: join(SHOTS, 'history-loss-confirm.png') })
+  await win.locator('[role="dialog"] button:has-text("Cancel")').click()
+  await win.waitForTimeout(200)
+  check(
+    'cancelling the retry leaves the reply and the divider alone',
+    (await win.locator('[data-testid="compaction"]').count()) === 1 && (await win.locator('.prose-ollmost').count()) === 3
+  )
+
+  // 1d. Edit an earlier message (not the last): it would drop the exchange after it, so it asks first, with the
+  // count; Cancel keeps the draft in the edit box and deletes nothing. An element handle, not a locator, holds
+  // this message's own group: editing swaps its bubble text for a textarea, which a hasText locator can't re-find.
+  const earlierGroup = await win
+    .locator('div.group:has(button[aria-label="Edit"])', { hasText: 'Reply with the single word: one' })
+    .elementHandle()
+  await earlierGroup.hover()
+  await (await earlierGroup.$('button[aria-label="Edit"]')).click()
+  await (await earlierGroup.$('textarea')).fill('Reply with the single word: uno')
+  await (await earlierGroup.$('button:has-text("Save & send")')).click()
+  await win.waitForSelector('[role="dialog"]')
+  const editAsk = (await win.locator('[role="dialog"]').innerText()).trim()
+  check(
+    'editing an earlier message asks first, with the count of messages after it',
+    /Edit this message\?/.test(editAsk) && /The 2 messages after it will be deleted\./.test(editAsk),
+    editAsk
+  )
+  await win.locator('[role="dialog"] button:has-text("Cancel")').click()
+  await win.waitForTimeout(200)
+  check(
+    'cancelling the edit keeps the draft open and deletes nothing',
+    (await (await earlierGroup.$('textarea')).inputValue()) === 'Reply with the single word: uno' &&
+      (await win.locator('.prose-ollmost').count()) === 3
+  )
+  await (await earlierGroup.$('button:has-text("Cancel")')).click()
+
   // 2. HTML artifact renders in the sandbox, which blocks network and parent access
   await send(win, 'Make an HTML artifact: a page with a heading "Sandbox test" and nothing else.')
   await win.waitForTimeout(1500)

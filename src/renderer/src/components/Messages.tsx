@@ -54,7 +54,8 @@ export const UserMessage = memo(function UserMessage({
   disabled
 }: {
   message: Message
-  onEdit: (content: string) => void
+  /** Resolves false when a history-loss confirm was cancelled, so the edit box stays open with the draft. */
+  onEdit: (content: string) => Promise<boolean>
   disabled: boolean
 }) {
   const [editing, setEditing] = useState(false)
@@ -102,9 +103,8 @@ export const UserMessage = memo(function UserMessage({
               size="sm"
               variant="primary"
               disabled={!draft.trim() || disabled}
-              onClick={() => {
-                setEditing(false)
-                onEdit(draft.trim())
+              onClick={async () => {
+                if (await onEdit(draft.trim())) setEditing(false)
               }}
             >
               Save & send

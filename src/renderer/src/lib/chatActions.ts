@@ -1,8 +1,27 @@
 import type { ComposerSubmit } from '@/components/Composer'
 import { reportError, useApp } from '@/stores/app'
 import { useChat } from '@/stores/chat'
+import { useConfirm } from '@/stores/confirm'
+import { historyLoss } from '@shared/historyLoss'
 import type { Message } from '@shared/types'
 import { api } from './api'
+
+/** Ask before an Edit or a Retry that would lose history; resolves true when nothing would be lost or the user
+ *  chose to go ahead. See historyLoss for what counts as a loss. */
+async function confirmHistoryLoss(kind: 'edit' | 'retry', loss: ReturnType<typeof historyLoss>): Promise<boolean> {
+  if (!loss.laterMessages && !loss.clearsSummary) return true
+  const verb = kind === 'edit' ? 'Edit' : 'Retry'
+  const body: string[] = []
+  if (loss.laterMessages)
+    body.push(`The ${loss.laterMessages} ${loss.laterMessages === 1 ? 'message' : 'messages'} after it will be deleted.`)
+  if (loss.clearsSummary)
+    body.push(
+      "The chat's summary covers this message, so it will be cleared. Later replies will send the full history again until you run /compact."
+    )
+  const confirmLabel =
+    loss.laterMessages && loss.clearsSummary ? 'Continue' : loss.laterMessages ? `${verb} and delete` : `${verb} and clear summary`
+  return useConfirm.getState().ask({ title: kind === 'edit' ? 'Edit this message?' : 'Retry this reply?', body, confirmLabel })
+}
 
 export async function sendMessage(conversationId: string | null, projectId: string | null, input: ComposerSubmit): Promise<boolean> {
   try {
@@ -43,6 +62,8 @@ export async function retryLast(conversationId: string, messages: Message[]): Pr
   const { conversation } = useChat.getState()
   if (!conversation?.model) return
   const lastUser = messages.findLastIndex((m) => m.role === 'user')
+  if (lastUser < 0) return
+  if (!(await confirmHistoryLoss('retry', historyLoss(messages, lastUser, conversation.compaction)))) return
   try {
     const result = await api.chat.regenerate(conversationId, { model: conversation.model, think: conversation.think })
     useChat.getState().began(result, { replaceFrom: messages[lastUser + 1]?.id })
@@ -51,16 +72,20 @@ export async function retryLast(conversationId: string, messages: Message[]): Pr
   }
 }
 
-export async function editMessage(message: Message, content: string, messages: Message[]): Promise<void> {
+/** Edits and resends a message; returns false only when the user cancelled the history-loss confirm, so the
+ *  edit box can stay open with their draft (an api failure still closes it, as before, with a toast). */
+export async function editMessage(message: Message, content: string, messages: Message[]): Promise<boolean> {
   const { conversation } = useChat.getState()
-  if (!conversation?.model) return
+  if (!conversation?.model) return true
   const idx = messages.findIndex((m) => m.id === message.id)
+  if (!(await confirmHistoryLoss('edit', historyLoss(messages, idx, conversation.compaction)))) return false
   try {
     const result = await api.chat.edit(message.id, content, { model: conversation.model, think: conversation.think })
     useChat.getState().began(result, { replaceFrom: messages[idx + 1]?.id })
   } catch (err) {
     reportError(err)
   }
+  return true
 }
 
 /** A slash command sent from a chat's composer: it runs once, and never becomes a message. */
@@ -68,10 +93,15 @@ export async function runCommand(conversationId: string, cmd: { name: string; ar
   try {
     switch (cmd.name) {
       case 'compact': {
+        const before = useChat.getState().messages
         const conversation = await api.chat.compact(conversationId, { focus: cmd.args, model: cmd.model })
         useChat.getState().setConversation(conversation)
         const c = conversation.compaction
-        if (c) useApp.getState().toast(`Compacted ${c.messages} ${c.messages === 1 ? 'message' : 'messages'} into a summary.`)
+        if (c) {
+          const lostAttachments = before.some((m) => m.createdAt <= c.upTo && m.attachments.length > 0)
+          const notice = lostAttachments ? " Files attached to them won't be sent to the model any more." : ''
+          useApp.getState().toast(`Compacted ${c.messages} ${c.messages === 1 ? 'message' : 'messages'} into a summary.${notice}`)
+        }
         return true
       }
       default:

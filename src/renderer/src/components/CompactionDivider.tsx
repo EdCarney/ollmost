@@ -25,8 +25,12 @@ export function CompactionDivider({ compaction }: { compaction: Compaction }) {
         <div className="h-px flex-1 bg-line" />
       </div>
       {open && (
-        <div className="selectable mx-auto mt-2 max-w-[640px] whitespace-pre-wrap rounded-ollmost border border-line bg-panel px-4 py-3 leading-relaxed">
-          {compaction.summary}
+        <div className="selectable mx-auto mt-2 max-w-[640px] rounded-ollmost border border-line bg-panel px-4 py-3">
+          <div className="whitespace-pre-wrap leading-relaxed">{compaction.summary}</div>
+          <div className="mt-3 border-t border-line pt-3 text-xs text-subtle">
+            Files attached to a summarized message are no longer sent to the model. Editing or retrying a message asks first when it would
+            delete later messages or clear this summary.
+          </div>
         </div>
       )}
     </div>
