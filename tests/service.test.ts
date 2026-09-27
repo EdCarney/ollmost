@@ -2198,7 +2198,8 @@ describe('sub-agents', () => {
     const traces = listTraces(r.conversation.id)
     expect(traces.filter((t) => t.kind === 'delegate').every((t) => t.messageId === `${r.assistantMessageId}#0`)).toBe(true)
     expect(traces.filter((t) => t.kind === 'delegate')).toHaveLength(2)
-    expect(traces.every((t) => t.status !== 'running')).toBe(true)
+    // The chat's title request starts after done, so wait for it; a trace stuck running still fails here.
+    await waitFor(() => listTraces(r.conversation.id).every((t) => t.status !== 'running'))
     // Live: the parent's event was re-emitted with the child's search while it ran.
     const live = toolEventsIn(r.conversation.id).find((e) => e.event.pending && e.event.child?.events.some((c) => c.tool === 'web_search'))
     // Its search came from the child's first request.
@@ -2481,7 +2482,8 @@ describe('sub-agents', () => {
     // The reason is kept on the child, for its card, and is what the parent was told.
     expect(event.child!.error).toBeTruthy()
     expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(`The sub-agent failed: ${event.child!.error}`)
-    expect(listTraces(r.conversation.id).every((t) => t.status !== 'running')).toBe(true)
+    // The chat's title request starts after done, so wait for it; a trace stuck running still fails here.
+    await waitFor(() => listTraces(r.conversation.id).every((t) => t.status !== 'running'))
   })
 
   it('a child’s prompt doesn’t name the user, who isn’t reading it', async () => {
