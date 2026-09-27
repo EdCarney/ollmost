@@ -31,7 +31,7 @@ function stringLists(v: unknown): Record<string, string[]> {
 interface ExplorerState {
   /** Open nodes: a project's id, or `<project id>/<folder>`. */
   expanded: string[]
-  /** Folders the viewer made that no file has landed in yet, by project id. */
+  /** Folders the viewer made, kept here until removed (a folder is otherwise only its files' paths), by project id. */
   emptyFolders: Record<string, string[]>
   toggle: (key: string) => void
   rememberFolder: (projectId: string, folder: string) => void

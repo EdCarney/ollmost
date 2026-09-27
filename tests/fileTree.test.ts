@@ -15,6 +15,7 @@ describe('a folder path', () => {
   it('takes a backslash as a separator and drops control characters', () => {
     expect(normalizeFolder('docs\\notes')).toBe('docs/notes')
     expect(normalizeFolder('do\ncs/\tnotes\u0000')).toBe('docs/notes')
+    expect(normalizeFolder('docs\u2028/\u202enotes\u0085')).toBe('docs/notes')
   })
 
   it('moves a removed folder’s files up into its parent, keeping what was under them', () => {

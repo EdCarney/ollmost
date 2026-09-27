@@ -54,7 +54,8 @@ export function Sidebar() {
   // narrow, and a project's tree must not vanish when one of its chats is opened from it.
   const activeChatId = route.name === 'chat' ? route.id : null
   const openChat = useChat((s) => s.conversation)
-  const viewedProjectId = route.name === 'project' ? route.id : activeChatId && openChat?.id === activeChatId ? openChat.projectId : null
+  const chatProject = (id: string) => conversations.find((c) => c.id === id)?.projectId ?? (openChat?.id === id ? openChat.projectId : null)
+  const viewedProjectId = route.name === 'project' ? route.id : activeChatId ? chatProject(activeChatId) : null
   const openProject = viewedProjectId ? projects.find((p) => p.id === viewedProjectId) : null
   const shownProjects = [...projects.filter((p) => p.pinned), ...(openProject && !openProject.pinned ? [openProject] : [])]
   const pinnedChats = conversations.filter((c) => c.pinned)

@@ -87,7 +87,10 @@ export function ProjectExplorer({ project }: { project: Project }) {
         const to = folderAfterRemoving(folder, f.folder)
         if (to !== f.folder) await api.projects.moveFile(f.id, to)
       }
+      // Empty folders under it move up the same way.
+      const kept = extra.filter((f) => f.startsWith(`${folder}/`)).map((f) => folderAfterRemoving(folder, f))
       forgetFolder(folder)
+      kept.forEach(rememberFolder)
       touchProjectFiles()
     } catch (err) {
       reportError(err)
@@ -104,8 +107,8 @@ export function ProjectExplorer({ project }: { project: Project }) {
     },
     onDragLeave: () => setOver((o) => (o === folder ? null : o)),
     onDrop: async (e: DragEvent) => {
+      // Handled, so the composer leaves the files alone; still bubbling, so it knows the drag ended.
       e.preventDefault()
-      e.stopPropagation()
       setOver(null)
       const dropped = [...e.dataTransfer.files]
       if (dropped.length) await addTo(folder, await toSources(dropped))
@@ -158,7 +161,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
             menu={folderMenu(n.path)}
           />
           {isOpen(n.path) && (
-            <div role="group">
+            <div>
               {naming?.parent === n.path && (
                 <NameInput
                   depth={depth + 1}
@@ -205,7 +208,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
 
   const active = route.name === 'project' && route.id === project.id
   return (
-    <div data-testid="explorer-project" role="tree" aria-label={project.name}>
+    <div data-testid="explorer-project">
       <Row
         depth={0}
         testid="explorer-root"
@@ -226,7 +229,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
         }
       />
       {open && (
-        <div role="group">
+        <div>
           {naming?.parent === '' && (
             <NameInput depth={1} value={naming.name} onChange={(name) => setNaming({ parent: '', name })} onKeyDown={finishNaming} />
           )}
@@ -295,9 +298,6 @@ function Row({
     <div
       {...drop}
       data-testid={testid}
-      role="treeitem"
-      aria-expanded={chevron}
-      aria-selected={active}
       className={cn(
         'group flex h-7 items-center gap-1 rounded-lg pr-1 text-[13px]',
         active ? 'bg-hover text-fg' : 'text-muted hover:bg-hover hover:text-fg',
@@ -312,6 +312,7 @@ function Row({
             ;(onToggle ?? onClick)()
           }}
           aria-label={`${chevron ? 'Collapse' : 'Expand'} ${label}`}
+          aria-expanded={chevron}
           className="flex size-4 shrink-0 items-center justify-center rounded text-subtle hover:text-fg"
         >
           <ChevronRight className={cn('size-3.5 transition-transform', chevron && 'rotate-90')} />

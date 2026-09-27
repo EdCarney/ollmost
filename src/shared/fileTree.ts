@@ -10,13 +10,17 @@ export interface TreeFile {
 export type TreeNode<F extends TreeFile = TreeFile> =
   { kind: 'folder'; name: string; path: string; children: TreeNode<F>[] } | { kind: 'file'; name: string; file: F }
 
+/** ASCII and C1 controls, the line and paragraph separators, and the bidi overrides and isolates. */
+const isControl = (c: number): boolean =>
+  c < 32 || (c >= 127 && c <= 159) || c === 0x2028 || c === 0x2029 || (c >= 0x202a && c <= 0x202e) || (c >= 0x2066 && c <= 0x2069)
+
 /**
  * A folder path as stored: segments joined by '/', no empty, '.' or '..' segments, '' for the root. A backslash
  * separates too, and control characters (which would break the name the model sees) are dropped.
  */
 export function normalizeFolder(folder: string): string {
   return [...folder.replace(/\\/g, '/')]
-    .filter((ch) => ch.charCodeAt(0) > 31 && ch.charCodeAt(0) !== 127)
+    .filter((ch) => !isControl(ch.codePointAt(0)!))
     .join('')
     .split('/')
     .map((s) => s.trim())

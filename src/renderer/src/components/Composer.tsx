@@ -227,11 +227,13 @@ export function Composer({
     }
     const over = (e: DragEvent) => hasFiles(e) && e.preventDefault()
     const drop = (e: DragEvent) => {
-      // A drop the explorer took (onto a project's folder) is not an attachment.
-      if (!hasFiles(e) || e.defaultPrevented) return
-      e.preventDefault()
+      if (!hasFiles(e)) return
+      // Every drop ends the drag, whoever took it: the browser sends no last dragleave.
       depth = 0
       setDragging(false)
+      // A drop the explorer took (onto a project's folder) is not an attachment.
+      if (e.defaultPrevented) return
+      e.preventDefault()
       void addFileObjects([...(e.dataTransfer?.files ?? [])])
     }
     window.addEventListener('dragenter', enter)
