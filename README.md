@@ -195,7 +195,7 @@ Builds are signed ad hoc (`identity: '-'` in `electron-builder.yml`), which is e
 - **React artifacts aren't rendered.** They're shown as JSX source.
 - **Scanned PDFs have no text layer.** They're flagged, but there's no OCR.
 - **Large projects aren't searched.** Project knowledge goes straight into the context window, with a capacity meter. There's no retrieval for oversized projects.
-- **Costs are estimates.** All input is priced at the full rate; Ollama doesn't report cached tokens or apply off-peak rates per request. Quota reset times are inferred unless you set them.
+- **Costs are estimates, and upper bounds.** All input is priced at the full rate; Ollama doesn't report cached tokens (charged far less) or apply off-peak rates per request, so Ollmost's figure can sit above the account's own spend line, most of all for long chats and code sessions, which resend most of their prompt. Ollmost sums its figure over the account's period when that's known (a credit plan's reset day, or the period Ollama reports), over the last 30 days otherwise. Quota reset times are inferred unless you set them.
 - **Edits don't keep branches.** Editing a message replaces everything after it; the database has room for branch navigation later.
 - **A code session's commands are finite.** A dev server or a file watcher a session starts stops when its command's process ends; there's no way to leave one running in the background.
 - **A code session's tool results from earlier turns are kept in brief.** A model that needs a file's contents again re-reads it, rather than trusting what it remembers from a summary.

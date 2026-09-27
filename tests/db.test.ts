@@ -13,6 +13,7 @@ import {
   updateConversation
 } from '../src/main/db/conversations'
 import { createProject, deleteProject } from '../src/main/db/projects'
+import { insertUsageEvent, usageSummary } from '../src/main/db/usage'
 
 beforeAll(() => openDatabase(':memory:'))
 
@@ -177,5 +178,29 @@ describe('code sessions', () => {
       '/work/many-3',
       '/work/many-2'
     ])
+  })
+})
+
+describe('usage summary', () => {
+  it('sums between the given moments when asked, and over the last days otherwise', () => {
+    // A model of this test's own, so its rows are told from any other test's.
+    const model = 'summary-test-model'
+    const event = { conversationId: null, messageId: null, model, kind: 'chat' as const, completionTokens: 10, estimated: false }
+    const mine = (s: ReturnType<typeof usageSummary>) => s.byModel.find((m) => m.model === model)
+    insertUsageEvent({ ...event, promptTokens: 100, costUsd: 1 })
+    insertUsageEvent({ ...event, promptTokens: 200, costUsd: 2 })
+    insertUsageEvent({ ...event, promptTokens: 400, costUsd: 4 })
+    const day = 86_400_000
+    const since = Date.now() - 5 * day
+    const until = Date.now() - 2 * day
+    // Date the rows: one before the period, one inside it, one after it.
+    const date = (promptTokens: number, at: number) =>
+      getDb().prepare('UPDATE usage_events SET created_at = ? WHERE model = ? AND prompt_tokens = ?').run(at, model, promptTokens)
+    date(100, since - 60_000)
+    date(200, since + 60_000)
+    date(400, until + 60_000)
+    expect(mine(usageSummary(30))).toMatchObject({ requests: 3, promptTokens: 700, costUsd: 7 })
+    expect(mine(usageSummary(30, since))).toMatchObject({ requests: 2, promptTokens: 600, costUsd: 6 })
+    expect(mine(usageSummary(30, since, until))).toMatchObject({ requests: 1, promptTokens: 200, costUsd: 2 })
   })
 })

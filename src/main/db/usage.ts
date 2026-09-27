@@ -66,18 +66,26 @@ export function conversationUsage(conversationId: string): ChatUsage {
   return { ...rest, byModel, lastContextTokens: last?.tokens ?? null }
 }
 
-export function usageSummary(days: number): UsageSummary {
-  const since = Date.now() - days * 86_400_000
-  const total = totals(get<TotalsRow>(`SELECT ${TOTALS_SQL} FROM usage_events WHERE created_at >= ?`, since))
+/**
+ * Totals over the last `days`, or between `sinceMs` and `untilMs` when given (the account's own period, to sit
+ * beside its spend; a reported period may have ended before now).
+ */
+export function usageSummary(days: number, sinceMs?: number, untilMs?: number | null): UsageSummary {
+  const since = sinceMs ?? Date.now() - days * 86_400_000
+  const until = untilMs ?? Number.MAX_SAFE_INTEGER
+  const total = totals(get<TotalsRow>(`SELECT ${TOTALS_SQL} FROM usage_events WHERE created_at >= ? AND created_at < ?`, since, until))
   const byModel = all<TotalsRow & { model: string }>(
-    `SELECT model, ${TOTALS_SQL} FROM usage_events WHERE created_at >= ? GROUP BY model ORDER BY SUM(cost_usd) DESC, SUM(completion_tokens) DESC`,
-    since
+    `SELECT model, ${TOTALS_SQL} FROM usage_events WHERE created_at >= ? AND created_at < ?
+     GROUP BY model ORDER BY SUM(cost_usd) DESC, SUM(completion_tokens) DESC`,
+    since,
+    until
   ).map((r) => ({ model: r.model, ...totals(r) }))
   const byDay = all<{ day: string; cost: number | null; tokens: number }>(
     `SELECT date(created_at / 1000, 'unixepoch', 'localtime') AS day, SUM(cost_usd) AS cost,
        SUM(prompt_tokens + completion_tokens) AS tokens
-     FROM usage_events WHERE created_at >= ? GROUP BY day ORDER BY day`,
-    since
+     FROM usage_events WHERE created_at >= ? AND created_at < ? GROUP BY day ORDER BY day`,
+    since,
+    until
   ).map((r) => ({ day: r.day, costUsd: r.cost ?? 0, tokens: r.tokens }))
   return { days, total, byModel, byDay }
 }
