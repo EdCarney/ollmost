@@ -190,7 +190,8 @@ export function DebugApp() {
                   <div key={t.id}>
                     {newTurn && (
                       <div className="sticky top-0 z-10 border-b border-line bg-sidebar px-3 py-1 text-[11px] font-medium text-subtle">
-                        {t.messageId ? 'Turn' : t.kind === 'title' ? 'Title' : 'Other'} · {new Date(t.startedAt).toLocaleTimeString()}
+                        {t.kind === 'delegate' ? 'Sub-agent' : t.messageId ? 'Turn' : t.kind === 'title' ? 'Title' : 'Other'} ·{' '}
+                        {new Date(t.startedAt).toLocaleTimeString()}
                       </div>
                     )}
                     <button
