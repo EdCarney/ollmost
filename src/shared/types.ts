@@ -61,7 +61,7 @@ export interface Compaction {
   /** The `createdAt` of the last message the summary covers; replies send only what came after. */
   upTo: number
   /** How many messages the summary stands for. */
-  turns: number
+  messages: number
   at: number
 }
 

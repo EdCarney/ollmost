@@ -149,7 +149,7 @@ export function Composer({
     [key, updateDraft]
   )
   const [dragging, setDragging] = useState(false)
-  const [slash, setSlash] = useState<{ query: string; index: number } | null>(null)
+  const [slash, setSlash] = useState<{ query: string; index: number; atStart: boolean } | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const textRef = useRef<HTMLTextAreaElement>(null)
 
@@ -269,7 +269,10 @@ export function Composer({
   const slashMatches = useMemo<SlashMatch[]>(() => {
     if (!slash) return []
     const q = slash.query.toLowerCase()
-    const commands = COMMANDS.filter((c) => c.name.includes(q)).map((command): SlashMatch => ({ kind: 'command', command }))
+    // A command runs only from the start of the text, so that's the only place it's offered; skills go anywhere.
+    const commands = slash.atStart
+      ? COMMANDS.filter((c) => c.name.startsWith(q)).map((command): SlashMatch => ({ kind: 'command', command }))
+      : []
     const skills = enabledSkills
       .filter((s) => s.name.toLowerCase().includes(q) && !settings.skills.includes(s.id))
       .slice(0, 8)
@@ -279,7 +282,7 @@ export function Composer({
 
   const updateSlash = (value: string, caret: number) => {
     const m = SLASH_RE.exec(value.slice(0, caret))
-    setSlash(m ? { query: m[2], index: 0 } : null)
+    setSlash(m ? { query: m[2], index: 0, atStart: m.index === 0 && m[1] === '' } : null)
   }
 
   const choose = (match: SlashMatch) => (match.kind === 'skill' ? chooseSkill(match.skill) : chooseCommand(match.command))

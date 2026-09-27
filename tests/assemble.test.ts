@@ -105,11 +105,11 @@ describe('assemble', () => {
     const { messages } = assemble({
       ...base,
       chatInstructions: 'Answer tersely.',
-      compaction: { summary: 'The user is planning a trip to Lisbon in May; hotels were compared.', turns: 12 },
+      compaction: { summary: 'The user is planning a trip to Lisbon in May; hotels were compared.', messages: 12 },
       history: [turn('user', 'so which hotel?')]
     })
     const sys = messages[0].content
-    expect(sys.indexOf('<chat_instructions>')).toBeLessThan(sys.indexOf('<earlier_conversation turns="12">'))
+    expect(sys.indexOf('<chat_instructions>')).toBeLessThan(sys.indexOf('<earlier_conversation messages="12">'))
     expect(sys).toContain('The user is planning a trip to Lisbon in May; hotels were compared.')
     expect(sys).toMatch(/summar/i)
     expect(messages.slice(1).map((m) => m.content)).toEqual(['so which hotel?'])

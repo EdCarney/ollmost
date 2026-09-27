@@ -626,7 +626,7 @@ describe('/compact', () => {
       // Everything but the last four messages (two turns) was summarized.
       const { listMessages } = await import('../src/main/db/conversations')
       const messages = listMessages(r.conversation.id)
-      expect(c.compaction).toMatchObject({ summary: 'Six questions were asked and answered.', turns: 8, upTo: messages[7].createdAt })
+      expect(c.compaction).toMatchObject({ summary: 'Six questions were asked and answered.', messages: 8, upTo: messages[7].createdAt })
       expect(summaryRequest).not.toContain('sixth')
       // The next reply replays the summary and only what followed.
       chatCalls = []
@@ -635,7 +635,7 @@ describe('/compact', () => {
       const after = service.send({ ...sendBody(r.conversation.id), content: 'seventh' })
       await doneEvent(after.conversation.id)
       const sent = chatCalls[0].messages as Array<{ role: string; content: string }>
-      expect(sent[0].content).toContain('<earlier_conversation turns="8">')
+      expect(sent[0].content).toContain('<earlier_conversation messages="8">')
       expect(sent[0].content).toContain('Six questions were asked and answered.')
       expect(sent.slice(1).map((m) => m.content)).toEqual(['fifth', 'an answer', 'sixth', 'an answer', 'seventh'])
     } finally {
@@ -643,7 +643,164 @@ describe('/compact', () => {
     }
   })
 
-  it('refuses an empty chat, and one with nothing before its last turns', async () => {
+  /** A mock that answers every summary request from `answers` in turn, capturing each request. */
+  const summarizer = (answers: string[], calls: Array<Record<string, unknown>>, gate?: Promise<void>) => {
+    const base = ollama.handler
+    ollama.handler = async (req, res) => {
+      const body = req.json as { stream?: boolean; messages?: Array<{ content: string }> }
+      if (req.url === '/api/chat' && body.stream === false && /compact/i.test(String(body.messages?.[0]?.content))) {
+        calls.push(req.json)
+        if (gate) await gate
+        const content = answers[Math.min(calls.length, answers.length) - 1]
+        return res
+          .writeHead(200)
+          .end(JSON.stringify({ message: { role: 'assistant', content }, done: true, prompt_eval_count: 50, eval_count: 8 }))
+      }
+      return base!(req, res)
+    }
+    return () => (ollama.handler = base)
+  }
+
+  const exchanges = async (conversationId: string, questions: string[]) => {
+    for (const q of questions) {
+      await waitFor(() => !service.isReplying())
+      events.length = 0
+      const next = service.send({ ...sendBody(conversationId), content: q })
+      await doneEvent(next.conversation.id)
+    }
+    await waitFor(() => !service.isReplying())
+  }
+
+  it('summarizes in pieces when the older messages outgrow the model’s window, folding each summary into the next', async () => {
+    // The mock model's window is 8192 tokens (~32k characters): eight 6,000-character exchanges won't fit at once.
+    const long = 'word '.repeat(1200)
+    chat = reply(long)
+    const r = start(`first ${long}`)
+    await doneEvent(r.conversation.id)
+    await exchanges(r.conversation.id, ['second', 'third', 'fourth', 'fifth', 'sixth'])
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['Summary one.', 'Summary two.', 'Summary three.'], calls)
+    try {
+      const c = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      expect(calls.length).toBeGreaterThan(1)
+      const users = calls.map((call) => String((call.messages as Array<{ content: string }>)[1].content))
+      expect(users[0]).toContain('first')
+      expect(users[1]).toContain('Summary one.')
+      expect(users.every((u) => /summarize/i.test(u.slice(-200)))).toBe(true)
+      expect(c.compaction?.summary).toBe(calls.length === 2 ? 'Summary two.' : 'Summary three.')
+      expect(c.compaction?.messages).toBe(8)
+    } finally {
+      restore()
+    }
+  })
+
+  it('cuts at an exchange, so an answer is never kept without its question', async () => {
+    chat = reply('an answer')
+    const r = start('q1')
+    await doneEvent(r.conversation.id)
+    await exchanges(r.conversation.id, ['q2'])
+    // A failed reply saves with no content and is left out of the count.
+    chat = (_b, res) => void res.writeHead(500).end('boom')
+    await exchanges(r.conversation.id, ['q3'])
+    chat = reply('an answer')
+    await exchanges(r.conversation.id, ['q4'])
+    // Filtered: q1 A1 q2 A2 q3 q4 A4. The last four would start with A2; the cut moves back to q2.
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['Two questions.'], calls)
+    try {
+      const c = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const { listMessages } = await import('../src/main/db/conversations')
+      const messages = listMessages(r.conversation.id)
+      expect(c.compaction).toMatchObject({ messages: 2, upTo: messages[1].createdAt })
+      const transcript = String((calls[0].messages as Array<{ content: string }>)[1].content)
+      expect(transcript).toContain('q1')
+      expect(transcript).not.toContain('q2')
+    } finally {
+      restore()
+    }
+  })
+
+  it('compacts again by folding the earlier summary in, and clears the summary when a covered message is edited', async () => {
+    chat = reply('an answer')
+    const r = start('q1')
+    await doneEvent(r.conversation.id)
+    await exchanges(r.conversation.id, ['q2', 'q3', 'q4', 'q5', 'q6'])
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['First summary.', 'Second summary.'], calls)
+    try {
+      const first = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      expect(first.compaction?.messages).toBe(8)
+      await exchanges(r.conversation.id, ['q7', 'q8'])
+      const second = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      expect(second.compaction).toMatchObject({ summary: 'Second summary.', messages: 12 })
+      expect(String((calls[1].messages as Array<{ content: string }>)[1].content)).toContain('First summary.')
+      // Editing q1, which the summary covers, clears it: the summary stood for the old text.
+      const { listMessages } = await import('../src/main/db/conversations')
+      const q1 = listMessages(r.conversation.id)[0]
+      events.length = 0
+      const edited = await service.edit(q1.id, 'q1 reworded', { model: 'llama3.2', think: null })
+      await doneEvent(edited.conversation.id)
+      expect(edited.conversation.compaction).toBeNull()
+    } finally {
+      restore()
+    }
+  })
+
+  it('refuses a reply, an edit or a second compaction while one runs, and saves nothing if the chat changed under it', async () => {
+    chat = reply('an answer')
+    const r = start('q1')
+    await doneEvent(r.conversation.id)
+    await exchanges(r.conversation.id, ['q2', 'q3', 'q4'])
+    let release!: () => void
+    const gate = new Promise<void>((res) => (release = res))
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['Late summary.'], calls, gate)
+    try {
+      const running = service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      await waitFor(() => calls.length === 1)
+      expect(() => service.send({ ...sendBody(r.conversation.id), content: 'q5' })).toThrow(/compacting/i)
+      await expect(service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })).rejects.toThrow(/compacting/i)
+      release()
+      await expect(running).resolves.toMatchObject({ compaction: { summary: 'Late summary.' } })
+    } finally {
+      restore()
+    }
+  })
+
+  it('gives up cleanly when the chat is deleted while it compacts', async () => {
+    chat = reply('an answer')
+    const r = start('q1')
+    await doneEvent(r.conversation.id)
+    await exchanges(r.conversation.id, ['q2', 'q3', 'q4'])
+    let release!: () => void
+    const gate = new Promise<void>((res) => (release = res))
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['Too late.'], calls, gate)
+    try {
+      const running = service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      await waitFor(() => calls.length === 1)
+      deleteConversation(r.conversation.id)
+      release()
+      await expect(running).rejects.toThrow(/deleted|gone/i)
+    } finally {
+      restore()
+    }
+  })
+
+  it('refuses a summary the model left empty', async () => {
+    chat = reply('an answer')
+    const r = start('q1')
+    await doneEvent(r.conversation.id)
+    await exchanges(r.conversation.id, ['q2', 'q3', 'q4'])
+    const restore = summarizer(['<think>hmm</think>   '], [])
+    try {
+      await expect(service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })).rejects.toThrow(/no summary/i)
+    } finally {
+      restore()
+    }
+  })
+
+  it('refuses a chat with nothing before its last turns', async () => {
     chat = reply('an answer')
     const r = start('only question')
     await doneEvent(r.conversation.id)

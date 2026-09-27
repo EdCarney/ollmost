@@ -18,7 +18,7 @@ export function CompactionDivider({ compaction }: { compaction: Compaction }) {
         >
           <Layers className="size-3.5" />
           <span>
-            Compacted {compaction.turns} {compaction.turns === 1 ? 'message' : 'messages'} · {relativeTime(compaction.at)}
+            Compacted {compaction.messages} {compaction.messages === 1 ? 'message' : 'messages'} · {relativeTime(compaction.at)}
           </span>
           <ChevronRight className={cn('size-3.5 transition-transform', open && 'rotate-90')} />
         </button>
