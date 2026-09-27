@@ -1239,6 +1239,190 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
   }, 120_000)
 
   // #88: a code session's reply works in the user's folder with run_command, under the session's prompt.
+  it('offers only reading in plan mode, and the approved plan once the user starts working', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    expect(session).toMatchObject({ stage: 'work', plan: null })
+    expect(service.setStage(session.id, 'plan')).toMatchObject({ stage: 'plan', plan: null })
+    const plan = 'Plan: 1. Read README.md. 2. Change the greeting. 3. Run the tests.'
+    chat = reply(plan)
+    const r = service.send({ ...sendBody(session.id), content: 'plan a greeting change' })
+    await doneEvent(r.conversation.id)
+    const offered = (calls: number) => ((chatCalls[calls].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
+    expect(offered(0)).toEqual(['read_file', 'list_files', 'search_files'])
+    const system = (chatCalls[0].messages as Array<{ content: string }>)[0].content
+    expect(system).toMatch(/<plan_mode>/)
+    expect(system).not.toMatch(/<approved_plan>/)
+    // The working rules don't tell it to edit and run while it can't.
+    expect(system).not.toMatch(/edit_file replaces one exact passage/)
+    expect(system).toMatch(/read_file/)
+    // The plan is the reply written in plan mode, kept as it finishes; starting work keeps it, and the next reply has
+    // every tool and the plan in front of it.
+    await waitFor(() => !service.isReplying())
+    expect(getConversation(session.id)?.plan).toBe(plan)
+    expect(service.setStage(session.id, 'work')).toMatchObject({ stage: 'work', plan })
+    chat = reply('Doing it.')
+    events.length = 0
+    const next = service.send({ ...sendBody(session.id), content: 'go ahead' })
+    await doneEvent(next.conversation.id)
+    expect(offered(1)).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command'])
+    const later = (chatCalls[1].messages as Array<{ content: string }>)[0].content
+    expect(later).toMatch(/<approved_plan>[\s\S]*Change the greeting[\s\S]*<\/approved_plan>/)
+    expect(later).not.toMatch(/<plan_mode>/)
+    // Back to planning drops the approved plan: a new one will come.
+    await waitFor(() => !service.isReplying())
+    expect(service.setStage(session.id, 'plan')).toMatchObject({ stage: 'plan', plan: null })
+  })
+
+  it('keeps no plan when nothing was written in plan mode, and none of a chat', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    chat = reply('I renamed foo to bar and the tests pass.')
+    const r = service.send({ ...sendBody(session.id), content: 'rename foo' })
+    await doneEvent(r.conversation.id)
+    await waitFor(() => !service.isReplying())
+    // A work report is no plan: going to Plan and back keeps nothing, and the next reply isn't told to carry it out.
+    expect(service.setStage(session.id, 'plan')).toMatchObject({ stage: 'plan', plan: null })
+    expect(service.setStage(session.id, 'work')).toMatchObject({ stage: 'work', plan: null })
+    events.length = 0
+    const next = service.send({ ...sendBody(session.id), content: 'and now?' })
+    await doneEvent(next.conversation.id)
+    expect((chatCalls[1].messages as Array<{ content: string }>)[0].content).not.toMatch(/<approved_plan>/)
+    // A chat has no stage to set.
+    chat = reply('hello')
+    await waitFor(() => !service.isReplying())
+    const plain = start('hi')
+    await doneEvent(plain.conversation.id)
+    await waitFor(() => !service.isReplying())
+    expect(() => service.setStage(plain.conversation.id, 'plan')).toThrow(/code session/i)
+  })
+
+  it('takes the tools away after a second round of nothing but refused writes in plan mode', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync, writeFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    writeFileSync(join(folder, 'README.md'), 'Hello\n')
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    service.setStage(session.id, 'plan')
+    chat = (b, res, n) =>
+      n <= 2
+        ? void res.writeHead(200).end(toolCall('edit_file', { path: 'README.md', old_string: 'Hello', new_string: 'Bonjour' }))
+        : reply('Fine, here is the plan.')(b, res, n)
+    const r = service.send({ ...sendBody(session.id), content: 'just do it' })
+    await doneEvent(r.conversation.id)
+    const offered = (calls: number) => ((chatCalls[calls].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
+    expect(offered(1)).toContain('read_file')
+    expect(offered(2)).toEqual([])
+  })
+
+  it('keeps no plan from a reply the user stopped', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    service.setStage(session.id, 'plan')
+    chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'Half a plan' }, done: false })]) // then hangs
+    const r = service.send({ ...sendBody(session.id), content: 'plan it' })
+    await waitFor(() => events.some((e) => e.type === 'delta' && e.conversationId === r.conversation.id))
+    await service.stop(r.conversation.id, { quiet: true })
+    expect(getMessage(r.assistantMessageId)?.content).toBe('Half a plan')
+    expect(getConversation(session.id)?.plan).toBeNull()
+  })
+
+  it('refuses an edit the model attempts in plan mode', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync, writeFileSync, readFileSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    writeFileSync(join(folder, 'README.md'), 'Hello\n')
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    service.setStage(session.id, 'plan')
+    chat = (b, res, n) =>
+      n === 1
+        ? void res.writeHead(200).end(toolCall('edit_file', { path: 'README.md', old_string: 'Hello', new_string: 'Bonjour' }))
+        : reply('I cannot edit in plan mode.')(b, res, n)
+    const r = service.send({ ...sendBody(session.id), content: 'just do it' })
+    const done = await doneEvent(r.conversation.id)
+    expect(readFileSync(join(folder, 'README.md'), 'utf8')).toBe('Hello\n')
+    expect(done.message.toolEvents[0]).toMatchObject({ tool: 'edit_file', ok: false })
+    // A refusal, not an unknown tool: the model is told why, and keeps its reading tools for the rest of the reply.
+    expect(done.message.toolEvents[0].unknown).toBeUndefined()
+    const told = (chatCalls[1].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
+    expect(told[0].content).toMatch(/plan mode/i)
+    const offered = ((chatCalls[1].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
+    expect(offered).toEqual(expect.arrayContaining(['read_file', 'list_files', 'search_files']))
+    expect(offered).not.toContain('edit_file')
+    expect(events.some((e) => e.type === 'tool' && e.conversationId === r.conversation.id && !!e.event.awaiting)).toBe(false)
+  })
+
   it('runs a command in a session’s folder after asking, and remembers Allow for this session', async () => {
     const { paths } = await import('../src/main/paths')
     const { mkdtempSync, realpathSync, writeFileSync, existsSync } = await import('node:fs')

@@ -34,6 +34,8 @@ interface ConversationRow {
   root: string | null
   network: string
   compaction: string | null
+  stage: string
+  plan: string | null
   pinned: number
   created_at: number
   updated_at: number
@@ -58,6 +60,8 @@ const toConversation = (r: ConversationRow): Conversation => ({
   root: r.root,
   network: toNetwork(r.network),
   compaction: parseJson<Compaction | null>(r.compaction, null),
+  stage: r.stage === 'plan' ? 'plan' : 'work',
+  plan: r.plan,
   pinned: !!r.pinned,
   createdAt: r.created_at,
   updatedAt: r.updated_at
@@ -137,7 +141,7 @@ export function createConversation(input: {
 
 export function updateConversation(
   id: string,
-  patch: ConversationPatch & { touch?: boolean; autoSkills?: string[]; allowedTools?: string[] }
+  patch: ConversationPatch & { touch?: boolean; autoSkills?: string[]; allowedTools?: string[]; plan?: string | null }
 ): Conversation {
   const c = getConversation(id)
   if (!c) throw new Error('Conversation not found')
@@ -152,11 +156,13 @@ export function updateConversation(
     instructions: patch.instructions ?? c.instructions,
     allowedTools: patch.allowedTools ?? c.allowedTools,
     toolSources: patch.toolSources ?? c.toolSources,
-    network: patch.network ?? c.network
+    network: patch.network ?? c.network,
+    stage: patch.stage ?? c.stage,
+    plan: patch.plan !== undefined ? patch.plan : c.plan
   }
   run(
     `UPDATE conversations SET title = ?, pinned = ?, project_id = ?, model = ?, think = ?, skills = ?, auto_skills = ?,
-       instructions = ?, allowed_tools = ?, tool_sources = ?, network = ?, updated_at = ?
+       instructions = ?, allowed_tools = ?, tool_sources = ?, network = ?, stage = ?, plan = ?, updated_at = ?
      WHERE id = ?`,
     next.title,
     next.pinned ? 1 : 0,
@@ -169,6 +175,8 @@ export function updateConversation(
     JSON.stringify(next.allowedTools),
     JSON.stringify(next.toolSources),
     next.network,
+    next.stage,
+    next.plan,
     patch.touch ? now() : c.updatedAt,
     id
   )

@@ -182,6 +182,22 @@ export async function edit(
   return startAssistant(conversation, user, opts.model, opts.think, reply)
 }
 
+/** As much of a plan as the later turns carry in their prompt; a longer one is cut with a mark the model can see. */
+const PLAN_CHARS = 12_000
+const cutPlan = (plan: string): string => (plan.length > PLAN_CHARS ? `${plan.slice(0, PLAN_CHARS)}\n\n[… the plan was cut here]` : plan)
+
+/**
+ * A code session's stage. The plan is the reply written in plan mode (kept as it finishes, see generate); starting
+ * work keeps it for the turns that follow, and going back to planning drops it, since a new plan will come.
+ */
+export function setStage(conversationId: string, stage: 'plan' | 'work'): Conversation {
+  assertIdle(conversationId)
+  const c = getConversation(conversationId)
+  if (!c) throw new Error('Chat not found')
+  if (c.mode !== 'code') throw new Error('Only a code session has a plan mode.')
+  return updateConversation(conversationId, { stage, plan: stage === 'plan' ? null : c.plan })
+}
+
 /**
  * Stop a reply and wait until what it produced has been saved. Pass `quiet` when stopping for a delete or
  * a quit; a plain Stop still lets a new chat get its title.
@@ -419,6 +435,7 @@ async function generate(
     const messages = listMessages(conversationId)
     const toolContext: ToolContext = {
       mode: policy.mode,
+      stage: conversation.stage,
       skills: skillIndex.length > 0,
       web: web === 'on',
       sources,
@@ -454,7 +471,7 @@ async function generate(
       grants: [...grants],
       mcpServers: servers,
       codeRunner,
-      codeSession,
+      codeSession: codeSession ? { ...codeSession, stage: conversation.stage, plan: conversation.plan } : null,
       toolTokens: toolsTokens(tools),
       pastTools: toolsCapable,
       project: project ? { name: project.name, instructions: project.instructions } : null,
@@ -478,6 +495,8 @@ async function generate(
     }
 
     const triedUnknown: string[] = []
+    // Rounds made only of writes refused in plan mode: a model that keeps trying loses its tools after the second.
+    let refusedRounds = 0
     // What the user denied in this reply, by allow key (not asked about again). What they allowed for the whole chat
     // is read from the chat at each call, so "Ask again before each tool" takes effect mid-reply.
     const declined = new Set<string>()
@@ -594,6 +613,7 @@ async function generate(
       let roomChars = Math.floor((budget - promptTokens() + shortenable) * CHARS_PER_TOKEN * ROOM_SHARE)
       let callsLeft = calls.length
       let onlyUnknown = true
+      let onlyWithheld = true
       for (const call of calls) {
         const index = toolEvents.length
         // `at` places the call in the reply's text, where the UI shows it.
@@ -656,6 +676,7 @@ async function generate(
         callsLeft--
         if (result.unknown) triedUnknown.push(call.function.name)
         else onlyUnknown = false
+        if (!result.withheld) onlyWithheld = false
         toolEvents[index] = { ...result.event, at: pending.at }
         emit({ type: 'tool', conversationId, messageId, index, event: toolEvents[index] })
         if (result.loadedSkillId && !loadedIds.includes(result.loadedSkillId)) {
@@ -673,6 +694,8 @@ async function generate(
       // A model reaching for tools Ollmost lacks keeps guessing names; after one explanation, take the
       // tools away so the next request has to be answered in words.
       if (onlyUnknown) body.tools = undefined
+      refusedRounds = calls.length && onlyWithheld ? refusedRounds + 1 : 0
+      if (refusedRounds >= 2) body.tools = undefined
       if (content && !content.endsWith('\n')) {
         nextRoundAt = content.length
         content += '\n\n'
@@ -718,6 +741,10 @@ async function generate(
     stats,
     error
   })
+  // A reply written in plan mode is the plan the user may approve; kept here, so the stage's switch never has to guess.
+  const finished = getConversation(conversationId)
+  if (finished?.stage === 'plan' && finished.mode === 'code' && !error && !controller.signal.aborted && message.content.trim())
+    updateConversation(conversationId, { plan: cutPlan(message.content.trim()) })
   saveArtifacts(conversationId, messageId, message.content)
   if (error) emit({ type: 'error', conversationId, messageId, error })
   emit({

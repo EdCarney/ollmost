@@ -89,6 +89,13 @@ export interface Conversation {
   network: CodeNetwork
   /** The chat's /compact summary, when one was made; null otherwise. */
   compaction: Compaction | null
+  /**
+   * A code session's stage: in `plan` the model may read, list and search the folder but not edit it or run
+   * commands, until the user starts working. Chats are always `work`.
+   */
+  stage: 'plan' | 'work'
+  /** The plan the user approved by starting work: the model's last reply in plan mode. Null until then. */
+  plan: string | null
   pinned: boolean
   createdAt: number
   updatedAt: number

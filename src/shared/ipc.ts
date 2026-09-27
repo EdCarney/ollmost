@@ -65,6 +65,8 @@ export interface ConversationPatch {
   allowedTools?: string[]
   /** A code session's network preset. */
   network?: CodeNetwork
+  /** A code session's stage; starting work keeps the model's last reply as the approved plan. */
+  stage?: 'plan' | 'work'
 }
 
 export interface SkillInput {

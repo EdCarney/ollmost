@@ -204,5 +204,11 @@ export const MIGRATIONS: string[] = [
   -- A chat's /compact summary (Compaction in src/shared/types.ts, as JSON): later replies replay it instead of the
   -- turns it covers (#90). Null when none was made.
   ALTER TABLE conversations ADD COLUMN compaction TEXT;
+  `,
+  /* sql */ `
+  -- A code session's stage (#96): in 'plan' the model reads and searches but can't edit or run until the user starts
+  -- working; \`plan\` is the reply the user approved by doing so. Chats stay 'work'.
+  ALTER TABLE conversations ADD COLUMN stage TEXT NOT NULL DEFAULT 'work';
+  ALTER TABLE conversations ADD COLUMN plan TEXT;
   `
 ]
