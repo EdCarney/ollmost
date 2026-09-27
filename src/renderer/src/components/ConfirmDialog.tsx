@@ -11,6 +11,7 @@ export function ConfirmDialog() {
       open={!!request}
       onOpenChange={(open) => !open && answer(false)}
       title={request?.title ?? ''}
+      description={request?.body.join(' ')}
       footer={
         <>
           <Button variant="ghost" onClick={() => answer(false)}>
@@ -21,12 +22,6 @@ export function ConfirmDialog() {
           </Button>
         </>
       }
-    >
-      <div className="space-y-1.5 text-sm">
-        {request?.body.map((line, i) => (
-          <p key={i}>{line}</p>
-        ))}
-      </div>
-    </Modal>
+    />
   )
 }

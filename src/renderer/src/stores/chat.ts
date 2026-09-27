@@ -4,6 +4,7 @@ import { applyPiece, endLiveThinking, type LiveThinking, type Piece } from '@sha
 import { api } from '@/lib/api'
 import { showsConversation, useApp } from './app'
 import { useArtifactPanel } from './artifactPanel'
+import { useConfirm } from './confirm'
 
 export interface StreamState {
   messageId: string
@@ -24,12 +25,15 @@ interface ChatState {
   loading: boolean
   /** Keyed by conversation id so a reply keeps streaming while you look at another chat. */
   streams: Record<string, StreamState>
+  /** Keyed by conversation id: a /compact in flight, so its chat's Edit and Retry can be disabled meanwhile. */
+  compacting: Record<string, boolean>
 
   open: (id: string) => Promise<void>
   clear: () => void
   /** Apply the immediate result of send/regenerate/edit before events start arriving. */
   began: (result: SendResult, opts: { replaceFrom?: string }) => void
   setConversation: (c: Conversation) => void
+  setCompacting: (conversationId: string, value: boolean) => void
   addArtifact: (a: Artifact) => void
 }
 
@@ -70,9 +74,13 @@ export const useChat = create<ChatState>((set, get) => ({
   usage: null,
   loading: false,
   streams: {},
+  compacting: {},
 
   open: async (id) => {
     if (get().conversation?.id === id && !get().loading) return
+    // Leaving the open chat for another one: a confirm still waiting on it must not resolve into this one instead
+    // (see historyLoss's callers in lib/chatActions, which also re-check the chat after the confirm settles).
+    useConfirm.getState().answer(false)
     const seq = ++openSeq
     set({ loading: true, conversation: null, messages: [], artifacts: [], usage: null })
     const detail = await api.conversations.get(id)
@@ -117,6 +125,8 @@ export const useChat = create<ChatState>((set, get) => ({
     if (get().conversation?.id === c.id) set({ conversation: c })
     useApp.getState().upsertConversation(c)
   },
+
+  setCompacting: (conversationId, value) => set((s) => ({ compacting: { ...s.compacting, [conversationId]: value } })),
 
   addArtifact: (a) => set((s) => ({ artifacts: [...s.artifacts.filter((x) => x.id !== a.id), a] }))
 }))

@@ -47,6 +47,7 @@ import { NETWORKS, NETWORK_SHORT_LABEL } from '@/views/ToolsSettings'
 export function CodeSessionView({ id }: { id: string }) {
   const { conversation, messages, artifacts, loading, open, usage, setConversation } = useChat()
   const stream = useChat((s) => s.streams[id])
+  const compacting = useChat((s) => !!s.compacting[id])
   const scroller = useRef<HTMLDivElement>(null)
   const pinned = useRef(true)
   const [showJump, setShowJump] = useState(false)
@@ -294,13 +295,15 @@ export function CodeSessionView({ id }: { id: string }) {
             {messages.map((m, i) => (
               <Fragment key={m.id}>
                 {m.role === 'user' ? (
-                  <UserMessage message={m} disabled={!!stream} onEdit={(content) => editMessage(m, content, messages)} />
+                  <UserMessage message={m} disabled={!!stream || compacting} onEdit={(content) => editMessage(m, content, messages)} />
                 ) : (
                   <AssistantMessage
                     message={m}
                     stream={stream?.messageId === m.id ? stream : undefined}
                     artifacts={artifacts}
                     isLast={i === messages.length - 1}
+                    compaction={compaction}
+                    disabled={compacting}
                     scope="session"
                     onRetry={() => retryLast(id, messages)}
                     onContinue={(reason) => {

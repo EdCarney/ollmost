@@ -844,6 +844,21 @@ function proseBrief(prose: string): string {
 }
 
 /**
+ * A single transcript line too big for what's left of the whole piece, even after `transcriptLine`'s own budgets
+ * (prose and each call are already capped, but a reply with many calls can still run to tens of thousands of
+ * characters). Cut its middle, like `proseBrief`, so the front-cut of what came before doesn't silently drop this
+ * one's own tail: its last tool calls, which is usually where an agentic reply's outcome sits.
+ */
+function cutToFit(line: string, maxChars: number): string {
+  if (line.length <= maxChars) return line
+  const mark = (n: number) => ` [… ${n} characters cut to fit …] `
+  const room = Math.max(0, maxChars - mark(line.length).length)
+  const head = Math.ceil(room / 2)
+  const tail = room - head
+  return `${line.slice(0, head)}${mark(line.length - head - tail)}${line.slice(line.length - tail)}`
+}
+
+/**
  * A message as a transcript entry for the summary: who said it, its prose, what was attached, and then each tool
  * call on a line of its own, with what it got back in brief (in a code session most of the substance is in the
  * calls). Prose and calls are cut apart, so a long reply keeps its calls and its conclusion, and a cut says so.
@@ -917,7 +932,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
         const cost = estimateTokens(lines[i]) + 2
         if (piece.length && used + cost > budget) break
         // A single message larger than the whole budget is cut to what fits rather than left out.
-        piece.push(used + cost > budget ? lines[i].slice(0, Math.max(200, (budget - used) * CHARS_PER_TOKEN)) : lines[i])
+        piece.push(used + cost > budget ? cutToFit(lines[i], Math.max(200, (budget - used) * CHARS_PER_TOKEN)) : lines[i])
         used += cost
         i++
       }

@@ -22,7 +22,7 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { parseMessage, parseMessageRanges, typeForCodeLanguage } from '@shared/artifactParser'
 import { diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
-import type { Artifact, Message, ThinkingSegment, ToolDecision, ToolEvent } from '@shared/types'
+import type { Artifact, Compaction, Message, ThinkingSegment, ToolDecision, ToolEvent } from '@shared/types'
 import { IMAGE_FILE, openWith } from '@shared/workspace'
 import { formatCost } from '@shared/usage'
 import { api } from '@/lib/api'
@@ -60,6 +60,7 @@ export const UserMessage = memo(function UserMessage({
 }) {
   const [editing, setEditing] = useState(false)
   const [draft, setDraft] = useState(message.content)
+  const [saving, setSaving] = useState(false)
   const [copied, copy] = useCopy()
 
   return (
@@ -102,9 +103,16 @@ export const UserMessage = memo(function UserMessage({
             <Button
               size="sm"
               variant="primary"
-              disabled={!draft.trim() || disabled}
+              disabled={!draft.trim() || disabled || saving}
               onClick={async () => {
-                if (await onEdit(draft.trim())) setEditing(false)
+                // Closes only on success: a cancelled confirm or a failed send keeps the box and the draft, and a
+                // disabled button while this is in flight rules out a double submit.
+                setSaving(true)
+                try {
+                  if (await onEdit(draft.trim())) setEditing(false)
+                } finally {
+                  setSaving(false)
+                }
               }}
             >
               Save & send
@@ -541,8 +549,12 @@ interface AssistantProps {
   stream: StreamState | undefined
   artifacts: Artifact[]
   isLast: boolean
+  /** The chat's /compact summary, if any: a length-limited reply it covers can't be continued word for word. */
+  compaction: Compaction | null
   onRetry: () => void
   onContinue: (reason: ContinueReason) => void
+  /** A /compact is running: Retry would regenerate a reply the summary might come to cover mid-flight. */
+  disabled?: boolean
   /** Passed through to ToolGroup; see ApprovalCard's scope prop. */
   scope?: string
 }
@@ -552,8 +564,10 @@ export const AssistantMessage = memo(function AssistantMessage({
   stream,
   artifacts,
   isLast,
+  compaction,
   onRetry,
   onContinue,
+  disabled = false,
   scope = 'chat'
 }: AssistantProps) {
   const streaming = !!stream
@@ -641,6 +655,9 @@ export const AssistantMessage = memo(function AssistantMessage({
     return <ArtifactCard key={i} segment={seg} messageId={message.id} occurrence={n} artifacts={artifacts} streaming={streaming} />
   })
 
+  // A /compact summary stands for this reply's exact words, so it can't be replayed to continue where it stopped.
+  const summarized = !!compaction && message.createdAt <= compaction.upTo
+
   return (
     <div className="group">
       {awaitingFirst && <ThinkingBlock thinking="" active durationMs={null} />}
@@ -654,7 +671,7 @@ export const AssistantMessage = memo(function AssistantMessage({
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-danger" />
           <div className="flex-1 selectable">{message.error}</div>
           {isLast && (
-            <Button size="sm" onClick={onRetry}>
+            <Button size="sm" onClick={onRetry} disabled={disabled}>
               Retry
             </Button>
           )}
@@ -664,11 +681,16 @@ export const AssistantMessage = memo(function AssistantMessage({
         <div className="mt-2 flex items-start gap-2 rounded-ollmost border border-warn/40 bg-[color-mix(in_srgb,var(--o-warn)_8%,transparent)] px-3 py-2.5 text-sm">
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-warn" />
           <div className="flex-1">This reply hit the model's length limit and was cut off.</div>
-          {isLast && (
-            <Button size="sm" onClick={() => onContinue('length')}>
-              Continue
-            </Button>
-          )}
+          {isLast &&
+            (summarized ? (
+              <span className="shrink-0 text-xs text-subtle">
+                This reply is in the chat's summary, so it can't be continued word for word. Send a message to carry on.
+              </span>
+            ) : (
+              <Button size="sm" onClick={() => onContinue('length')}>
+                Continue
+              </Button>
+            ))}
         </div>
       )}
       {!streaming && message.stats?.unavailableTools?.length ? (
@@ -703,7 +725,7 @@ export const AssistantMessage = memo(function AssistantMessage({
             {copied ? <Check className="size-3.5" /> : <Copy className="size-3.5" />}
           </IconButton>
           {isLast && (
-            <IconButton label="Retry" size="sm" onClick={onRetry}>
+            <IconButton label="Retry" size="sm" onClick={onRetry} disabled={disabled}>
               <RotateCcw className="size-3.5" />
             </IconButton>
           )}

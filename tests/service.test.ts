@@ -930,6 +930,84 @@ describe('/compact', () => {
     const empty = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
     await expect(service.compact(empty.id, { focus: '', model: 'llama3.2' })).rejects.toThrow('Nothing to compact yet.')
   })
+
+  it('when the last reply failed, upTo is the user message it never answered', async () => {
+    chat = reply('an answer')
+    const r = start('q1')
+    await doneEvent(r.conversation.id)
+    // The last exchange's reply fails and saves no content, so the filter that drops it also drops it from `since`.
+    chat = (_b, res) => void res.writeHead(500).end('boom')
+    await exchanges(r.conversation.id, ['q2'])
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['One question answered.'], calls)
+    try {
+      const c = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const { listMessages } = await import('../src/main/db/conversations')
+      const q2 = listMessages(r.conversation.id).find((m) => m.content === 'q2')!
+      expect(c.compaction).toMatchObject({ messages: 3, upTo: q2.createdAt })
+    } finally {
+      restore()
+    }
+  })
+
+  it('cuts a single tool call’s line at the 300-character cap', async () => {
+    chat = reply('ok')
+    const r = start('q1')
+    await doneEvent(r.conversation.id)
+    const { listMessages } = await import('../src/main/db/conversations')
+    const a1 = listMessages(r.conversation.id)[1]
+    updateMessage(a1.id, { toolEvents: [{ tool: 'run_command', args: { command: 'x' }, ok: true, summary: 'y'.repeat(400) }] })
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['Summary.'], calls)
+    try {
+      await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const callLine = transcripts(calls)
+        .split('\n')
+        .find((l) => l.startsWith('[run_command'))!
+      expect(callLine).toHaveLength(300)
+      expect(callLine.endsWith('…')).toBe(true)
+    } finally {
+      restore()
+    }
+  })
+
+  it('cuts the middle of a single reply too big for the whole piece, keeping its first and last tool calls', async () => {
+    chat = reply('a short reply')
+    const r = start('research many pages')
+    await doneEvent(r.conversation.id)
+    const { listMessages } = await import('../src/main/db/conversations')
+    const a1 = listMessages(r.conversation.id)[1]
+    updateMessage(a1.id, {
+      toolEvents: Array.from({ length: 120 }, (_, i) => ({
+        tool: 'web_fetch',
+        args: { url: `https://x.io/page-${i + 1}` },
+        ok: true,
+        summary: `Fetched page ${i + 1} of the crawl. ${'x'.repeat(150)}`
+      }))
+    })
+    // A model name never fetched before, so its info isn't the 8192-token one other tests already cached for
+    // llama3.2: a small window pins this well below the ~27,000-character line the 120 calls add up to.
+    const base = ollama.handler
+    ollama.handler = (req, res) => {
+      if (req.url === '/api/show' && req.json.model === 'tiny-window')
+        return res
+          .writeHead(200)
+          .end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'llama.context_length': 2048 } }))
+      return base!(req, res)
+    }
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['Summary.'], calls)
+    try {
+      await service.compact(r.conversation.id, { focus: '', model: 'tiny-window' })
+      const transcript = transcripts(calls)
+      expect(transcript).toMatch(/\[… \d+ characters cut to fit …\]/)
+      expect(transcript).toContain('https://x.io/page-1"')
+      expect(transcript).toContain('https://x.io/page-120"')
+    } finally {
+      restore()
+      ollama.handler = base
+    }
+  })
 })
 
 describe('asking before a tool runs', () => {

@@ -19,7 +19,13 @@ interface ConfirmState {
  *  the history an Edit or a Retry would lose (see historyLoss) — keep it that narrow. */
 export const useConfirm = create<ConfirmState>((set, get) => ({
   request: null,
-  ask: (request) => new Promise((resolve) => set({ request: { ...request, resolve } })),
+  ask: (request) =>
+    new Promise((resolve) => {
+      // A request already waiting (e.g. a chat switched away from before its own confirm resolved) is abandoned,
+      // not left hanging: it reads as a Cancel.
+      get().request?.resolve(false)
+      set({ request: { ...request, resolve } })
+    }),
   answer: (ok) => {
     get().request?.resolve(ok)
     set({ request: null })

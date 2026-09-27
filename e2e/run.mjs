@@ -159,8 +159,8 @@ try {
   await win.waitForSelector('[role="dialog"]')
   const retryAsk = (await win.locator('[role="dialog"]').innerText()).trim()
   check(
-    'retrying the summarized reply asks first, and mentions the summary',
-    /Retry this reply\?/.test(retryAsk) && /summary/i.test(retryAsk),
+    'retrying the summarized reply asks first, naming the summary in its body (not just its button label)',
+    /Retry this reply\?/.test(retryAsk) && /summary covers this message/.test(retryAsk),
     retryAsk
   )
   await win.screenshot({ path: join(SHOTS, 'history-loss-confirm.png') })
@@ -171,9 +171,10 @@ try {
     (await win.locator('[data-testid="compaction"]').count()) === 1 && (await win.locator('.prose-ollmost').count()) === 3
   )
 
-  // 1d. Edit an earlier message (not the last): it would drop the exchange after it, so it asks first, with the
-  // count; Cancel keeps the draft in the edit box and deletes nothing. An element handle, not a locator, holds
-  // this message's own group: editing swaps its bubble text for a textarea, which a hasText locator can't re-find.
+  // 1d. Edit an earlier message (not the last): it would drop the exchange after it and clear the summary, so it
+  // asks first, naming both and offering Continue since both apply; Cancel keeps the draft and deletes nothing. An
+  // element handle, not a locator, holds this message's own group: editing swaps its bubble text for a textarea,
+  // which a hasText locator can't re-find.
   const earlierGroup = await win
     .locator('div.group:has(button[aria-label="Edit"])', { hasText: 'Reply with the single word: one' })
     .elementHandle()
@@ -184,8 +185,11 @@ try {
   await win.waitForSelector('[role="dialog"]')
   const editAsk = (await win.locator('[role="dialog"]').innerText()).trim()
   check(
-    'editing an earlier message asks first, with the count of messages after it',
-    /Edit this message\?/.test(editAsk) && /The 2 messages after it will be deleted\./.test(editAsk),
+    'editing an earlier message asks first, with the count, the summary line, and Continue since both apply',
+    /Edit this message\?/.test(editAsk) &&
+      /Its reply and the 2 messages after it will be deleted\./.test(editAsk) &&
+      /summary covers this message/.test(editAsk) &&
+      /Continue/.test(editAsk),
     editAsk
   )
   await win.locator('[role="dialog"] button:has-text("Cancel")').click()
@@ -195,7 +199,33 @@ try {
     (await (await earlierGroup.$('textarea')).inputValue()) === 'Reply with the single word: uno' &&
       (await win.locator('.prose-ollmost').count()) === 3
   )
-  await (await earlierGroup.$('button:has-text("Cancel")')).click()
+
+  // 1e. This time press the destructive button: the later exchange is gone, and so is the summary that covered
+  // the edited message.
+  await (await earlierGroup.$('button:has-text("Save & send")')).click()
+  await win.waitForSelector('[role="dialog"]')
+  await win.locator('[role="dialog"] button:has-text("Continue")').click()
+  await win.waitForFunction(
+    () => document.querySelectorAll('.prose-ollmost').length === 2 && !document.querySelector('button[aria-label="Stop"]'),
+    undefined,
+    { timeout: 240000 }
+  )
+  check(
+    'confirming the edit deletes the later exchange and clears the summary',
+    (await win.locator('.prose-ollmost').count()) === 2 && (await win.locator('[data-testid="compaction"]').count()) === 0
+  )
+
+  // 1f. That edited message is now the last one: replacing only its own reply is the point of an edit, so this
+  // sends at once, with no confirm (reaching the wait below at all proves nothing blocked it).
+  await (await earlierGroup.$('button[aria-label="Edit"]')).click()
+  await (await earlierGroup.$('textarea')).fill('Reply with the single word: last')
+  await (await earlierGroup.$('button:has-text("Save & send")')).click()
+  await win.waitForFunction(
+    () => document.querySelectorAll('.prose-ollmost').length === 2 && !document.querySelector('button[aria-label="Stop"]'),
+    undefined,
+    { timeout: 240000 }
+  )
+  check('editing the now-last message sends at once, without asking', (await win.locator('[role="dialog"]').count()) === 0)
 
   // 2. HTML artifact renders in the sandbox, which blocks network and parent access
   await send(win, 'Make an HTML artifact: a page with a heading "Sandbox test" and nothing else.')
