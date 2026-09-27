@@ -238,8 +238,8 @@ export function CodeSessionView({ id }: { id: string }) {
                   <MenuSeparator />
                   <MenuLabel>
                     In plan mode the model reads and searches the folder and writes a plan; its edits and commands are withheld until you
-                    start working, which keeps that plan for the turns that follow. MCP tools stay on and still ask. Changes once the reply
-                    ends.
+                    start working, which keeps that plan for the turns that follow. MCP tools stay on and still ask. You can switch once the
+                    reply ends.
                   </MenuLabel>
                 </MenuContent>
               </Menu>

@@ -1358,6 +1358,33 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(offered(2)).toEqual([])
   })
 
+  it('keeps no plan from a reply the user stopped', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdtempSync, realpathSync } = await import('node:fs')
+    const { tmpdir } = await import('node:os')
+    const { join } = await import('node:path')
+    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const session = createConversation({
+      projectId: null,
+      model: 'llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    service.setStage(session.id, 'plan')
+    chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'Half a plan' }, done: false })]) // then hangs
+    const r = service.send({ ...sendBody(session.id), content: 'plan it' })
+    await waitFor(() => events.some((e) => e.type === 'delta' && e.conversationId === r.conversation.id))
+    await service.stop(r.conversation.id, { quiet: true })
+    expect(getMessage(r.assistantMessageId)?.content).toBe('Half a plan')
+    expect(getConversation(session.id)?.plan).toBeNull()
+  })
+
   it('refuses an edit the model attempts in plan mode', async () => {
     const { paths } = await import('../src/main/paths')
     const { mkdtempSync, realpathSync, writeFileSync, readFileSync } = await import('node:fs')

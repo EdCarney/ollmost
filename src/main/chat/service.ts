@@ -182,8 +182,9 @@ export async function edit(
   return startAssistant(conversation, user, opts.model, opts.think, reply)
 }
 
-/** As much of a plan as the later turns carry in their prompt. */
+/** As much of a plan as the later turns carry in their prompt; a longer one is cut with a mark the model can see. */
 const PLAN_CHARS = 12_000
+const cutPlan = (plan: string): string => (plan.length > PLAN_CHARS ? `${plan.slice(0, PLAN_CHARS)}\n\n[… the plan was cut here]` : plan)
 
 /**
  * A code session's stage. The plan is the reply written in plan mode (kept as it finishes, see generate); starting
@@ -742,8 +743,8 @@ async function generate(
   })
   // A reply written in plan mode is the plan the user may approve; kept here, so the stage's switch never has to guess.
   const finished = getConversation(conversationId)
-  if (finished?.stage === 'plan' && finished.mode === 'code' && !error && message.content.trim())
-    updateConversation(conversationId, { plan: message.content.trim().slice(0, PLAN_CHARS) })
+  if (finished?.stage === 'plan' && finished.mode === 'code' && !error && !controller.signal.aborted && message.content.trim())
+    updateConversation(conversationId, { plan: cutPlan(message.content.trim()) })
   saveArtifacts(conversationId, messageId, message.content)
   if (error) emit({ type: 'error', conversationId, messageId, error })
   emit({
