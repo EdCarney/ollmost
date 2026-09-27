@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { cn } from '@/lib/format'
 import { type Route, useApp } from '@/stores/app'
 import { useArtifactPanel } from '@/stores/artifactPanel'
+import { ProjectExplorer } from './ProjectExplorer'
 import { useChat } from '@/stores/chat'
 import { ConversationRow } from './ConversationMenu'
 import { OllmostMark } from './OllmostMark'
@@ -48,7 +49,9 @@ export function Sidebar() {
     navigate(r)
   }
 
-  const pinnedProjects = projects.filter((p) => p.pinned)
+  // The explorer shows the pinned projects and the one open on the project page: the sidebar is narrow.
+  const openProject = route.name === 'project' ? projects.find((p) => p.id === route.id) : null
+  const shownProjects = [...projects.filter((p) => p.pinned), ...(openProject && !openProject.pinned ? [openProject] : [])]
   const pinnedChats = conversations.filter((c) => c.pinned)
   const recents = conversations.filter((c) => !c.pinned).slice(0, 40)
   const activeChatId = route.name === 'chat' ? route.id : null
@@ -113,22 +116,17 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        {(pinnedProjects.length > 0 || pinnedChats.length > 0) && (
+        {shownProjects.length > 0 && (
+          <>
+            <SectionTitle>Projects</SectionTitle>
+            {shownProjects.map((p) => (
+              <ProjectExplorer key={p.id} project={p} />
+            ))}
+          </>
+        )}
+        {pinnedChats.length > 0 && (
           <>
             <SectionTitle>Pinned</SectionTitle>
-            {pinnedProjects.map((p) => (
-              <button
-                key={p.id}
-                onClick={() => go({ name: 'project', id: p.id })}
-                className={cn(
-                  'flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px]',
-                  route.name === 'project' && route.id === p.id ? 'bg-hover text-fg' : 'text-muted hover:bg-hover hover:text-fg'
-                )}
-              >
-                <FolderClosed className="size-3.5 shrink-0" />
-                <span className="truncate">{p.name}</span>
-              </button>
-            ))}
             {pinnedChats.map(row)}
           </>
         )}

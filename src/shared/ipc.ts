@@ -108,8 +108,15 @@ export interface OllmostApi {
     update(id: ID, patch: Partial<Pick<Project, 'name' | 'description' | 'instructions' | 'pinned'>>): Promise<Project>
     delete(id: ID): Promise<void>
     files(id: ID): Promise<ProjectFile[]>
-    addFiles(id: ID, sources: FileSource[]): Promise<{ added: ProjectFile[]; errors: string[] }>
+    /** Add files to the project, into `folder` (a relative path; '' or omitted for the root). */
+    addFiles(id: ID, sources: FileSource[], folder?: string): Promise<{ added: ProjectFile[]; errors: string[] }>
     removeFile(fileId: ID): Promise<void>
+    /** Put a file in another folder ('' for the root); folders are the files' paths, so this is all a move is. */
+    moveFile(fileId: ID, folder: string): Promise<ProjectFile>
+    /** Open a project file with the app that handles its type. */
+    openFile(fileId: ID): Promise<void>
+    /** Show a project file in Finder. */
+    revealFile(fileId: ID): Promise<void>
   }
   conversations: {
     /** Every conversation, or only chats or only code sessions. */
@@ -279,7 +286,7 @@ export const INVOKE_CHANNELS = {
   app: ['info', 'setNativeTheme', 'openExternal', 'openDataFolder', 'migrationNotice', 'dismissMigrationNotice'],
   settings: ['get', 'update', 'setApiKey'],
   models: ['list', 'info', 'setOverrides'],
-  projects: ['list', 'get', 'create', 'update', 'delete', 'files', 'addFiles', 'removeFile'],
+  projects: ['list', 'get', 'create', 'update', 'delete', 'files', 'addFiles', 'removeFile', 'moveFile', 'openFile', 'revealFile'],
   conversations: ['list', 'get', 'update', 'delete', 'search'],
   chat: ['send', 'regenerate', 'edit', 'stop', 'compact', 'decide'],
   attachments: ['ingest', 'pick', 'remove'],

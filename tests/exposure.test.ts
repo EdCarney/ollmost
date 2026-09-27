@@ -73,7 +73,8 @@ describe('link previews in a chat', () => {
       size: 4,
       path: join(paths.data, 'files', 'y'),
       text: 'plan',
-      token_est: 1
+      token_est: 1,
+      folder: ''
     })
     expect(previewsAllowed(inProject.id)).toBe(false)
   })

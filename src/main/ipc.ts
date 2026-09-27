@@ -36,6 +36,8 @@ import {
   insertProjectFile,
   listProjectFiles,
   listProjects,
+  moveProjectFile,
+  projectFilePath,
   updateProject
 } from './db/projects'
 import { ingestAll, removeFiles } from './files/ingest'
@@ -207,7 +209,7 @@ const impl: Impl = {
       await Promise.all(workspaces.map(removeWorkspace))
     },
     files: async (id) => listProjectFiles(id),
-    addFiles: async (id, sources) => {
+    addFiles: async (id, sources, folder = '') => {
       const { ok, errors } = await ingestAll(sources)
       const added = ok.map((f) => {
         if (f.kind === 'image') {
@@ -223,7 +225,8 @@ const impl: Impl = {
           size: f.size,
           path: f.path,
           text: f.text,
-          token_est: f.tokenEst
+          token_est: f.tokenEst,
+          folder
         })
       })
       return { added: added.filter((f) => f !== null), errors }
@@ -231,6 +234,18 @@ const impl: Impl = {
     removeFile: async (fileId) => {
       const path = deleteProjectFile(fileId)
       if (path) await removeFiles([path])
+    },
+    moveFile: async (fileId, folder) => moveProjectFile(fileId, folder),
+    openFile: async (fileId) => {
+      const path = projectFilePath(fileId)
+      if (!path) throw new Error('File not found')
+      const failure = await shell.openPath(path)
+      if (failure) throw new Error(failure)
+    },
+    revealFile: async (fileId) => {
+      const path = projectFilePath(fileId)
+      if (!path) throw new Error('File not found')
+      shell.showItemInFolder(path)
     }
   },
 

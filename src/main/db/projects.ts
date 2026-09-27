@@ -1,3 +1,4 @@
+import { normalizeFolder } from '@shared/fileTree'
 import type { Project, ProjectFile } from '@shared/types'
 import { fromStored, toStored } from '../paths'
 import { now, uid } from '../util'
@@ -23,6 +24,7 @@ interface ProjectFileRow {
   path: string
   text: string | null
   token_est: number
+  folder: string
   created_at: number
 }
 
@@ -44,7 +46,8 @@ const toFile = (r: ProjectFileRow): ProjectFile => ({
   mime: r.mime,
   size: r.size,
   tokenEstimate: r.token_est,
-  createdAt: r.created_at
+  createdAt: r.created_at,
+  folder: r.folder
 })
 
 export function listProjects(): Project[] {
@@ -120,16 +123,16 @@ export function hasProjectFiles(projectId: string): boolean {
 
 /** Files with their extracted text, for prompt assembly. */
 export function projectKnowledge(projectId: string): Array<{ name: string; text: string }> {
-  return all<{ name: string; text: string | null }>(
-    'SELECT name, text FROM project_files WHERE project_id = ? ORDER BY created_at',
+  return all<{ name: string; folder: string; text: string | null }>(
+    'SELECT name, folder, text FROM project_files WHERE project_id = ? ORDER BY created_at',
     projectId
-  ).map((r) => ({ name: r.name, text: r.text ?? '' }))
+  ).map((r) => ({ name: r.folder ? `${r.folder}/${r.name}` : r.name, text: r.text ?? '' }))
 }
 
 export function insertProjectFile(f: Omit<ProjectFileRow, 'created_at'>): ProjectFile {
   run(
-    `INSERT INTO project_files (id, project_id, name, mime, size, path, text, token_est, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO project_files (id, project_id, name, mime, size, path, text, token_est, folder, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     f.id,
     f.project_id,
     f.name,
@@ -138,10 +141,26 @@ export function insertProjectFile(f: Omit<ProjectFileRow, 'created_at'>): Projec
     toStored(f.path),
     f.text,
     f.token_est,
+    normalizeFolder(f.folder),
     now()
   )
   touchProject(f.project_id)
   return toFile(get<ProjectFileRow>('SELECT * FROM project_files WHERE id = ?', f.id)!)
+}
+
+/** Move a file to another folder ('' for the root): folders are prefixes, so this is all a move is. */
+export function moveProjectFile(id: string, folder: string): ProjectFile {
+  run('UPDATE project_files SET folder = ? WHERE id = ?', normalizeFolder(folder), id)
+  const row = get<ProjectFileRow>('SELECT * FROM project_files WHERE id = ?', id)
+  if (!row) throw new Error('File not found')
+  touchProject(row.project_id)
+  return toFile(row)
+}
+
+/** Where a project file is kept on disk, or null when there's no such file. */
+export function projectFilePath(id: string): string | null {
+  const row = get<{ path: string }>('SELECT path FROM project_files WHERE id = ?', id)
+  return row ? fromStored(row.path) : null
 }
 
 export function deleteProjectFile(id: string): string | null {

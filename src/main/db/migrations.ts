@@ -210,5 +210,10 @@ export const MIGRATIONS: string[] = [
   -- working; \`plan\` is the reply the user approved by doing so. Chats stay 'work'.
   ALTER TABLE conversations ADD COLUMN stage TEXT NOT NULL DEFAULT 'work';
   ALTER TABLE conversations ADD COLUMN plan TEXT;
+  `,
+  /* sql */ `
+  -- A project's files can sit in folders (#100): a relative path such as 'docs/meetings', '' at the root. Folders are
+  -- these prefixes, nothing more.
+  ALTER TABLE project_files ADD COLUMN folder TEXT NOT NULL DEFAULT '';
   `
 ]

@@ -4,6 +4,7 @@ import { type Command, COMMANDS, parseCommand } from '@shared/commands'
 import { normalizeThinkSetting } from '@shared/thinking'
 import type { Conversation, FileSource, McpServer, McpStatus, Skill, ThinkSetting } from '@shared/types'
 import { api } from '@/lib/api'
+import { toSources } from '@/lib/sources'
 import { cn, formatTokens } from '@/lib/format'
 import { findModel, reportError, thinkProfileFor, useApp } from '@/stores/app'
 import { useChat } from '@/stores/chat'
@@ -88,15 +89,6 @@ function serverState(status: McpStatus | undefined): string {
   if (status.state === 'starting') return 'Starting…'
   if (status.state === 'error') return "Couldn't start. See Settings → Tools"
   return `${status.tools.length} ${status.tools.length === 1 ? 'tool' : 'tools'}`
-}
-
-async function toSources(files: File[]): Promise<FileSource[]> {
-  return Promise.all(
-    files.map(async (file) => {
-      const path = api.files.pathFor(file)
-      return path ? { path } : { name: file.name || 'pasted-image.png', mime: file.type, data: await file.arrayBuffer() }
-    })
-  )
 }
 
 const SLASH_RE = /(^|\s)\/([a-z0-9-]*)$/i
