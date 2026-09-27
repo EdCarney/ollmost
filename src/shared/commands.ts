@@ -11,7 +11,7 @@ export interface Command {
 export const COMMANDS: readonly Command[] = [
   {
     name: 'compact',
-    description: 'Summarize the older turns so later replies replay the summary instead; the messages stay',
+    description: 'Summarize the whole chat so later replies replay the summary instead; the messages stay',
     hint: '[what to keep]'
   }
 ]

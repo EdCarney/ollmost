@@ -129,7 +129,7 @@ try {
   const title = await win.locator('header').first().innerText()
   check('chat gets an automatic title', !!title.trim() && !/New chat/.test(title), title.trim())
 
-  // 1b. /compact: two more exchanges, then the command summarizes all but the last four messages
+  // 1b. /compact: two more exchanges, then the command summarizes all six messages
   await send(win, 'Reply with the single word: one')
   await send(win, 'Reply with the single word: two')
   await win.fill('textarea', '/comp')
@@ -142,7 +142,11 @@ try {
   await win.keyboard.press('Enter')
   await win.waitForSelector('[data-testid="compaction"]', { timeout: 120000 })
   const divider = (await win.locator('[data-testid="compaction"]').innerText()).trim()
-  check('/compact summarizes the older messages and marks where the summary ends', /Compacted 2 messages/.test(divider), divider)
+  check('/compact summarizes every message so far', /Compacted 6 messages/.test(divider), divider)
+  check(
+    'the divider marks where the summary ends: after the last message',
+    await win.locator('[data-testid="compaction"]').evaluate((el) => !el.nextElementSibling)
+  )
   await win.locator('[data-testid="compaction"] button').click()
   await win.waitForTimeout(200)
   const opened = (await win.locator('[data-testid="compaction"]').innerText()).trim()
