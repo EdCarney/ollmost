@@ -134,7 +134,11 @@ export function ConversationMenu({
             </MenuItem>
           )}
           {conversation.allowedTools.length > 0 && (
-            <MenuSub label={`Tools allowed in this ${noun}`} icon={<Hand className="size-4" />}>
+            <MenuSub
+              label={`Tools allowed in this ${noun}`}
+              icon={<Hand className="size-4" />}
+              footer={<MenuItem onSelect={() => patch(conversation, { allowedTools: [] })}>Ask again before each tool</MenuItem>}
+            >
               <MenuLabel>These run without asking here:</MenuLabel>
               {conversation.allowedTools.map((key) => {
                 const { tool, where } = allowLabel(key, mcpServers)
@@ -145,8 +149,6 @@ export function ConversationMenu({
                   </MenuLabel>
                 )
               })}
-              <MenuSeparator />
-              <MenuItem onSelect={() => patch(conversation, { allowedTools: [] })}>Ask again before each tool</MenuItem>
             </MenuSub>
           )}
           <MenuSeparator />
