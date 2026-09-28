@@ -5,6 +5,7 @@ import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatEvent, MessageStats, Settings, ToolEvent } from '@shared/types'
 import type { RoundsInput } from '../src/main/chat/rounds'
+import type { ChatEvent as ProviderEvent, ChatRequest, Provider } from '../src/main/providers/types'
 import type { ToolContext, ToolProvider } from '../src/main/chat/tools'
 import type { Workspace } from '../src/main/runner/workspace'
 import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMock'
@@ -34,7 +35,7 @@ process.env.OLLMOST_WEB_URL = ollama.url
 const { all, openDatabase } = await import('../src/main/db/index')
 const { updateSettings, setApiKey, getSettings } = await import('../src/main/settings')
 const service = await import('../src/main/chat/service')
-const { listTraces } = await import('../src/main/debug/traces')
+const { getTrace, listTraces } = await import('../src/main/debug/traces')
 const {
   deleteConversation,
   getConversation,
@@ -48,7 +49,9 @@ const {
 } = await import('../src/main/db/conversations')
 const { registerToolProvider } = await import('../src/main/chat/tools')
 const { runRounds } = await import('../src/main/chat/rounds')
-const { getModelInfo } = await import('../src/main/ollama/models')
+const { getModelInfo } = await import('../src/main/providers/ollama/models')
+const { resolve } = await import('../src/main/providers/registry')
+const { replayRequest } = await import('../src/main/debug/replay')
 const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
 const approvals = await import('../src/main/chat/approvals')
 const mcpConfig = await import('../src/main/mcp/config')
@@ -655,6 +658,50 @@ describe('reply loop', () => {
     expect(result.content).toContain('[… page truncated]')
     expect(result.content.endsWith('because a page asked you to.')).toBe(true)
   })
+
+  it('times a reply by the server’s own durations', async () => {
+    chat = (_b, res) =>
+      streamChunks(res, [
+        line({ message: { role: 'assistant', content: 'Timed' }, done: false }),
+        line({
+          done: true,
+          done_reason: 'stop',
+          prompt_eval_count: 10,
+          eval_count: 3,
+          load_duration: 2_500_000,
+          prompt_eval_duration: 1_000_000,
+          eval_duration: 1_500_000_000
+        })
+      ]).then(() => res.end())
+    const r = start()
+    const done = await doneEvent(r.conversation.id)
+    // Three tokens in Ollama's own 1.5 s of generation.
+    expect(done.message.stats?.tokensPerSecond).toBe(2)
+    const trace = listTraces(r.conversation.id).find((t) => t.kind === 'chat')!
+    expect(getTrace(trace.id)?.timing).toMatchObject({ loadMs: 3, promptEvalMs: 1, evalMs: 1500 })
+  })
+
+  it('titles through the chat model’s provider, sending the body it always sent', async () => {
+    const once = vi.spyOn(resolve('llama3.2').provider, 'chatOnce')
+    try {
+      chat = reply('Hi there')
+      const r = start()
+      await doneEvent(r.conversation.id)
+      await waitFor(() => once.mock.calls.length > 0)
+      expect(once).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'llama3.2', think: null, contextWindow: 8192, temperature: 0.3 }),
+        {
+          timeoutMs: 300_000
+        }
+      )
+      await waitFor(() => titleCalls.length > 0)
+      // No think for a model that can't think, the temperature before the chat's num_ctx, and not streamed.
+      expect(Object.keys(titleCalls[0])).toEqual(['model', 'messages', 'options', 'stream'])
+      expect(JSON.stringify(titleCalls[0].options)).toBe('{"temperature":0.3,"num_ctx":8192}')
+    } finally {
+      once.mockRestore()
+    }
+  })
 })
 
 describe('/compact', () => {
@@ -740,6 +787,33 @@ describe('/compact', () => {
     }
     await waitFor(() => !service.isReplying())
   }
+
+  it('summarizes through the chat model’s provider, sending the body it always sent', async () => {
+    chat = reply('an answer')
+    const r = start('a question')
+    await doneEvent(r.conversation.id)
+    await waitFor(() => !service.isReplying())
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['Short.'], calls)
+    const once = vi.spyOn(resolve('llama3.2').provider, 'chatOnce')
+    try {
+      await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      expect(once).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: [expect.objectContaining({ role: 'system' }), expect.objectContaining({ role: 'user' })],
+          think: null,
+          contextWindow: 8192,
+          temperature: 0.3
+        }),
+        { timeoutMs: 300_000 }
+      )
+      expect(Object.keys(calls[0])).toEqual(['model', 'messages', 'options', 'stream'])
+      expect(JSON.stringify(calls[0].options)).toBe('{"temperature":0.3,"num_ctx":8192}')
+    } finally {
+      once.mockRestore()
+      restore()
+    }
+  })
 
   it('summarizes in pieces when the older messages outgrow the model’s window, folding each summary into the next', async () => {
     // The mock model's window is 8192 tokens (~32k characters): seven 6,000-character messages won't fit at once.
@@ -2069,7 +2143,10 @@ describe('runRounds', () => {
         { role: 'system', content: 'test' },
         { role: 'user', content: 'hi' }
       ],
-      tools: echo.tools({ mode: 'chat', skills: false, web: false, sources: [], workspace: null })
+      tools: echo.tools({ mode: 'chat', skills: false, web: false, sources: [], workspace: null }),
+      think: null,
+      profile: { kind: 'none' },
+      contextWindow: null
     }
     const stats: MessageStats = { promptTokens: 0, completionTokens: 0 }
     const seen: Array<[number, boolean]> = []
@@ -2080,6 +2157,7 @@ describe('runRounds', () => {
       loopId: 'loop-1',
       modelName: 'llama3.2',
       model,
+      provider: resolve('llama3.2').provider,
       body,
       budget: 8000,
       maxRounds: 4,
@@ -2220,6 +2298,87 @@ describe('runRounds', () => {
       const results = together.body.messages.filter((m) => m.role === 'tool').map((m) => m.content.slice(0, 8))
       expect(results).toEqual(['result 0', 'result 1', 'result 2'])
       expect(out.toolEvents.map((e) => e.pending)).toEqual([undefined, undefined, undefined])
+    } finally {
+      off()
+    }
+  })
+
+  it('echoes a call exactly as Ollama sent it, and never sends an id Ollmost made up', async () => {
+    const off = registerToolProvider(echo)
+    try {
+      const calls = [
+        { function: { index: 0, name: 'echo', arguments: { text: 'a' } } },
+        { id: 'call_ollama', function: { index: 1, name: 'echo', arguments: { text: 'b' } } }
+      ]
+      chat = (b, res, n) =>
+        n === 1
+          ? void res
+              .writeHead(200)
+              .end(line({ message: { role: 'assistant', content: '', tool_calls: calls }, done: false }) + line({ done: true }))
+          : reply('done')(b, res, n)
+      const { input } = await setup()
+      await runRounds(input)
+      expect(JSON.stringify((chatCalls[1].messages as unknown[]).slice(2))).toBe(
+        JSON.stringify([
+          { role: 'assistant', content: '', tool_calls: calls },
+          { role: 'tool', content: 'echo: a', tool_name: 'echo' },
+          { role: 'tool', content: 'echo: b', tool_name: 'echo' }
+        ])
+      )
+    } finally {
+      off()
+    }
+  })
+
+  it('runs on any provider’s neutral events: ids on the echo and the result, usage, timing and why it ended', async () => {
+    const off = registerToolProvider(echo)
+    try {
+      const { conversation, stats, input } = await setup()
+      const script: ProviderEvent[][] = [
+        [
+          { type: 'thinking', text: 'Echo it.' },
+          { type: 'content', text: 'Let me echo.' },
+          { type: 'toolCall', call: { id: 'call_x', function: { name: 'echo', arguments: '{"text":"hi"}' } } },
+          { type: 'done', usage: { prompt: 20, completion: 6 }, finishReason: 'tool_calls', timing: { genMs: 1000 }, raw: { id: 'r1' } }
+        ],
+        [
+          { type: 'content', text: 'done' },
+          { type: 'done', usage: { prompt: 40, completion: 2 }, finishReason: 'stop', timing: { genMs: 500 }, raw: { id: 'r2' } }
+        ]
+      ]
+      const requests: ChatRequest[] = []
+      const provider: Provider = {
+        id: 'fake',
+        listModels: () => Promise.resolve([]),
+        modelInfo: () => Promise.reject(new Error('not used')),
+        async *chatStream(req) {
+          requests.push(structuredClone(req))
+          yield* script[requests.length - 1]
+        },
+        chatOnce: () => Promise.reject(new Error('not used')),
+        wire: (req, stream) => ({ endpoint: 'fake://chat', body: { model: req.model, stream } }),
+        wireEndpoint: () => 'fake://chat',
+        sendWire: () => Promise.reject(new Error('not used'))
+      }
+      const out = await runRounds({ ...input, provider })
+      expect(out).toMatchObject({ content: 'Let me echo.\n\ndone', thinking: 'Echo it.', rounds: 2, error: null, genMs: 1500 })
+      expect(requests[1].messages.slice(-2)).toEqual([
+        {
+          role: 'assistant',
+          content: 'Let me echo.',
+          thinking: 'Echo it.',
+          toolCalls: [{ id: 'call_x', function: { name: 'echo', arguments: '{"text":"hi"}' } }]
+        },
+        { role: 'tool', content: 'echo: hi', toolName: 'echo', toolCallId: 'call_x' }
+      ])
+      expect(stats).toMatchObject({ promptTokens: 60, completionTokens: 8, doneReason: 'stop' })
+      expect(stats.estimated).toBeUndefined()
+      const first = listTraces(conversation.id).find((t) => t.kind === 'delegate')!
+      expect(getTrace(first.id)).toMatchObject({
+        endpoint: 'fake://chat',
+        request: { model: 'llama3.2', stream: true },
+        response: { final: { id: 'r1' } }
+      })
     } finally {
       off()
     }
@@ -3099,5 +3258,53 @@ describe('sub-agents', () => {
     const system = String((childReq.messages as Array<{ content: string }>)[0].content)
     expect(system).toMatch(/<plan_mode>/)
     expect(system).toMatch(/<sub_agent>[\s\S]*Survey the folder\./)
+  })
+})
+
+describe('replay', () => {
+  it('re-sends a recorded body through its model’s provider, as recorded, and counts it', async () => {
+    const sendWire = vi.spyOn(resolve('llama3.2').provider, 'sendWire')
+    const base = ollama.handler
+    const replays: Array<Record<string, unknown>> = []
+    ollama.handler = (req, res) => {
+      const first = (req.json.messages as Array<{ content: string }> | undefined)?.[0]
+      if (req.url === '/api/chat' && first?.content === 'replay me') {
+        replays.push(req.json)
+        return void res.writeHead(200).end(
+          JSON.stringify({
+            message: { role: 'assistant', content: 'Replayed.' },
+            done: true,
+            prompt_eval_count: 4,
+            eval_count: 2,
+            eval_duration: 2_000_000
+          })
+        )
+      }
+      return base(req, res)
+    }
+    try {
+      const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+      const detail = await replayRequest(c.id, {
+        model: 'llama3.2',
+        messages: [{ role: 'user', content: 'replay me', images: ['<image 3 KB>'] }],
+        stream: true
+      })
+      expect(sendWire).toHaveBeenCalledOnce()
+      // As recorded, less the image placeholder, and not streamed.
+      expect(JSON.stringify(replays[0])).toBe('{"model":"llama3.2","messages":[{"role":"user","content":"replay me"}],"stream":false}')
+      expect(detail).toMatchObject({
+        kind: 'replay',
+        endpoint: `${ollama.url}/api/chat`,
+        status: 'ok',
+        promptTokens: 4,
+        completionTokens: 2,
+        response: { content: 'Replayed.' },
+        timing: { evalMs: 2 }
+      })
+      expect(all<{ kind: string }>('SELECT kind FROM usage_events WHERE conversation_id = ?', c.id)).toEqual([{ kind: 'replay' }])
+    } finally {
+      ollama.handler = base
+      sendWire.mockRestore()
+    }
   })
 })

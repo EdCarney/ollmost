@@ -71,9 +71,10 @@ describe('assemble', () => {
     expect(messages[1].images).toBeUndefined()
   })
 
-  it('passes images through for vision models', () => {
-    const { messages } = assemble({ ...base, history: [turn('user', 'what is this', { images: ['AAAA'] })] })
-    expect(messages[1].images).toEqual(['AAAA'])
+  it('passes images through for vision models, with their type', () => {
+    const image = { data: 'AAAA', mime: 'image/png' }
+    const { messages } = assemble({ ...base, history: [turn('user', 'what is this', { images: [image] })] })
+    expect(messages[1].images).toEqual([image])
   })
 
   it('leaves room for the tool definitions every request carries', () => {
@@ -274,10 +275,35 @@ describe('past web calls', () => {
     const roles = assemble({ ...base, history }).messages.map((m) => m.role)
     expect(roles).toEqual(['system', 'user', 'assistant', 'tool', 'assistant', 'user'])
     const [call, result] = assemble({ ...base, history }).messages.slice(2, 4)
-    expect(call.tool_calls).toEqual([{ function: { name: 'web_search', arguments: { query: 'news' } } }])
-    expect(result).toMatchObject({ role: 'tool', tool_name: 'web_search' })
+    expect(call.toolCalls).toEqual([{ id: 'c00010000', function: { name: 'web_search', arguments: { query: 'news' } } }])
+    expect(result).toMatchObject({ role: 'tool', toolName: 'web_search', toolCallId: 'c00010000' })
     expect(result.content).toContain('https://b.example/pots')
     expect(result.content).toMatch(/Untrusted web data/)
+  })
+
+  it('names each call by its turn and place, the same on every request', () => {
+    const both: HistoryTurn = {
+      ...turn('assistant', 'Both.'),
+      tools: [
+        { name: 'web_search', args: { query: 'a' }, record: 'A' },
+        { name: 'web_fetch', args: { url: 'https://b.example' }, record: 'B' }
+      ]
+    }
+    const longer = [...history, both, turn('user', 'and now?')]
+    const first = assemble({ ...base, history: longer }).messages
+    // 'c', the turn's index and the call's place, 4 base-36 digits each: 9 letters and digits, as Mistral's templates want.
+    expect(first.flatMap((m) => m.toolCalls?.map((c) => c.id) ?? [])).toEqual(['c00010000', 'c00030000', 'c00030001'])
+    expect(first.filter((m) => m.role === 'tool').map((m) => m.toolCallId)).toEqual(['c00010000', 'c00030000', 'c00030001'])
+    // The same history makes the same request, byte for byte.
+    expect(JSON.stringify(assemble({ ...base, history: longer }).messages)).toBe(JSON.stringify(first))
+  })
+
+  it('keeps a call’s id when older turns are dropped to fit', () => {
+    const found: HistoryTurn = { ...turn('assistant', 'Found it.'), tools: [{ name: 'web_search', args: { query: 'b' }, record: 'B' }] }
+    const longer = [turn('user', 'x'.repeat(400_000)), turn('assistant', 'long ago'), turn('user', 'q2'), found, turn('user', 'q3')]
+    const { messages, droppedTurns } = assemble({ ...base, contextLength: 32_000, history: longer })
+    expect(droppedTurns).toBe(2)
+    expect(messages.flatMap((m) => m.toolCalls?.map((c) => c.id) ?? [])).toEqual(['c00030000'])
   })
 
   it('leaves them out for a model without tool support', () => {

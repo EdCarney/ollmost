@@ -1,6 +1,6 @@
 import type { ToolEvent } from '@shared/types'
 import { getConversation } from '../db/conversations'
-import type { OllamaTool } from '../ollama/client'
+import type { ToolDef } from '../providers/types'
 import { getSettings } from '../settings'
 import { capText, TOOL_RESULT_CHARS } from '../chat/results'
 import type { ToolContext, ToolProvider, ToolResult } from '../chat/tools'
@@ -30,7 +30,7 @@ export const MAX_TIMEOUT_SEC = 30 * 60
 
 const PATH_ARG = { type: 'string', description: "The file's path, relative to the session's folder" }
 
-export const READ_FILE: OllamaTool = {
+export const READ_FILE: ToolDef = {
   type: 'function',
   function: {
     name: 'read_file',
@@ -47,7 +47,7 @@ export const READ_FILE: OllamaTool = {
   }
 }
 
-export const LIST_FILES: OllamaTool = {
+export const LIST_FILES: ToolDef = {
   type: 'function',
   function: {
     name: 'list_files',
@@ -66,7 +66,7 @@ export const LIST_FILES: OllamaTool = {
   }
 }
 
-export const SEARCH_FILES: OllamaTool = {
+export const SEARCH_FILES: ToolDef = {
   type: 'function',
   function: {
     name: 'search_files',
@@ -83,7 +83,7 @@ export const SEARCH_FILES: OllamaTool = {
   }
 }
 
-export const EDIT_FILE: OllamaTool = {
+export const EDIT_FILE: ToolDef = {
   type: 'function',
   function: {
     name: 'edit_file',
@@ -102,7 +102,7 @@ export const EDIT_FILE: OllamaTool = {
   }
 }
 
-export const WRITE_FILE: OllamaTool = {
+export const WRITE_FILE: ToolDef = {
   type: 'function',
   function: {
     name: 'write_file',
@@ -118,7 +118,7 @@ export const WRITE_FILE: OllamaTool = {
   }
 }
 
-export const RUN_COMMAND: OllamaTool = {
+export const RUN_COMMAND: ToolDef = {
   type: 'function',
   function: {
     name: 'run_command',

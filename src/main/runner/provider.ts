@@ -4,7 +4,7 @@ import { homedir } from 'node:os'
 import { delimiter, isAbsolute, join, resolve, sep } from 'node:path'
 import type { ToolEvent } from '@shared/types'
 import { childPath } from '../env'
-import type { OllamaTool } from '../ollama/client'
+import type { ToolDef } from '../providers/types'
 import { getSettings } from '../settings'
 import { listSkills } from '../skills/library'
 import type { ToolProvider, ToolResult } from '../chat/tools'
@@ -22,7 +22,7 @@ export const CODE_SOURCE = 'code'
 const OUTPUT_CHARS = 20_000
 const RECORD_CHARS = 500
 
-export const RUN_CODE: OllamaTool = {
+export const RUN_CODE: ToolDef = {
   type: 'function',
   function: {
     name: 'run_code',

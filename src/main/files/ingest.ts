@@ -3,6 +3,7 @@ import { basename, extname, join } from 'node:path'
 import { nativeImage } from 'electron'
 import type { FileSource } from '@shared/types'
 import { paths } from '../paths'
+import type { ChatImage } from '../providers/types'
 import { errorMessage, estimateTokens, uid } from '../util'
 import { extractText, MODEL_IMAGE_MIMES, mimeFor } from './extract'
 
@@ -62,16 +63,19 @@ export async function ingestAll(sources: FileSource[]): Promise<{ ok: Ingested[]
   return { ok, errors }
 }
 
-/** Base64 image for Ollama's `images` field, downscaled when larger than the model needs. */
-export async function imageForModel(path: string, mime: string): Promise<string> {
+/** An image for a vision model (base64, and the type it's in), downscaled when larger than the model needs. */
+export async function imageForModel(path: string, mime: string): Promise<ChatImage> {
   const img = nativeImage.createFromPath(path)
-  if (img.isEmpty()) return (await readFile(path)).toString('base64')
+  if (img.isEmpty()) return { data: (await readFile(path)).toString('base64'), mime }
   const { width, height } = img.getSize()
   const longEdge = Math.max(width, height)
-  if (longEdge <= MODEL_IMAGE_EDGE && (mime === 'image/png' || mime === 'image/jpeg')) return (await readFile(path)).toString('base64')
+  if (longEdge <= MODEL_IMAGE_EDGE && (mime === 'image/png' || mime === 'image/jpeg'))
+    return { data: (await readFile(path)).toString('base64'), mime }
   const resized = longEdge > MODEL_IMAGE_EDGE ? img.resize({ width: Math.round((width * MODEL_IMAGE_EDGE) / longEdge) }) : img
   // PNG keeps transparency (JPEG would turn it black); everything else becomes a compact JPEG.
-  return (mime === 'image/png' ? resized.toPNG() : resized.toJPEG(88)).toString('base64')
+  return mime === 'image/png'
+    ? { data: resized.toPNG().toString('base64'), mime }
+    : { data: resized.toJPEG(88).toString('base64'), mime: 'image/jpeg' }
 }
 
 export async function removeFiles(filePaths: string[]): Promise<void> {

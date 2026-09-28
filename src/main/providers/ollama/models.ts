@@ -1,9 +1,9 @@
 import type { ModelInfo, ModelListResult, ModelOverrides } from '@shared/types'
-import { type CachedModelInfo, readModelProfile, writeModelInfo, writeModelOverrides } from '../db/kv'
-import { getSettings } from '../settings'
-import { errorMessage } from '../util'
-import { modelPrice } from '../usage/pricing'
-import { connectionMode, isCloudName, listTags, showModel } from './client'
+import { type CachedModelInfo, readModelProfile, writeModelInfo, writeModelOverrides } from '../../db/kv'
+import { getSettings } from '../../settings'
+import { errorMessage } from '../../util'
+import { modelPrice } from '../../usage/pricing'
+import { connectionMode, isCloudName, listTags, showModel } from './wire'
 
 const INFO_TTL = 24 * 60 * 60 * 1000
 const CATALOG_TTL = 60 * 60 * 1000
@@ -127,9 +127,9 @@ export async function listModels(refresh = false): Promise<ModelListResult> {
   return { models, error: models.length ? null : (errors[0] ?? 'No models found.') }
 }
 
-export async function getModelInfo(name: string): Promise<ModelInfo> {
+export async function getModelInfo(name: string, refresh = false): Promise<ModelInfo> {
   try {
-    return toModelInfo(name, await fetchInfo(name, false), true)
+    return toModelInfo(name, await fetchInfo(name, refresh), true)
   } catch {
     return toModelInfo(name, { capabilities: ['completion'], contextLength: null, family: null, parameterSize: null }, false)
   }

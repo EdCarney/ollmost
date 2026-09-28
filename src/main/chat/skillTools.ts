@@ -1,8 +1,8 @@
-import type { OllamaTool } from '../ollama/client'
+import type { ToolDef } from '../providers/types'
 import { findSkillByName, getSkill, readSkillFile } from '../skills/library'
 import type { ToolProvider } from './tools'
 
-export const SKILL_TOOLS: OllamaTool[] = [
+export const SKILL_TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {

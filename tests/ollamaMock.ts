@@ -1,3 +1,4 @@
+import { appendFileSync } from 'node:fs'
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import type { AddressInfo } from 'node:net'
 
@@ -21,6 +22,8 @@ export async function startMockOllama(): Promise<MockOllama> {
   const server: Server = createServer(async (req, res) => {
     let raw = ''
     for await (const part of req) raw += part
+    // OLLMOST_MOCK_DUMP=<file> appends every request as received, so a refactor can show it still sends the same bytes.
+    if (process.env.OLLMOST_MOCK_DUMP) appendFileSync(process.env.OLLMOST_MOCK_DUMP, `${req.method} ${req.url} ${raw}\n`)
     const json = raw ? (JSON.parse(raw) as Record<string, unknown>) : {}
     mock.requests.push(json)
     await mock.handler(Object.assign(req, { json }), res)

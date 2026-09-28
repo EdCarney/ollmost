@@ -1,7 +1,7 @@
 import { costOf, parsePricingHtml, priceFor } from '@shared/usage'
 import type { ModelPrice, PriceTable } from '@shared/types'
 import { readSetting, writeSetting } from '../db/kv'
-import { connectionMode, isCloudName } from '../ollama/client'
+import { connectionMode, isCloudName } from '../providers/ollama/wire'
 
 // Snapshot of ollama.com/pricing (USD per million tokens), used until the first live refresh.
 const BUNDLED: PriceTable = {
