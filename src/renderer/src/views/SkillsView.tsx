@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react'
 import type { Skill, SkillDetail, SkillSource } from '@shared/types'
 import { Markdown } from '@/components/Markdown'
 import { TopBar } from '@/components/TopBar'
-import { Badge, Button, EmptyState, Field, Modal, Spinner, Switch, TextArea, TextField, Tooltip } from '@/components/ui'
+import { Badge, Button, chosenOption, EmptyState, Field, Modal, Spinner, Switch, TextArea, TextField, Tooltip } from '@/components/ui'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/format'
 import { reportError, useApp } from '@/stores/app'
@@ -290,7 +290,7 @@ function SkillEditor({
               <button
                 key={t}
                 onClick={() => setPreview(t === 'Preview')}
-                className={cn('rounded-md px-2.5 py-1', preview === (t === 'Preview') ? 'bg-panel text-fg shadow-sm' : 'text-muted')}
+                className={cn('rounded-md px-2.5 py-1', preview === (t === 'Preview') ? chosenOption : 'text-muted')}
               >
                 {t}
               </button>

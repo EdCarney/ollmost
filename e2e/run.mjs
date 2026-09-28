@@ -495,6 +495,21 @@ await second.win.screenshot({ path: join(SHOTS, 'home-nord-dark.png') })
     latte.dangerFg === '#ffffff' && mocha.dangerFg === '#1e1e2e',
     `${latte.dangerFg} / ${mocha.dangerFg}`
   )
+  // The chosen option in a row of options is an accent chip, not a panel one that vanished on its track.
+  const chosen = await w.getByRole('button', { name: 'Dark', exact: true }).evaluate((b) => {
+    const n = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--o-accent').trim().slice(1), 16)
+    return {
+      pressed: b.getAttribute('aria-pressed'),
+      bg: getComputedStyle(b).backgroundColor,
+      accent: `rgb(${n >> 16}, ${(n >> 8) & 255}, ${n & 255})`
+    }
+  })
+  check(
+    'the chosen option stands out in the accent colour',
+    chosen.pressed === 'true' && chosen.bg === chosen.accent,
+    `${chosen.bg} vs ${chosen.accent}`
+  )
+  await w.screenshot({ path: join(SHOTS, 'settings-chosen-option.png') })
 }
 // 9c. The command palette: commands beside search, and a setting's choices previewed live
 {

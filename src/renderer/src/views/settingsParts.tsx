@@ -1,4 +1,5 @@
 import type { ReactNode } from 'react'
+import { chosenOption } from '@/components/ui'
 import { cn } from '@/lib/format'
 
 // Layout pieces shared by the Settings tabs.
@@ -49,7 +50,7 @@ export function Segmented<T extends string>({
           className={cn(
             'flex items-center gap-1.5 rounded-md',
             size === 'sm' ? 'px-2 py-0.5' : 'px-3 py-1',
-            value === o.value ? 'bg-panel text-fg shadow-sm' : 'text-muted hover:text-fg'
+            value === o.value ? chosenOption : 'text-muted hover:text-fg'
           )}
         >
           {o.icon}

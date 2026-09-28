@@ -68,6 +68,13 @@ function checks(p: Palette, dark: boolean): Check[] {
     { what: 'accent on accentSoft', ratio: contrast(p.accent, selection), floor: FLOOR.ui },
     { what: 'danger on its tint', ratio: contrast(p.danger, dangerTint), floor: FLOOR.ui },
     { what: 'fg on selection', ratio: contrast(p.fg, selection), floor: FLOOR.text },
+    // The chosen option in a row of options (ui's `chosenOption`) is an accent chip on a hover-tinted track,
+    // on a page's canvas or a dialog's panel.
+    ...(['canvas', 'panel'] as const).map((s) => ({
+      what: `chosen option on its track (on ${s})`,
+      ratio: contrast(p.accent, flatten(p.hover, p[s])),
+      floor: FLOOR.ui
+    })),
     ...(['synKeyword', 'synString', 'synFunction', 'synConstant', 'synPunctuation'] as const).map((s) => on(s, 'code', FLOOR.ui)),
     on('synComment', 'code', FLOOR.comment),
     ...(['sidebar', 'bubble', 'code'] as const).map((s) => on(s, 'canvas', FLOOR.surface)),
