@@ -1,14 +1,15 @@
 import { ChevronRight } from 'lucide-react'
-import { useEffect, useState } from 'react'
-import type { AnatomySegment } from '@shared/debug'
+import { useEffect, useMemo, useState } from 'react'
+import { type AnatomySegment, type TraceMessage, traceMessages } from '@shared/debug'
+import type { TraceDialect } from '@shared/types'
 import { Tooltip } from '@/components/ui'
 import { api } from '@/lib/api'
-import { cn, formatContext, formatTokens } from '@/lib/format'
+import { cn, contextSizeLabel, formatTokens } from '@/lib/format'
 import { JsonBlock } from './bits'
 
 interface Req {
   options?: { num_ctx?: number } & Record<string, unknown>
-  messages?: Array<{ role?: string; content?: string; images?: unknown[]; thinking?: string; tool_calls?: unknown[]; tool_name?: string }>
+  messages?: unknown[]
 }
 
 const GROUP_LABEL: Record<AnatomySegment['group'], string> = {
@@ -25,25 +26,28 @@ const GROUP_LABEL: Record<AnatomySegment['group'], string> = {
  */
 export function Anatomy({
   request,
+  dialect,
   anatomy,
   actualTokens,
   model
 }: {
   request: Req
+  dialect: TraceDialect
   anatomy: { segments: AnatomySegment[]; total: number }
   actualTokens: number | null
   model: string | null
 }) {
-  // Local requests carry the num_ctx Ollama actually used; only cloud requests need the model's length.
+  // Ollama's local requests carry the num_ctx they used; anything else uses the window the model gets now.
   const numCtx = request.options?.num_ctx ?? null
   const [modelContext, setModelContext] = useState<number | null>(null)
   useEffect(() => {
     if (model && numCtx === null)
-      void api.models
-        .info(model)
-        .then((m) => setModelContext(m.contextLength))
-        .catch(() => setModelContext(null))
+      void api.models.info(model).then(
+        (m) => setModelContext(m.contextWindow ?? m.contextLength),
+        () => setModelContext(null)
+      )
   }, [model, numCtx])
+  const messages = useMemo(() => traceMessages(request, dialect), [request, dialect])
   const contextLength = numCtx ?? modelContext
 
   const used = actualTokens ?? anatomy.total
@@ -58,7 +62,8 @@ export function Anatomy({
           <div className="mb-1.5 flex items-baseline justify-between text-[13px]">
             <span className="font-medium">Context window</span>
             <span className="tabular-nums text-muted">
-              {formatTokens(used)} of {formatContext(contextLength)} · {(share * 100).toFixed(1)}%{actualTokens == null && ' (estimated)'}
+              {formatTokens(used)} of {contextSizeLabel(contextLength)} · {(share * 100).toFixed(1)}%
+              {actualTokens == null && ' (estimated)'}
             </span>
           </div>
           {/* Meter: same-hue fill on a neutral track. */}
@@ -82,7 +87,7 @@ export function Anatomy({
           <h3 className="text-xs font-semibold uppercase tracking-wide text-subtle">Where the tokens go</h3>
           <span className="text-xs tabular-nums text-subtle">
             ≈{anatomy.total.toLocaleString()} estimated
-            {actualTokens != null && ` · ${actualTokens.toLocaleString()} counted by Ollama`}
+            {actualTokens != null && ` · ${actualTokens.toLocaleString()} counted by the server`}
           </span>
         </div>
         {groups.map((group) => (
@@ -113,9 +118,9 @@ export function Anatomy({
       </section>
 
       <section>
-        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-subtle">Messages ({request.messages?.length ?? 0})</h3>
+        <h3 className="mb-2 text-xs font-semibold uppercase tracking-wide text-subtle">Messages ({messages.length})</h3>
         <div className="space-y-2">
-          {(request.messages ?? []).map((m, i) => (
+          {messages.map((m, i) => (
             <MessageRow key={i} index={i} message={m} />
           ))}
         </div>
@@ -131,32 +136,31 @@ const ROLE_STYLE: Record<string, string> = {
   tool: 'bg-hover text-subtle'
 }
 
-function MessageRow({ index, message: m }: { index: number; message: NonNullable<Req['messages']>[number] }) {
-  const [open, setOpen] = useState(index === 0 ? false : !!m.content && m.content.length < 400)
-  const text = m.content ?? ''
-  const tokens = Math.ceil((text.length + (m.thinking?.length ?? 0)) / 4)
+function MessageRow({ index, message: m }: { index: number; message: TraceMessage }) {
+  const [open, setOpen] = useState(index === 0 ? false : !!m.text && m.text.length < 400)
+  const tokens = Math.ceil((m.text.length + m.thinking.length) / 4)
   return (
     <div className="rounded-ollmost border border-line">
       <button onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2 px-3 py-2 text-left text-[13px]">
         <ChevronRight className={cn('size-3.5 shrink-0 text-subtle transition-transform', open && 'rotate-90')} />
-        <span className={cn('rounded px-1.5 py-px font-mono text-[11px]', ROLE_STYLE[m.role ?? ''] ?? 'bg-hover')}>
+        <span className={cn('rounded px-1.5 py-px font-mono text-[11px]', ROLE_STYLE[m.role] ?? 'bg-hover')}>
           {m.role}
-          {m.tool_name ? `:${m.tool_name}` : ''}
+          {m.toolName ? `:${m.toolName}` : ''}
         </span>
         <span className="min-w-0 flex-1 truncate text-muted">
-          {text.replace(/\s+/g, ' ').slice(0, 160) || (m.tool_calls ? '(tool call)' : '(empty)')}
+          {m.text.replace(/\s+/g, ' ').slice(0, 160) || (m.toolCalls ? '(tool call)' : '(empty)')}
         </span>
-        {m.images?.length ? <span className="shrink-0 text-xs text-subtle">{m.images.length} image(s)</span> : null}
+        {m.images.length ? <span className="shrink-0 text-xs text-subtle">{m.images.length} image(s)</span> : null}
         <span className="shrink-0 font-mono text-[11px] tabular-nums text-subtle">≈{formatTokens(tokens)}</span>
       </button>
       {open && (
         <div className="space-y-2 border-t border-line px-3 py-2">
           {m.thinking && <pre className="selectable whitespace-pre-wrap font-mono text-[12px] text-subtle">{m.thinking}</pre>}
-          {text && (
-            <pre className="selectable max-h-[520px] overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-relaxed">{text}</pre>
+          {m.text && (
+            <pre className="selectable max-h-[520px] overflow-auto whitespace-pre-wrap font-mono text-[12px] leading-relaxed">{m.text}</pre>
           )}
-          {m.tool_calls && <JsonBlock value={m.tool_calls} />}
-          {m.images?.length ? <div className="text-xs text-subtle">{m.images.join(', ')}</div> : null}
+          {m.toolCalls && <JsonBlock value={m.toolCalls} />}
+          {m.images.length ? <div className="text-xs text-subtle">{m.images.join(', ')}</div> : null}
         </div>
       )}
     </div>

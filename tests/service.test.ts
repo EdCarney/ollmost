@@ -3491,7 +3491,7 @@ describe('replay', () => {
     }
     try {
       const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
-      const detail = await replayRequest(c.id, {
+      const detail = await replayRequest(c.id, 'ollama/llama3.2', {
         model: 'llama3.2',
         messages: [{ role: 'user', content: 'replay me', images: ['<image 3 KB>'] }],
         stream: true

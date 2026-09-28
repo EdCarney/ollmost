@@ -451,6 +451,11 @@ export interface UsageSummary {
 export type TraceKind = 'chat' | 'title' | 'tool' | 'replay' | 'compact' | 'delegate'
 export type TraceStatus = 'running' | 'ok' | 'error' | 'aborted'
 
+/** A trace request's wire format: the endpoint kind it went to. */
+export type TraceDialect = EndpointKind
+/** Which key a request carried (never the key itself): the ollama.com account's, its endpoint's own, or none. */
+export type TraceAuth = 'ollama.com' | 'endpoint' | null
+
 export interface TraceSummary {
   id: string
   conversationId: ID | null
@@ -470,12 +475,12 @@ export interface TraceSummary {
 }
 
 export interface TraceTiming {
-  /** Time until Ollama's first response byte. */
+  /** Time until the server's first response byte. */
   ttfbMs: number | null
   /** Time until the first thinking or content token. */
   firstTokenMs: number | null
   totalMs: number | null
-  /** Ollama's own durations (from the final chunk). */
+  /** The server's own durations, when it reports them. */
   loadMs: number | null
   promptEvalMs: number | null
   evalMs: number | null
@@ -483,6 +488,12 @@ export interface TraceTiming {
 
 export interface TraceDetail extends TraceSummary {
   endpoint: string
+  /** The wire format of `request`; a trace recorded before endpoints existed reads as 'ollama'. */
+  dialect: TraceDialect
+  auth: TraceAuth
+  /** The endpoint the request went to, as it was named then; null for tool calls and older traces. */
+  endpointId: string | null
+  endpointName: string | null
   /** The exact body sent, with image bytes replaced by size placeholders. */
   request: unknown
   response: {

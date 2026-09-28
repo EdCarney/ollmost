@@ -1,53 +1,92 @@
-import { stripImagePlaceholders } from '@shared/debug'
-import { MIGRATED_ENDPOINT_ID, toModelKey } from '@shared/modelKey'
-import type { TraceDetail } from '@shared/types'
+import { stripImagePlaceholders, traceTarget } from '@shared/debug'
+import { toModelKey } from '@shared/modelKey'
+import type { ModelInfo, TraceDetail } from '@shared/types'
 import { insertUsageEvent } from '../db/usage'
-import { resolve } from '../providers/registry'
+import { EndpointGoneError, modelInfo, resolve } from '../providers/registry'
 import { requestCost } from '../usage/pricing'
 import { errorMessage } from '../util'
 import { startTrace } from './traces'
 
-type Recorded = { model: string; messages: unknown[] }
+interface ReplayBody extends Record<string, unknown> {
+  model: string
+  messages: unknown[]
+}
+
+/** The response's stats without the reply itself, which the trace shows on its own. */
+function statsOf(raw: unknown): unknown {
+  if (!raw || typeof raw !== 'object') return raw
+  const { message: _message, choices, ...rest } = raw as Record<string, unknown>
+  const finish = Array.isArray(choices) ? (choices[0] as { finish_reason?: unknown } | undefined)?.finish_reason : undefined
+  return finish === undefined ? rest : { ...rest, finish_reason: finish }
+}
+
+/** Billing for the replayed model, else the trace's own (an edited name may not exist); untracked when neither reads. */
+async function billingFor(keys: string[]): Promise<Pick<ModelInfo, 'billing' | 'price'>> {
+  for (const key of new Set(keys)) {
+    try {
+      return await modelInfo(key)
+    } catch {
+      // Try the next.
+    }
+  }
+  return { billing: 'untracked', price: null }
+}
 
 /**
- * Re-send a (possibly edited) recorded request, non-streaming, to its model's server, in that server's own shape.
+ * Re-send a (possibly edited) recorded request, non-streaming, to the endpoint the trace went to. `model` is the trace's
+ * model key, which names that endpoint; the body's own `model` (maybe edited) is what the endpoint is asked for.
+ * `endpointName` is the endpoint's name when the trace was recorded, for the message if it has since been removed.
  * Nothing is added to the chat; the call is recorded as a 'replay' trace and counted as usage.
  */
-export async function replayRequest(conversationId: string | null, raw: unknown): Promise<TraceDetail> {
-  const recorded = raw as Partial<Recorded> | null
-  if (!recorded || typeof recorded !== 'object' || typeof recorded.model !== 'string' || !Array.isArray(recorded.messages))
+export async function replayRequest(
+  conversationId: string | null,
+  model: string | null,
+  raw: unknown,
+  endpointName?: string | null
+): Promise<TraceDetail> {
+  if (!raw || typeof raw !== 'object' || typeof (raw as ReplayBody).model !== 'string' || !Array.isArray((raw as ReplayBody).messages))
     throw new Error('A replay needs a JSON object with a "model" string and a "messages" array.')
-  const { body } = stripImagePlaceholders(recorded as Recorded)
-  const request = { ...body, stream: false }
-  // A replay body names the model as its server knows it, and replays go to the ollama endpoint, as they did before
-  // endpoints (PR 4 routes a replay by its trace's key).
-  const key = toModelKey(MIGRATED_ENDPOINT_ID, request.model)
-  const { provider, model } = resolve(key)
-  const info = await provider.modelInfo(model)
+  // One request, not a stream: a streamed round's body carries stream, and stream_options, which only a stream allows.
+  const { stream: _stream, stream_options: _options, ...edited } = stripImagePlaceholders(raw as ReplayBody).body
+  const request = { ...edited, stream: false }
+  let target: ReturnType<typeof resolve>
+  try {
+    // A trace with no model key resolves by its body's name, the way any leftover name does.
+    target = resolve(model ?? request.model)
+  } catch (err) {
+    if (err instanceof EndpointGoneError)
+      throw new Error(`This trace's endpoint (${endpointName || err.endpointId}) no longer exists.`, { cause: err })
+    throw err
+  }
+  const { provider, endpoint } = target
+  const key = toModelKey(endpoint.id, request.model)
   const trace = startTrace({
     kind: 'replay',
     conversationId,
     messageId: null,
     model: key,
+    // Where the provider posts its bodies, as a round's trace records it.
     endpoint: provider.wireEndpoint(),
     request,
-    summary: 'Replay…'
+    summary: 'Replay…',
+    ...traceTarget(endpoint)
   })
   try {
     const res = await provider.sendWire(request, { timeoutMs: 10 * 60_000 })
     trace.firstByte()
     const promptTokens = res.usage.prompt ?? 0
     const completionTokens = res.usage.completion ?? 0
+    const info = await billingFor([key, model ?? key])
     const costUsd = requestCost(info, promptTokens, completionTokens)
     insertUsageEvent({
       conversationId,
       messageId: null,
       model: key,
       kind: 'replay',
+      billing: info.billing,
       promptTokens,
       completionTokens,
       costUsd,
-      billing: info.billing,
       estimated: false
     })
     return trace.finish({
@@ -56,7 +95,7 @@ export async function replayRequest(conversationId: string | null, raw: unknown)
         content: res.content,
         thinking: res.thinking || undefined,
         toolCalls: res.toolCalls.length ? res.toolCalls : undefined,
-        final: res.raw
+        final: statsOf(res.raw)
       },
       promptTokens,
       completionTokens,

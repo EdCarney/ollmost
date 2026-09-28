@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { parseMessage } from '@shared/artifactParser'
+import { traceTarget } from '@shared/debug'
 import { normalizeSpaces } from '@shared/text'
 import { EVENT_CHANNELS } from '@shared/ipc'
 import { resolveThinkProfile } from '@shared/thinking'
@@ -759,7 +760,8 @@ async function summarizeOnce(
     model: modelName,
     endpoint: wire.endpoint,
     request: wire.body,
-    summary: 'Compacting…'
+    summary: 'Compacting…',
+    ...traceTarget(provider.endpoint)
   })
   try {
     const res = await provider.chatOnce(request, { timeoutMs: 5 * 60_000 })
@@ -846,7 +848,8 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       model: modelName,
       endpoint: wire.endpoint,
       request: wire.body,
-      summary: 'Generating title…'
+      summary: 'Generating title…',
+      ...traceTarget(provider.endpoint)
     })
     // Bounded: a title is never worth a request that hangs forever (it may still need a cold model load).
     const res = await provider.chatOnce(request, { timeoutMs: 5 * 60_000 })
