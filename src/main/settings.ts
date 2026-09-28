@@ -1,8 +1,8 @@
-import { safeStorage } from 'electron'
 import type { DeepPartial } from '@shared/ipc'
 import { DEFAULT_THEME_ID } from '@shared/themes'
 import type { Settings } from '@shared/types'
-import { deleteSetting, readSetting, writeSetting } from './db/kv'
+import { readSetting, writeSetting } from './db/kv'
+import { getSecret, OLLAMA_ACCOUNT_SECRET, setSecret } from './providers/secrets'
 
 type StoredSettings = Omit<Settings, 'connection'> & { connection: Omit<Settings['connection'], 'hasApiKey'> }
 
@@ -63,19 +63,11 @@ export function updateSettings(patch: DeepPartial<Settings>): Settings {
   return getSettings()
 }
 
-// The ollama.com API key never leaves the main process; at rest it is encrypted with the OS keychain.
+// The ollama.com API key never leaves the main process; see providers/secrets.ts.
 export function setApiKey(key: string | null): void {
-  if (!key) return deleteSetting('apiKey')
-  if (!safeStorage.isEncryptionAvailable()) throw new Error('OS encryption is unavailable; cannot store the API key')
-  writeSetting('apiKey', safeStorage.encryptString(key.trim()).toString('base64'))
+  setSecret(OLLAMA_ACCOUNT_SECRET, key)
 }
 
 export function getApiKey(): string | null {
-  const enc = readSetting<string | null>('apiKey', null)
-  if (!enc) return null
-  try {
-    return safeStorage.decryptString(Buffer.from(enc, 'base64'))
-  } catch {
-    return null
-  }
+  return getSecret(OLLAMA_ACCOUNT_SECRET)
 }
