@@ -5,3 +5,7 @@ package-lock.json
 *.md
 resources/Ollmost.icon/
 .playwright-mcp/
+docs/superpowers/plans/2026-09-27-model-endpoints-capture/
+tests/fixtures/sse/
+tests/fixtures/discovery/
+tests/fixtures/once/

@@ -1,0 +1,45 @@
+{
+  "url": "http://localhost:1234/v1/chat/completions",
+  "request": {
+    "model": "google/gemma-4-e4b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What's the weather in Paris right now? Use the get_weather tool."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "The current weather in a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "The city, e.g. Paris"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      }
+    ],
+    "stream": false
+  },
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 3673,
+  "totalMs": 3673,
+  "chunks": [
+    {
+      "atMs": 3673,
+      "bytes": 1120
+    }
+  ],
+  "error": null
+}

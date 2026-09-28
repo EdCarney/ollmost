@@ -4,7 +4,8 @@ import globals from 'globals'
 import tseslint from 'typescript-eslint'
 
 export default tseslint.config(
-  { ignores: ['out/', 'dist/', 'e2e/shots/'] },
+  // The model-endpoints capture spike's script is kept exactly as the plan wrote it; nothing in that folder ships.
+  { ignores: ['out/', 'dist/', 'e2e/shots/', 'docs/superpowers/plans/2026-09-27-model-endpoints-capture/'] },
   js.configs.recommended,
   tseslint.configs.recommended,
   {

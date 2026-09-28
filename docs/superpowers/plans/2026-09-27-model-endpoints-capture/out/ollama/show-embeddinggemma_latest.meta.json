@@ -1,0 +1,17 @@
+{
+  "url": "http://localhost:11434/api/show",
+  "request": {
+    "model": "embeddinggemma:latest"
+  },
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 7,
+  "totalMs": 7,
+  "chunks": [
+    {
+      "atMs": 7,
+      "bytes": 19142
+    }
+  ],
+  "error": null
+}

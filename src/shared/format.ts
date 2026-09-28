@@ -6,6 +6,17 @@ export function formatContext(tokens: number | null): string {
   return tokens >= 1_000_000 ? `${(tokens / 1_000_000).toFixed(tokens % 1_000_000 ? 1 : 0)}M` : `${Math.round(tokens / 1000)}K`
 }
 
+/**
+ * A context size as it was chosen: a round decimal size as formatContext reads it (128000 is "128K", not "125K"), else in
+ * binary units when it divides evenly (65536 is "64K", 1048576 "1M", not "66K", "1.0M"), else formatContext's.
+ */
+export function contextSizeLabel(n: number | null): string {
+  if (!n) return ''
+  if (n % 1000 === 0) return formatContext(n)
+  if (n % 1_048_576 === 0) return `${n / 1_048_576}M`
+  return n % 1024 === 0 ? `${n / 1024}K` : formatContext(n)
+}
+
 /** A token count with a unit: 999, 8.8K, 123K, 8.79M, 10.0M, 100M (two decimals below 10M, one below 100M). */
 export function formatTokens(n: number): string {
   if (n >= 1_000_000) {

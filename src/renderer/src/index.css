@@ -228,6 +228,20 @@
     border-radius: var(--o-radius);
   }
 
+  /*
+   * A shadow on whichever side of a horizontal scroller has more to see, since macOS hides scrollbars until you
+   * scroll. Covers in the canvas colour scroll with the content (`local`) and hide the fixed shadows (`scroll`) at
+   * either end. For a scroller on the canvas.
+   */
+  .scroll-shadows-x {
+    --scroll-shadow: color-mix(in srgb, var(--o-fg) 14%, transparent);
+    background:
+      linear-gradient(to right, var(--o-canvas) 40%, transparent) left center / 40px 100% no-repeat local,
+      linear-gradient(to left, var(--o-canvas) 40%, transparent) right center / 40px 100% no-repeat local,
+      linear-gradient(to right, var(--scroll-shadow), transparent) left center / 16px 100% no-repeat scroll,
+      linear-gradient(to left, var(--scroll-shadow), transparent) right center / 16px 100% no-repeat scroll;
+  }
+
   /* Debugger JSON: long strings (system prompts) wrap instead of running off-screen. */
   .json-wrap pre {
     white-space: pre-wrap;

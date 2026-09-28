@@ -1,0 +1,17 @@
+{
+  "url": "http://localhost:11434/api/show",
+  "request": {
+    "model": "gemma4:e4b-mlx"
+  },
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 11,
+  "totalMs": 11,
+  "chunks": [
+    {
+      "atMs": 11,
+      "bytes": 21642
+    }
+  ],
+  "error": null
+}

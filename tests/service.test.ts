@@ -8,7 +8,8 @@ import type { RoundsInput } from '../src/main/chat/rounds'
 import type { ChatEvent as ProviderEvent, ChatRequest, Provider } from '../src/main/providers/types'
 import type { ToolContext, ToolProvider } from '../src/main/chat/tools'
 import type { Workspace } from '../src/main/runner/workspace'
-import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMock'
+import { toModelKey } from '@shared/modelKey'
+import { completionJson, type Dialect, line, type MockOllama, startMockOllama, streamChunks, type Turn, writeTurn } from './ollamaMock'
 
 // Everything above the Electron line is real: SQLite (in memory), settings, prompt assembly, the
 // Ollama client and the tool loop. Only Electron itself is faked, and Ollama is a local mock server.
@@ -30,6 +31,8 @@ vi.mock('electron', () => ({
 
 // web.ts reads its base URL at import, so the mock must be listening before the service loads.
 const ollama: MockOllama = await startMockOllama()
+// An OpenAI-compatible server, added below as a second endpoint: the reply loop must save the same over either.
+const openaiServer: MockOllama = await startMockOllama()
 process.env.OLLMOST_WEB_URL = ollama.url
 
 const { all, openDatabase } = await import('../src/main/db/index')
@@ -48,6 +51,7 @@ const {
   updateMessage
 } = await import('../src/main/db/conversations')
 const { registerToolProvider } = await import('../src/main/chat/tools')
+const { addEndpoint } = await import('../src/main/providers/endpoints')
 const { runRounds } = await import('../src/main/chat/rounds')
 const { EndpointGoneError, invalidateProviders, modelInfo, resolve } = await import('../src/main/providers/registry')
 const { replayRequest } = await import('../src/main/debug/replay')
@@ -2553,6 +2557,39 @@ describe('runRounds', () => {
       off()
     }
   })
+
+  it('times a round by the clock only across 50 ms or more, and always by a generation time its server reports', async () => {
+    let now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      // One text round, `spanMs` from its first token to its end, with or without the server's own time.
+      const round = async (spanMs: number, reported?: number) => {
+        const { input } = await setup()
+        const provider: Provider = {
+          id: 'fake',
+          endpoint: { id: 'fake', name: 'Fake', kind: 'openai', flavor: 'generic', baseUrl: 'fake://', enabled: true, hasKey: false },
+          listModels: () => Promise.resolve([]),
+          modelInfo: () => Promise.reject(new Error('not used')),
+          async *chatStream() {
+            yield { type: 'content', text: 'Hi there' }
+            now += spanMs
+            yield { type: 'done', usage: { prompt: 5, completion: 4 }, finishReason: 'stop', timing: { genMs: reported }, raw: {} }
+          },
+          chatOnce: () => Promise.reject(new Error('not used')),
+          wire: (req, stream) => ({ endpoint: 'fake://chat', body: { model: req.model, stream } }),
+          wireEndpoint: () => 'fake://chat',
+          sendWire: () => Promise.reject(new Error('not used'))
+        }
+        const { genMs, timedTokens, error } = await runRounds({ ...input, provider })
+        return { genMs, timedTokens, error }
+      }
+      expect(await round(30)).toEqual({ genMs: 0, timedTokens: 0, error: null })
+      expect(await round(60)).toEqual({ genMs: 60, timedTokens: 4, error: null })
+      expect(await round(0, 10)).toEqual({ genMs: 10, timedTokens: 4, error: null })
+    } finally {
+      clock.mockRestore()
+    }
+  })
 })
 
 describe('sub-agents', () => {
@@ -3476,5 +3513,267 @@ describe('replay', () => {
       ollama.handler = base
       sendWire.mockRestore()
     }
+  })
+})
+
+// ---- One reply loop, both dialects ----
+// The same scripted conversation runs against the Ollama mock (NDJSON) and the OpenAI-compatible mock (SSE). Both must
+// save the same reply, tool events and usage rows.
+
+afterAll(() => openaiServer.close())
+const DIALECTS: Dialect[] = ['ollama', 'openai']
+let openaiId = ''
+const keyFor = (d: Dialect) => toModelKey(d === 'ollama' ? 'ollama' : openaiId, 'llama3.2')
+const asksUsage = (b: Record<string, unknown>) => !!(b.stream_options as { include_usage?: boolean } | undefined)?.include_usage
+
+interface Script {
+  prompt: string
+  turn: (body: Record<string, unknown>, n: number) => Turn
+  web?: (path: string, res: ServerResponse) => unknown
+  opts?: { maxToolRounds?: number }
+  /** Press Stop (quietly, as deleting the chat does) once the first text arrives. */
+  stop?: boolean
+  /** A pause between the server's chunks. */
+  pauseMs?: number
+}
+
+let pageNo = 0
+const SCRIPTS: Record<string, Script> = {
+  'plain reply': { prompt: 'hello', turn: () => ({ thinking: 'Greet them.', content: 'Hi there', usage: { prompt: 10, completion: 3 } }) },
+  'tool round': {
+    prompt: 'look it up',
+    turn: (_b, n) =>
+      n === 1
+        ? { content: 'Let me check.', toolCalls: [{ name: 'web_search', args: { query: 'ollmost' } }] }
+        : { content: 'Found it.', usage: { prompt: 10, completion: 3 } },
+    web: (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [{ title: 'Ollmosts', url: 'https://k.io', content: 'hot' }] }))
+  },
+  // Longer than the think splitter holds back, so the OpenAI mock's text shows (and Stop can be pressed) at once too.
+  'stop mid-stream': { prompt: 'hello', turn: () => ({ content: 'partial reply '.repeat(6), cut: 'hang' }), stop: true },
+  'dropped stream': { prompt: 'hello', turn: () => ({ content: 'Half an ans', cut: 'drop' }) },
+  'round limit': {
+    prompt: 'dig deep',
+    turn: (b, n) => (b.tools ? { toolCalls: [{ name: 'web_search', args: { query: `q${n}` } }] } : { content: 'Stopped early' }),
+    web: (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] })),
+    opts: { maxToolRounds: 3 }
+  },
+  // The mock model has an 8,192-token window on both endpoints: 12K-character pages overflow it by the third request.
+  'result shortening': {
+    prompt: 'compare these two pages',
+    turn: (_b, n) =>
+      n <= 2
+        ? { toolCalls: [{ name: 'web_fetch', args: { url: `https://p${n}.io` } }], usage: { prompt: 100, completion: 5 } }
+        : { content: 'Compared.', usage: { prompt: 100, completion: 3 } },
+    web: (_p, res) =>
+      res.writeHead(200).end(JSON.stringify({ title: `Page ${++pageNo}`, content: `${'x'.repeat(12_000)} MARK-${pageNo}`, links: [] }))
+  },
+  // #175: two sub-agents delegated in one round run at the same time (Settings allows 3 by default). A child is told
+  // apart by its system prompt. Both children report the same counts, so their usage rows match whichever lands first.
+  'two sub-agents at once': {
+    prompt: 'research both',
+    turn: (b) => {
+      const messages = b.messages as Array<{ role: string; content: unknown }>
+      if (String(messages[0].content).includes('<sub_agent>')) {
+        const task = String(messages.find((m) => m.role === 'user')!.content)
+        return { content: task.includes('first') ? 'A' : 'B', usage: { prompt: 10, completion: 1 } }
+      }
+      return messages.some((m) => m.role === 'tool')
+        ? { content: 'Both done.', usage: { prompt: 10, completion: 3 } }
+        : {
+            toolCalls: [
+              { name: 'delegate', args: { task: 'the first' } },
+              { name: 'delegate', args: { task: 'the second' } }
+            ],
+            usage: { prompt: 10, completion: 5 }
+          }
+    }
+  }
+}
+
+/** What a reply saved, without what depends on the clock, and its usage rows without the endpoint in the model's key. */
+function savedReply(messageId: string) {
+  const m = getMessage(messageId)!
+  const { durationMs: _d, tokensPerSecond: _t, thinkingMs: _k, ...stats } = m.stats ?? {}
+  const rows = all<{
+    model: string
+    kind: string
+    prompt_tokens: number
+    completion_tokens: number
+    cost_usd: number | null
+    estimated: number
+    billing: string
+  }>(
+    `SELECT model, kind, prompt_tokens, completion_tokens, cost_usd, estimated, billing FROM usage_events
+     WHERE message_id = ? AND kind != 'title' ORDER BY created_at`,
+    messageId
+  )
+  return {
+    content: m.content,
+    thinking: m.thinking,
+    thinkingSegments: m.thinkingSegments?.map(({ ms: _ms, ...s }) => s) ?? null,
+    failed: m.error !== null,
+    stats,
+    toolEvents: m.toolEvents,
+    usage: rows.map((r) => ({ ...r, model: r.model.slice(r.model.indexOf('/') + 1) }))
+  }
+}
+
+async function runScript(dialect: Dialect, script: Script) {
+  setApiKey('test-key')
+  pageNo = 0
+  events.length = 0
+  chatCalls = []
+  web = script.web ?? ((_p, res) => res.writeHead(404).end())
+  chat = (b, res, n) => writeTurn(res, dialect, script.turn(b, n), { includeUsage: asksUsage(b), pauseMs: script.pauseMs })
+  const r = service.send(
+    {
+      conversationId: null,
+      projectId: null,
+      content: script.prompt,
+      attachmentIds: [],
+      model: keyFor(dialect),
+      think: null,
+      skills: [],
+      toolSources: []
+    },
+    script.opts
+  )
+  if (script.stop) {
+    await waitFor(() => events.some((e) => e.type === 'delta' && e.conversationId === r.conversation.id))
+    await service.stop(r.conversation.id, { quiet: true })
+  } else await doneEvent(r.conversation.id)
+  return {
+    calls: chatCalls,
+    saved: savedReply(r.assistantMessageId),
+    error: getMessage(r.assistantMessageId)?.error ?? null,
+    messageId: r.assistantMessageId
+  }
+}
+
+describe('one reply loop, both dialects', () => {
+  beforeAll(() => {
+    openaiId = addEndpoint({ name: 'OpenAI mock', baseUrl: `${openaiServer.url}/v1`, kind: 'openai', flavor: 'generic' }).id
+    openaiServer.handler = (req, res) => {
+      if (req.url === '/v1/models')
+        return res.writeHead(200).end(JSON.stringify({ object: 'list', data: [{ id: 'llama3.2', object: 'model' }] }))
+      // Titles are read whole, apart from the scripted chat, as on the Ollama mock.
+      if (req.url === '/v1/chat/completions' && req.json.stream !== true) {
+        titleCalls.push(req.json)
+        return res.writeHead(200).end(completionJson('A title'))
+      }
+      if (req.url === '/v1/chat/completions') {
+        chatCalls.push(req.json)
+        return chat(req.json, res, chatCalls.length)
+      }
+      return res.writeHead(404).end()
+    }
+  })
+
+  describe.each(DIALECTS)('over %s', (dialect) => {
+    it('streams a reply with its thinking, and saves it with the server’s counts', async () => {
+      const { saved } = await runScript(dialect, SCRIPTS['plain reply'])
+      expect(saved).toMatchObject({ content: 'Hi there', thinking: 'Greet them.', failed: false })
+      expect(saved.stats).toMatchObject({ promptTokens: 10, completionTokens: 3, doneReason: 'stop' })
+      expect(saved.usage).toEqual([
+        { model: 'llama3.2', kind: 'chat', prompt_tokens: 10, completion_tokens: 3, cost_usd: 0, estimated: 0, billing: 'local' }
+      ])
+    })
+
+    it('runs a tool round, handing the result back in its own dialect', async () => {
+      const { saved, calls } = await runScript(dialect, SCRIPTS['tool round'])
+      expect(saved.content).toBe('Let me check.\n\nFound it.')
+      expect(saved.toolEvents).toEqual([expect.objectContaining({ tool: 'web_search', ok: true, at: 'Let me check.'.length })])
+      const second = calls[1].messages as Array<Record<string, unknown>>
+      const echo = second.find((m) => m.role === 'assistant' && Array.isArray(m.tool_calls))!
+      const result = second.find((m) => m.role === 'tool')!
+      expect(result.content).toContain('https://k.io')
+      if (dialect === 'openai') {
+        expect(echo.tool_calls).toEqual([
+          { id: 'call_mock_0', type: 'function', function: { name: 'web_search', arguments: '{"query":"ollmost"}' } }
+        ])
+        expect(result.tool_call_id).toBe('call_mock_0')
+      } else {
+        // An Ollama body never carries a tool-call id (PR 1's rule).
+        expect(echo.tool_calls).toEqual([{ function: { name: 'web_search', arguments: { query: 'ollmost' } } }])
+        expect(result.tool_name).toBe('web_search')
+      }
+    })
+
+    // Review Focus #4, at the service level. The saved reply is trimmed at its end, as every reply is.
+    it('saves the partial reply on Stop, with estimated usage and no error', async () => {
+      const { saved, error } = await runScript(dialect, SCRIPTS['stop mid-stream'])
+      expect(saved).toMatchObject({ content: 'partial reply '.repeat(6).trimEnd(), failed: false })
+      expect(error).toBeNull()
+      expect(saved.stats.estimated).toBe(true)
+      expect(saved.usage).toEqual([expect.objectContaining({ estimated: 1, completion_tokens: 21 })])
+    })
+
+    it('saves a dropped stream with its text and says the connection dropped', async () => {
+      const { saved, error } = await runScript(dialect, SCRIPTS['dropped stream'])
+      expect(saved).toMatchObject({ content: 'Half an ans', failed: true })
+      expect(error).toMatch(/dropped before the reply finished/)
+    })
+
+    it('ends a tool-happy model at the round limit with a tool-free last request', async () => {
+      const { saved, calls } = await runScript(dialect, SCRIPTS['round limit'])
+      expect(calls).toHaveLength(3)
+      expect(calls.at(-1)!.tools).toBeUndefined()
+      expect(saved.content).toBe('Stopped early')
+      expect(saved.stats.toolRoundLimit).toBe(3)
+    })
+
+    it('shortens this turn’s older results when the next request would overflow', async () => {
+      const { saved, calls } = await runScript(dialect, SCRIPTS['result shortening'])
+      const results = (calls[2].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
+      expect(results[0].content).toMatch(/^\[Ollmost shortened this earlier web_fetch result/)
+      expect(results[1].content).toContain('MARK-2')
+      expect(saved.stats.shortenedToolResults).toBe(1)
+    })
+
+    // #175's batches over either dialect: the results keep call order, and each names the call it answers.
+    it('runs two sub-agents at once and hands each result back under its own call, in call order', async () => {
+      const { saved, calls } = await runScript(dialect, SCRIPTS['two sub-agents at once'])
+      expect(saved).toMatchObject({ content: 'Both done.', failed: false })
+      expect(saved.toolEvents.map((e) => [e.tool, e.child?.result])).toEqual([
+        ['delegate', 'A'],
+        ['delegate', 'B']
+      ])
+      // The children finish before the parent asks again, so its last request is the one with both results.
+      const results = (calls.at(-1)!.messages as Array<Record<string, unknown>>).filter((m) => m.role === 'tool')
+      expect(results.map((m) => m.content)).toEqual(['A', 'B'])
+      if (dialect === 'openai') {
+        expect(results.map((m) => m.tool_call_id)).toEqual(['call_mock_0', 'call_mock_1'])
+      } else {
+        // An Ollama body names the tool and never carries an id (PR 1's rule).
+        expect(results.map((m) => m.tool_name)).toEqual(['delegate', 'delegate'])
+      }
+    })
+
+    // Paced so the first token and the end are well past the 50 ms a clocked round needs.
+    it('times tok/s from the first token when the server reports no generation time', async () => {
+      const { messageId } = await runScript(dialect, { ...SCRIPTS['plain reply'], pauseMs: 50 })
+      expect(getMessage(messageId)!.stats!.tokensPerSecond).toBeGreaterThan(0)
+    })
+
+    // A round that only calls a tool streams no text (LM Studio sends it no content at all, FINDINGS Q2), so nothing
+    // times it: its tokens stay out of the figure.
+    it('works tok/s out from the timed rounds’ tokens only, leaving out a tool-only round’s', async () => {
+      const { messageId } = await runScript(dialect, {
+        prompt: 'look it up',
+        turn: (_b, n) =>
+          n === 1
+            ? { toolCalls: [{ name: 'web_search', args: { query: 'ollmost' } }], usage: { prompt: 10, completion: 25 } }
+            : { content: 'Found it.', usage: { prompt: 10, completion: 3 }, genMs: 1500 },
+        web: SCRIPTS['tool round'].web
+      })
+      // The text round's 3 tokens in the server's own 1.5 s; the tool round's 25 as well would read 18.7.
+      expect(getMessage(messageId)!.stats).toMatchObject({ completionTokens: 28, tokensPerSecond: 2 })
+    })
+  })
+
+  it.each(Object.keys(SCRIPTS))('%s: both dialects save the same reply, tool events and usage', async (name) => {
+    const ollamaRun = await runScript('ollama', SCRIPTS[name])
+    const openaiRun = await runScript('openai', SCRIPTS[name])
+    expect(openaiRun.saved).toEqual(ollamaRun.saved)
   })
 })

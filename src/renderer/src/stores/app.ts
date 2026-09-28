@@ -211,7 +211,9 @@ export function contextWindowFor(model: ModelInfo | undefined): number | null {
 export function thinkProfileFor(models: ModelInfo[], key: string | null): ThinkProfile {
   const model = findModel(models, key)
   // Family rules match the name the server knows ("gpt-oss…"), never the key.
-  return model ? resolveThinkProfile(model.name, model.capabilities, model.overrides.think) : { kind: 'none' }
+  return model
+    ? resolveThinkProfile(model.name, model.capabilities, model.overrides.think, model.thinkPreset ?? undefined)
+    : { kind: 'none' }
 }
 
 const NO_ENDPOINTS: Endpoint[] = []

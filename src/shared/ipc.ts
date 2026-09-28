@@ -104,6 +104,8 @@ export interface OllmostApi {
     list(refresh?: boolean): Promise<ModelListResult>
     info(key: string): Promise<ModelInfo>
     setOverrides(key: string, overrides: ModelOverrides): Promise<ModelInfo>
+    /** Forget what errors taught Ollmost about this model (tools refused, a context size), and read it again. */
+    redetect(key: string): Promise<ModelInfo>
   }
   /** Model servers. Never changed through settings.update: its deep-merge can't hold a list. */
   endpoints: {
@@ -308,7 +310,7 @@ export interface OllmostApi {
 export const INVOKE_CHANNELS = {
   app: ['info', 'setNativeTheme', 'openExternal', 'openDataFolder', 'migrationNotice', 'dismissMigrationNotice'],
   settings: ['get', 'update', 'setApiKey'],
-  models: ['list', 'info', 'setOverrides'],
+  models: ['list', 'info', 'setOverrides', 'redetect'],
   endpoints: ['list', 'probe', 'add', 'update', 'removalImpact', 'remove', 'setKey'],
   projects: ['list', 'get', 'create', 'update', 'delete', 'files', 'addFiles', 'removeFile', 'moveFile', 'openFile', 'revealFile'],
   conversations: ['list', 'get', 'update', 'delete', 'search'],

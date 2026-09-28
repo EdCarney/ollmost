@@ -172,6 +172,9 @@ interface Endpoint {
 
   `root` is `baseUrl` with a trailing `/v1` removed. The dialog accepts an address with or without `/v1` and stores
   what the probe confirmed.
+
+  PR 3's Re-detect is per model: it clears that model's `detected` and reads it again. The endpoint page has no
+  Re-detect of its own.
 - **LM Studio before 0.4** has no `/api/v1/models`, so it's detected as generic. That still works, with default
   capabilities.
 - **New ids** are the name lower-cased, with anything outside `[a-z0-9]` turned into `-` ("LM Studio" becomes
@@ -259,7 +262,8 @@ interface ModelListResult { models: ModelInfo[]; errors: { endpointId: string; m
   to `function.arguments`. Complete `toolCall` events are sent on `finish_reason` or `[DONE]`. Arguments that aren't
   valid JSON pass through as a string (`argsOf` already handles that). A missing `id` gets `t` + the call's place in
   the stream in base 36, padded to 8 (`t00000000`), because Mistral's chat templates on vLLM refuse any id that isn't
-  9 letters and digits. An id the server sent is echoed back unchanged.
+  9 letters and digits. An id the server sent is echoed back unchanged. PR 3 numbers made-up ids on across a turn's
+  rounds, so no two calls in one request share an id (the first round's ids are unchanged).
 - **`done`:**
   - `finishReason` comes from `finish_reason`, so `'length'` keeps the cut-off notice.
   - `usage` comes from `usage.prompt_tokens`/`completion_tokens`.
@@ -397,9 +401,9 @@ The mockups were approved.
 - **Settings → Models** (option B, master–detail):
   - The left column lists the endpoints (with status dots), "+ Add endpoint", "ollama.com account" and "Defaults".
   - An endpoint's page shows its settings (name, address, key, `numCtx` and cloud catalog for Ollama, "context when
-    not reported" for OpenAI, enabled, Re-detect, Remove…). Below them is that endpoint's models table: Thinking |
-    Tools | Vision | Context | Artifacts | Auto skills. Each cell shows `Auto (value)`, and a detected value carries
-    a short reason.
+    not reported" for OpenAI, enabled, Re-detect, Remove…; PR 3 has Re-detect per model instead, see Probing). Below
+    them is that endpoint's models table: Thinking | Tools | Vision | Context | Artifacts | Auto skills. Each cell
+    shows `Auto (value)`, and a detected value carries a short reason.
   - The "ollama.com account" page has the key field and explains what it powers: web search and page reading for
     every model (it goes through ollama.com even for local models), quota, and Ollama cloud models.
   - The "Defaults" page has the default model and title model menus, grouped by endpoint.
@@ -461,6 +465,21 @@ Questions for LM Studio:
 4. Is `reasoning` or `reasoning_content` used?
 5. Is `content: ''` accepted next to `tool_calls`?
 6. Does `/api/v1/models` report `loaded_instances[].config.context_length` for a model loaded just in time?
+
+Answers (capture, 2026-09-28, LM Studio 0.4.24+1):
+
+1. `reasoning_effort` changes reasoning, with OpenAI's values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`);
+   `chat_template_kwargs` and the `reasoning` object are ignored, and LM Studio's own `off`/`on` are rejected with
+   400. PR 3 sends LM Studio `reasoning_effort: "none"` for off, sends medium for on, and passes
+   low/medium/high through; other servers keep the table's mapping.
+2. Deltas: the first fragment carries `id` and `name`, the second the whole arguments; ids are 9-digit numbers. No
+   change: fragments are collected by `index` and ids echoed.
+3. Yes: a last chunk with `choices: []` carries `usage` (with `reasoning_tokens`). No change needed.
+4. `reasoning_content`. No change: both fields are read.
+5. Yes (`null` too). PR 3 sends `''`.
+6. Yes once loaded, but a just-in-time load may pick a smaller window than `max_context_length` (42496 against
+   262144). PR 3 uses the loaded window, else none (the endpoint's "Context when not reported" applies), and reads
+   the model again once it has loaded.
 
 ## Not in this version
 

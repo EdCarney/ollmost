@@ -1,0 +1,24 @@
+{
+  "url": "http://localhost:1234/v1/chat/completions",
+  "request": {
+    "model": "google/gemma-4-e4b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello in five words."
+      }
+    ],
+    "stream": false
+  },
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 349,
+  "totalMs": 350,
+  "chunks": [
+    {
+      "atMs": 349,
+      "bytes": 624
+    }
+  ],
+  "error": null
+}

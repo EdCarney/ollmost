@@ -95,7 +95,7 @@ import {
   toolFingerprint
 } from './mcp/manager'
 import { addEndpoint, endpointRemovalImpact, probeNewEndpoint, removeEndpoint, setEndpointKey, updateEndpoint } from './providers/endpoints'
-import { listAllModels, modelInfo, resolve } from './providers/registry'
+import { listAllModels, modelInfo, redetectModel, resolve } from './providers/registry'
 import { getPriceTable, refreshPrices } from './usage/pricing'
 import {
   deleteSkill,
@@ -211,7 +211,8 @@ const impl: Impl = {
       const canonical = toModelKey(endpoint.id, model)
       writeModelOverrides(canonical, overrides)
       return modelInfo(canonical)
-    }
+    },
+    redetect: (key) => redetectModel(key)
   },
 
   endpoints: {

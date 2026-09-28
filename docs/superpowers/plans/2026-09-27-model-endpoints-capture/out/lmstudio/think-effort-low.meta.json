@@ -1,0 +1,212 @@
+{
+  "url": "http://localhost:1234/v1/chat/completions",
+  "request": {
+    "model": "qwen/qwen3.8-27b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is 17 × 23? Think it through, then reply with just the number."
+      }
+    ],
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    },
+    "reasoning_effort": "low"
+  },
+  "status": 200,
+  "contentType": "text/event-stream",
+  "firstByteMs": 860,
+  "totalMs": 7372,
+  "chunks": [
+    {
+      "atMs": 860,
+      "bytes": 282
+    },
+    {
+      "atMs": 860,
+      "bytes": 267
+    },
+    {
+      "atMs": 1117,
+      "bytes": 265
+    },
+    {
+      "atMs": 2152,
+      "bytes": 272
+    },
+    {
+      "atMs": 2415,
+      "bytes": 264
+    },
+    {
+      "atMs": 2415,
+      "bytes": 263
+    },
+    {
+      "atMs": 2672,
+      "bytes": 265
+    },
+    {
+      "atMs": 2930,
+      "bytes": 264
+    },
+    {
+      "atMs": 2930,
+      "bytes": 263
+    },
+    {
+      "atMs": 3194,
+      "bytes": 263
+    },
+    {
+      "atMs": 3325,
+      "bytes": 266
+    },
+    {
+      "atMs": 3457,
+      "bytes": 263
+    },
+    {
+      "atMs": 3457,
+      "bytes": 263
+    },
+    {
+      "atMs": 3717,
+      "bytes": 265
+    },
+    {
+      "atMs": 3978,
+      "bytes": 264
+    },
+    {
+      "atMs": 3978,
+      "bytes": 263
+    },
+    {
+      "atMs": 4244,
+      "bytes": 264
+    },
+    {
+      "atMs": 4494,
+      "bytes": 264
+    },
+    {
+      "atMs": 4494,
+      "bytes": 263
+    },
+    {
+      "atMs": 4745,
+      "bytes": 265
+    },
+    {
+      "atMs": 4870,
+      "bytes": 264
+    },
+    {
+      "atMs": 5121,
+      "bytes": 263
+    },
+    {
+      "atMs": 5247,
+      "bytes": 264
+    },
+    {
+      "atMs": 5497,
+      "bytes": 264
+    },
+    {
+      "atMs": 5497,
+      "bytes": 263
+    },
+    {
+      "atMs": 5746,
+      "bytes": 265
+    },
+    {
+      "atMs": 5996,
+      "bytes": 264
+    },
+    {
+      "atMs": 6247,
+      "bytes": 264
+    },
+    {
+      "atMs": 6372,
+      "bytes": 264
+    },
+    {
+      "atMs": 6499,
+      "bytes": 263
+    },
+    {
+      "atMs": 6625,
+      "bytes": 263
+    },
+    {
+      "atMs": 6749,
+      "bytes": 264
+    },
+    {
+      "atMs": 6749,
+      "bytes": 264
+    },
+    {
+      "atMs": 6749,
+      "bytes": 263
+    },
+    {
+      "atMs": 6749,
+      "bytes": 264
+    },
+    {
+      "atMs": 6749,
+      "bytes": 264
+    },
+    {
+      "atMs": 6749,
+      "bytes": 263
+    },
+    {
+      "atMs": 6749,
+      "bytes": 263
+    },
+    {
+      "atMs": 6749,
+      "bytes": 264
+    },
+    {
+      "atMs": 7372,
+      "bytes": 256
+    },
+    {
+      "atMs": 7372,
+      "bytes": 253
+    },
+    {
+      "atMs": 7372,
+      "bytes": 253
+    },
+    {
+      "atMs": 7372,
+      "bytes": 253
+    },
+    {
+      "atMs": 7372,
+      "bytes": 252
+    },
+    {
+      "atMs": 7372,
+      "bytes": 242
+    },
+    {
+      "atMs": 7372,
+      "bytes": 304
+    },
+    {
+      "atMs": 7372,
+      "bytes": 14
+    }
+  ],
+  "error": null
+}

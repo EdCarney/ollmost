@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatTokens } from '../src/shared/format'
+import { contextSizeLabel, formatTokens } from '../src/shared/format'
 
 describe('formatTokens', () => {
   it('shows a count under a thousand as is', () => {
@@ -29,5 +29,27 @@ describe('formatTokens', () => {
     expect(formatTokens(9_999_500)).toBe('10.0M')
     expect(formatTokens(99_999_999)).toBe('100M')
     expect(formatTokens(99_950_000)).toBe('100M')
+  })
+})
+
+describe('contextSizeLabel', () => {
+  it('reads a size that divides evenly in binary units unless it is a round decimal size, and any other as formatContext does', () => {
+    expect(contextSizeLabel(65_536)).toBe('64K')
+    expect(contextSizeLabel(131_072)).toBe('128K')
+    expect(contextSizeLabel(1_048_576)).toBe('1M')
+    // Not a multiple of 1024: formatContext's.
+    expect(contextSizeLabel(42_496)).toBe('42K')
+    expect(contextSizeLabel(null)).toBe('')
+  })
+
+  it('reads a round decimal size the decimal way, even when it also divides by 1024', () => {
+    expect(contextSizeLabel(128_000)).toBe('128K')
+    expect(contextSizeLabel(256_000)).toBe('256K')
+    expect(contextSizeLabel(512_000)).toBe('512K')
+    expect(contextSizeLabel(32_000)).toBe('32K')
+    expect(contextSizeLabel(1_024_000)).toBe('1.0M')
+    expect(contextSizeLabel(1_000_000)).toBe('1M')
+    // Binary sizes still read in binary.
+    expect(contextSizeLabel(8192)).toBe('8K')
   })
 })

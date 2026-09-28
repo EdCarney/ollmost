@@ -116,7 +116,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   const settings = getSettings()
   const { provider, model: serverName } = resolve(reply.model)
   const model = await modelInfo(reply.model)
-  const profile = resolveThinkProfile(model.name, model.capabilities, model.overrides.think)
+  const profile = resolveThinkProfile(model.name, model.capabilities, model.overrides.think, model.thinkPreset ?? undefined)
   const numCtx = model.contextWindow
   // The child's context is the parent's, less what only the parent may do (its grants are worked out again).
   const { grants: _grants, ...parent } = ctx

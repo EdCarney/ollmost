@@ -1,8 +1,10 @@
-import { keyPrefix, splitModelKey } from '@shared/modelKey'
+import { keyPrefix, splitModelKey, toModelKey } from '@shared/modelKey'
 import type { Endpoint, ModelInfo, ModelListResult } from '@shared/types'
+import { writeModelDetected } from '../db/kv'
 import { getSettings } from '../settings'
 import { errorMessage } from '../util'
 import { OllamaProvider } from './ollama/adapter'
+import { OpenAIProvider } from './openai/adapter'
 import type { Provider } from './types'
 
 /** A key names an endpoint that's been removed: its chats keep their history and need another model picked. */
@@ -16,10 +18,14 @@ export class EndpointGoneError extends Error {
 // One provider per enabled endpoint, made on first use and again after any endpoint change.
 let providers: Map<string, Provider> | null = null
 
+/** The adapter for an endpoint's kind of server. */
+export function createProvider(endpoint: Endpoint): Provider {
+  return endpoint.kind === 'openai' ? new OpenAIProvider(endpoint) : new OllamaProvider(endpoint)
+}
+
 function build(): Map<string, Provider> {
   const map = new Map<string, Provider>()
-  for (const endpoint of getSettings().endpoints)
-    if (endpoint.enabled && endpoint.kind === 'ollama') map.set(endpoint.id, new OllamaProvider(endpoint))
+  for (const endpoint of getSettings().endpoints) if (endpoint.enabled) map.set(endpoint.id, createProvider(endpoint))
   return map
 }
 
@@ -52,6 +58,14 @@ export function resolve(key: string): { provider: Provider; endpoint: Endpoint; 
 export function modelInfo(key: string, refresh = false): Promise<ModelInfo> {
   const { provider, model } = resolve(key)
   return provider.modelInfo(model, refresh)
+}
+
+/** Forget what errors taught Ollmost about a model (tools refused, its window), then read it again from its server. */
+export function redetectModel(key: string): Promise<ModelInfo> {
+  const { endpoint, model } = resolve(key)
+  // The canonical key, as every read uses: a bare name from before keys is Ollama's.
+  writeModelDetected(toModelKey(endpoint.id, model), {})
+  return modelInfo(key, true)
 }
 
 /** Every enabled endpoint's models, asked in parallel. One that fails adds to `errors`; the others still list. */

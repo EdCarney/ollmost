@@ -5,7 +5,7 @@ import type { AccountUsage, ChatUsage, UsageSummary, UsageWindow } from '@shared
 import { withPreview } from '@shared/settingsPreview'
 import { labelForKey, shortModelName } from '@shared/modelLabel'
 import { api } from '@/lib/api'
-import { cn, formatContext, formatTokens, relativeTime } from '@/lib/format'
+import { cn, contextSizeLabel, formatTokens, relativeTime } from '@/lib/format'
 import { contextWindowFor, findModel, selectEndpoints, useApp } from '@/stores/app'
 import { useUsage } from '@/stores/usage'
 import { PopoverContent, PopoverRoot, PopoverTrigger, Spinner } from './ui'
@@ -362,7 +362,7 @@ export function ChatCost({ usage, model: modelName }: { usage: ChatUsage | null;
               <div className="flex justify-between text-xs">
                 <span className="text-muted">Context window</span>
                 <span className="tabular-nums">
-                  {formatTokens(usage.lastContextTokens!)} of {formatContext(contextWindow)} ({Math.round(context * 100)}%)
+                  {formatTokens(usage.lastContextTokens!)} of {contextSizeLabel(contextWindow)} ({Math.round(context * 100)}%)
                 </span>
               </div>
               <span className="block h-1.5 overflow-hidden rounded-full bg-hover">

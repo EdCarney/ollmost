@@ -1,0 +1,29 @@
+{
+  "id": "chatcmpl-dt15o0gbxnbsouir6taiz",
+  "object": "chat.completion",
+  "created": 1790614598,
+  "model": "qwen/qwen3.8-27b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "\n\nHey! How can I help you today?",
+        "reasoning_content": "User said \"hi\". Need respond friendly. Need final concise.\n",
+        "tool_calls": []
+      },
+      "logprobs": null,
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 53,
+    "completion_tokens": 26,
+    "total_tokens": 79,
+    "completion_tokens_details": {
+      "reasoning_tokens": 14
+    }
+  },
+  "stats": {},
+  "system_fingerprint": "qwen/qwen3.8-27b"
+}

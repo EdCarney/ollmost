@@ -5,7 +5,7 @@ import { getConversation, updateConversation } from '../db/conversations'
 import { insertUsageEvent } from '../db/usage'
 import { startTrace, type Trace } from '../debug/traces'
 import { paths } from '../paths'
-import type { ChatEvent, ChatRequest, IdentifiedToolCall, Provider, ToolCall } from '../providers/types'
+import type { ChatEvent, ChatRequest, IdentifiedToolCall, Provider } from '../providers/types'
 import { requestCost } from '../usage/pricing'
 import { errorMessage, estimateTokens } from '../util'
 import { EVERY_TIME, waitForDecision } from './approvals'
@@ -29,6 +29,9 @@ import {
 export const CHARS_PER_TOKEN = 4
 const ROOM_SHARE = 0.9
 const MIN_RESULT_CHARS = 1_500
+// A round timed by the clock counts toward tok/s only across this long: a shorter span over n−1 gaps between tokens
+// gives absurd figures.
+const MIN_CLOCKED_MS = 50
 
 export type UsageKind = 'chat' | 'delegate'
 
@@ -85,8 +88,10 @@ export interface RoundsResult {
   rounds: number
   /** Set when a request failed; null when the rounds ended or were stopped. */
   error: string | null
-  /** The server's own generation time over the rounds that reported it; 0 when none did. */
+  /** Generation time in ms: each round's reported genMs, else its first token → done (if at least MIN_CLOCKED_MS). */
   genMs: number
+  /** Completion tokens of the rounds genMs times: tok/s leaves out a round nothing timed, such as a tool-only one. */
+  timedTokens: number
   thinkStart: number | null
   thinkEnd: number | null
   /** Names the model called that nothing offers. */
@@ -120,6 +125,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
   let thinkStart: number | null = null
   let thinkEnd: number | null = null
   let genMs = 0
+  let timedTokens = 0
   let error: string | null = null
   let rounds = 0
   let openRound: { content: string; thinking: string; promptEstimate: number } | null = null
@@ -216,10 +222,12 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
       })
       // Events, not network chunks: an adapter sends an empty `content` for a chunk that carried nothing.
       let chunks = 0
+      let firstTokenAt: number | null = null
       for await (const ev of provider.chatStream(body, input.signal)) {
         chunks++
         roundTrace.firstByte()
         if ((ev.type === 'thinking' || ev.type === 'content') && ev.text) {
+          firstTokenAt ??= Date.now()
           roundTrace.firstToken()
           roundTrace.progress(roundContent || 'Thinking…', estimateTokens(roundContent + roundThinking))
         }
@@ -276,7 +284,14 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         timing: done?.timing
       })
       roundTrace = null
-      genMs += done?.timing?.genMs ?? 0
+      // A server that reports no generation time (LM Studio, vLLM, Ollama's cloud models) is timed from its first token.
+      // A round that streamed no text (only a tool call) has no first token, so it's left out, tokens and all.
+      const reported = done?.timing?.genMs
+      const clocked = done && firstTokenAt !== null ? Date.now() - firstTokenAt : 0
+      if (reported !== undefined || clocked >= MIN_CLOCKED_MS) {
+        genMs += reported ?? clocked
+        timedTokens += billed?.completionTokens ?? 0
+      }
       if (!calls.length) break
 
       body.messages.push({ role: 'assistant', content: roundContent, thinking: roundThinking || undefined, toolCalls: calls })
@@ -439,12 +454,12 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
     })
   }
 
-  return { content, thinking, thinkingSegments, toolEvents, rounds, error, genMs, thinkStart, thinkEnd, triedUnknown }
+  return { content, thinking, thinkingSegments, toolEvents, rounds, error, genMs, timedTokens, thinkStart, thinkEnd, triedUnknown }
 }
 
 /** A call the round has shown on its card, waiting to run. */
 interface ShownCall {
-  call: ToolCall
+  call: IdentifiedToolCall
   /** Its place in the reply's tool events. */
   index: number
   pending: ToolEvent
@@ -454,8 +469,8 @@ interface ShownCall {
  * A round's calls in order, in batches: calls in a row that may run together (runsInParallel) make one batch when the
  * reply runs more than one at once; every other call is a batch of its own.
  */
-function batchesOf(calls: ToolCall[], parallel: number, ctx: ToolContext): ToolCall[][] {
-  const batches: Array<{ calls: ToolCall[]; together: boolean }> = []
+function batchesOf(calls: IdentifiedToolCall[], parallel: number, ctx: ToolContext): IdentifiedToolCall[][] {
+  const batches: Array<{ calls: IdentifiedToolCall[]; together: boolean }> = []
   for (const call of calls) {
     const together = parallel > 1 && runsInParallel(call, ctx)
     const last = batches.at(-1)

@@ -1,4 +1,5 @@
 // What an endpoint is, as data both processes need: the defaults, and what an address says about a server.
+import { formatContext } from './format'
 import type { EndpointFlavor, EndpointProbe, ModelWhere } from './types'
 
 export const OLLAMA_CLOUD_URL = 'https://ollama.com'
@@ -60,6 +61,27 @@ export function probeSummary(p: EndpointProbe): string {
         : ['capabilities not reported — defaults apply (tools on, vision off)'])
     )
   return parts.join(' · ')
+}
+
+/**
+ * Where the dialog says its models' context sizes will come from. LM Studio reports a model's size only once it has
+ * loaded the model, so at add time it usually reports none yet.
+ */
+export function probeContextNote(p: Pick<EndpointProbe, 'reportsContext' | 'flavor'>): string {
+  const fallback = `models get ${formatContext(DEFAULT_CONTEXT)} unless you change “Context when not reported”`
+  if (p.reportsContext) return 'Context sizes reported by the server'
+  return p.flavor === 'lmstudio'
+    ? `Context sizes reported once a model is loaded — until then ${fallback}`
+    : `Context sizes not reported — ${fallback}`
+}
+
+/** A name for a new endpoint: its server's, numbered when another endpoint has it. */
+export function suggestEndpointName(p: Pick<EndpointProbe, 'flavor'>, taken: readonly string[]): string {
+  const base = FLAVOR_LABELS[p.flavor]
+  if (!taken.includes(base)) return base
+  let n = 2
+  while (taken.includes(`${base} ${n}`)) n++
+  return `${base} ${n}`
 }
 
 /** The question before an endpoint is removed: what goes (the confirm-before-loss rule). */

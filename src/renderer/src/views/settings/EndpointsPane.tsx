@@ -3,10 +3,10 @@ import { useState } from 'react'
 import { DEFAULT_CONTEXT, DEFAULT_NUM_CTX, displayAddress, FLAVOR_LABELS, isOllamaCloudUrl, removalText } from '@shared/endpoints'
 import { labelForKey, shortModelName } from '@shared/modelLabel'
 import { resolveThinkProfile } from '@shared/thinking'
-import type { Endpoint, ModelInfo, ModelListResult, ModelOverrides, Settings } from '@shared/types'
+import type { Endpoint, ModelInfo, ModelListResult, ModelOverrides, Settings, ThinkProfile } from '@shared/types'
 import { Badge, Button, Field, Switch, TextField } from '@/components/ui'
 import { api } from '@/lib/api'
-import { cn, formatContext } from '@/lib/format'
+import { cn, contextSizeLabel } from '@/lib/format'
 import { reportError, useApp } from '@/stores/app'
 import { useConfirm } from '@/stores/confirm'
 import { BlurField, Row, Section } from '../settingsParts'
@@ -26,14 +26,6 @@ const CONTEXT_SIZES = [8192, 16384, 32768, 65536, 131072]
 const statusOf = (e: Endpoint, errors: ModelListResult['errors']): Status =>
   !e.enabled ? 'off' : errors.some((x) => x.endpointId === e.id) ? 'offline' : 'ok'
 
-const THINK_OPTIONS: Array<{ value: ModelOverrides['think'] | 'auto'; label: string }> = [
-  { value: 'auto', label: 'Automatic' },
-  { value: 'toggle', label: 'On / off' },
-  { value: 'levels', label: 'Effort levels' },
-  { value: 'always', label: 'Always on' },
-  { value: 'none', label: 'Hidden' }
-]
-
 /** A window-size menu. A saved size off the list keeps an option of its own. */
 function ContextSelect({ value, onChange }: { value: number; onChange: (n: number) => void }) {
   const sizes = [...new Set([...CONTEXT_SIZES, value])].sort((a, b) => a - b)
@@ -45,52 +37,161 @@ function ContextSelect({ value, onChange }: { value: number; onChange: (n: numbe
     >
       {sizes.map((n) => (
         <option key={n} value={n}>
-          {/* The sizes are powers of two, so 65536 reads "64K" rather than formatContext's "66K". */}
-          {n % 1024 === 0 ? `${n / 1024}K` : formatContext(n)}
+          {contextSizeLabel(n)}
         </option>
       ))}
     </select>
   )
 }
 
+const THINK_LABELS: Record<ThinkProfile['kind'], string> = {
+  toggle: 'On / off',
+  levels: 'Effort levels',
+  always: 'Always on',
+  none: 'Hidden'
+}
+const THINK_KINDS: ReadonlyArray<ThinkProfile['kind']> = ['toggle', 'levels', 'always', 'none']
+// The windows a server can be told a model has, for a model it reports none for (or reports wrongly). CONTEXT_SIZES,
+// above, stay the endpoint page's num_ctx and "Context when not reported" choices.
+const MODEL_CONTEXT_SIZES = [4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144]
+const SELECT = 'h-8 rounded-md border border-line bg-transparent px-1.5 text-xs outline-none'
+
+function OnOff({
+  label,
+  value,
+  auto,
+  onChange
+}: {
+  label: string
+  value: boolean | undefined
+  auto: boolean
+  onChange: (v: boolean | undefined) => void
+}) {
+  return (
+    <select
+      aria-label={label}
+      value={value === undefined ? 'auto' : value ? 'on' : 'off'}
+      onChange={(e) => onChange(e.target.value === 'auto' ? undefined : e.target.value === 'on')}
+      className={SELECT}
+    >
+      <option value="auto">Auto ({auto ? 'on' : 'off'})</option>
+      <option value="on">On</option>
+      <option value="off">Off</option>
+    </select>
+  )
+}
+
+/** What Ollmost learned from an error, and the way to forget it. */
+function Learned({ reason, onRedetect }: { reason?: string; onRedetect: () => void }) {
+  return (
+    <div className="mt-0.5 max-w-44 text-[11px] leading-tight text-subtle">
+      {reason ?? 'learned from an error'} ·{' '}
+      <button className="text-accent hover:underline" onClick={onRedetect}>
+        Re-detect
+      </button>
+    </div>
+  )
+}
+
 function ModelRow({ model }: { model: ModelInfo }) {
-  const auto = resolveThinkProfile(model.name, model.capabilities)
+  const openai = model.endpoint.kind === 'openai'
+  const auto = model.auto ?? { capabilities: model.capabilities, contextWindow: model.contextWindow }
+  const autoThink = resolveThinkProfile(model.name, auto.capabilities, undefined, model.thinkPreset ?? undefined)
+  // On an OpenAI-compatible server "none" still shows reasoning the server sends; it just offers no control.
+  const thinkLabel = (kind: ThinkProfile['kind']) => (kind === 'none' && openai ? 'Show only' : THINK_LABELS[kind])
+  // The model read back goes into the store by key; the list's `installed` stays as it was listed.
+  const replace = (updated: ModelInfo) =>
+    useApp.setState((s) => ({ models: s.models.map((x) => (x.key === updated.key ? { ...updated, installed: x.installed } : x)) }))
   const set = async (patch: ModelOverrides) => {
     try {
-      const updated = await api.models.setOverrides(model.key, { ...model.overrides, ...patch })
-      useApp.setState((s) => ({ models: s.models.map((x) => (x.key === updated.key ? { ...updated, installed: x.installed } : x)) }))
+      replace(await api.models.setOverrides(model.key, { ...model.overrides, ...patch }))
+    } catch (err) {
+      reportError(err)
+    }
+  }
+  const redetect = async () => {
+    try {
+      replace(await api.models.redetect(model.key))
     } catch (err) {
       reportError(err)
     }
   }
   return (
-    <tr className="border-t border-line align-middle">
+    <tr className="border-t border-line align-top">
       <td className="py-2.5 pr-3">
         <div className="text-[13px] font-medium">{model.endpoint.kind === 'ollama' ? shortModelName(model.name) : model.name}</div>
-        <div className="mt-0.5 flex gap-1">
+        <div className="mt-0.5 flex flex-wrap gap-1">
           {model.capabilities
             .filter((c) => c !== 'completion')
             .map((c) => (
               <Badge key={c}>{c}</Badge>
             ))}
-          {model.contextLength && <Badge>{formatContext(model.contextLength)}</Badge>}
+          {model.contextWindow ? <Badge>{contextSizeLabel(model.contextWindow)}</Badge> : null}
         </div>
       </td>
       <td className="py-2.5 pr-3">
-        {model.capabilities.includes('thinking') ? (
+        {model.capabilities.includes('thinking') || openai ? (
           <select
+            aria-label="Thinking"
             value={model.overrides.think ?? 'auto'}
-            onChange={(e) => void set({ think: e.target.value === 'auto' ? undefined : (e.target.value as ModelOverrides['think']) })}
-            className="h-8 rounded-md border border-line bg-canvas px-1.5 text-xs outline-none"
+            onChange={(e) => void set({ think: e.target.value === 'auto' ? undefined : (e.target.value as ThinkProfile['kind']) })}
+            className={SELECT}
           >
-            {THINK_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.value === 'auto' ? `Automatic (${THINK_OPTIONS.find((x) => x.value === auto.kind)?.label ?? auto.kind})` : o.label}
+            <option value="auto">Auto ({thinkLabel(autoThink.kind)})</option>
+            {THINK_KINDS.map((k) => (
+              <option key={k} value={k}>
+                {thinkLabel(k)}
               </option>
             ))}
           </select>
         ) : (
           <span className="text-xs text-subtle">n/a</span>
+        )}
+      </td>
+      <td className="py-2.5 pr-3">
+        <OnOff
+          label="Tools"
+          value={model.overrides.tools}
+          auto={auto.capabilities.includes('tools')}
+          onChange={(tools) => void set({ tools })}
+        />
+        {model.detected.tools === false && model.overrides.tools === undefined && (
+          <Learned reason={model.detected.reason} onRedetect={() => void redetect()} />
+        )}
+      </td>
+      <td className="py-2.5 pr-3">
+        <OnOff
+          label="Vision"
+          value={model.overrides.vision}
+          auto={auto.capabilities.includes('vision')}
+          onChange={(vision) => void set({ vision })}
+        />
+      </td>
+      <td className="py-2.5 pr-3">
+        {model.contextControl === 'server' ? (
+          <>
+            <select
+              aria-label="Context"
+              value={model.overrides.contextLength ?? 'auto'}
+              onChange={(e) => void set({ contextLength: e.target.value === 'auto' ? undefined : Number(e.target.value) })}
+              className={SELECT}
+            >
+              <option value="auto">Auto ({contextSizeLabel(auto.contextWindow) || 'unknown'})</option>
+              {MODEL_CONTEXT_SIZES.map((n) => (
+                <option key={n} value={n}>
+                  {contextSizeLabel(n)}
+                </option>
+              ))}
+            </select>
+            {model.detected.contextLength !== undefined && model.overrides.contextLength === undefined && (
+              <Learned reason={model.detected.reason} onRedetect={() => void redetect()} />
+            )}
+          </>
+        ) : (
+          // Ollama's own models: the endpoint's num_ctx sets the window.
+          <span className="text-xs text-subtle" title="Set by this endpoint’s context window">
+            {contextSizeLabel(model.contextWindow)}
+          </span>
         )}
       </td>
       <td className="py-2.5 pr-3 text-center">
@@ -158,15 +259,20 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
   const cloud = isOllamaCloudUrl(endpoint.baseUrl)
   const error = modelErrors.find((x) => x.endpointId === endpoint.id)?.message
   const mine = models.filter((m) => m.endpoint.id === endpoint.id)
-  // Bumped when an edit is refused, so the name and address fields remount showing what's stored, not the refused text.
-  const [rev, setRev] = useState(0)
+  // Bumped so a field remounts showing what's stored, not the text typed: the name's when a name edit is refused, the
+  // address's when an address edit is refused or saved (an OpenAI endpoint stores its probed base, not what was typed).
+  // Apart, so an address probe finishing doesn't remount a name being typed.
+  const [nameRev, setNameRev] = useState(0)
+  const [addressRev, setAddressRev] = useState(0)
 
   const update = async (patch: Parameters<typeof api.endpoints.update>[1]) => {
     try {
       await api.endpoints.update(endpoint.id, patch)
       await endpointsChanged()
+      if ('baseUrl' in patch) setAddressRev((n) => n + 1)
     } catch (err) {
-      setRev((n) => n + 1)
+      if ('name' in patch) setNameRev((n) => n + 1)
+      if ('baseUrl' in patch) setAddressRev((n) => n + 1)
       reportError(err)
     }
   }
@@ -188,11 +294,11 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
         description={`${FLAVOR_LABELS[endpoint.flavor]} at ${displayAddress(endpoint.baseUrl)} · ${STATUS[statusOf(endpoint, modelErrors)]}`}
       >
         <Field label="Name">
-          <BlurField key={`name-${rev}`} value={endpoint.name} onSave={(name) => void update({ name })} />
+          <BlurField key={`name-${nameRev}`} value={endpoint.name} onSave={(name) => void update({ name })} />
         </Field>
         <Field label="Address">
           <BlurField
-            key={`address-${rev}`}
+            key={`address-${addressRev}`}
             value={endpoint.baseUrl}
             onSave={(baseUrl) => void update({ baseUrl })}
             placeholder="http://127.0.0.1:11434"
@@ -249,21 +355,26 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
           {error && <span className="text-xs text-danger">{error}</span>}
         </div>
         {mine.length > 0 ? (
-          <table className="w-full text-left">
-            <thead>
-              <tr className="text-xs text-subtle">
-                <th className="pb-2 font-medium">Model</th>
-                <th className="pb-2 font-medium">Thinking</th>
-                <th className="pb-2 text-center font-medium">Artifacts</th>
-                <th className="pb-2 text-center font-medium">Auto skills</th>
-              </tr>
-            </thead>
-            <tbody>
-              {mine.map((m) => (
-                <ModelRow key={m.key} model={m} />
-              ))}
-            </tbody>
-          </table>
+          <div className="scroll-shadows-x overflow-x-auto">
+            <table className="w-full text-left">
+              <thead>
+                <tr className="text-xs text-subtle">
+                  <th className="pb-2 font-medium">Model</th>
+                  <th className="pb-2 font-medium">Thinking</th>
+                  <th className="pb-2 font-medium">Tools</th>
+                  <th className="pb-2 font-medium">Vision</th>
+                  <th className="pb-2 font-medium">Context</th>
+                  <th className="pb-2 text-center font-medium">Artifacts</th>
+                  <th className="pb-2 text-center font-medium">Auto skills</th>
+                </tr>
+              </thead>
+              <tbody>
+                {mine.map((m) => (
+                  <ModelRow key={m.key} model={m} />
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : (
           !error && (
             <p className="text-sm text-subtle">

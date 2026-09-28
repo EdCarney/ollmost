@@ -1,0 +1,11 @@
+# unverified: written from docs
+{
+  "object": "list",
+  "data": [
+    { "id": "mistral-small-3.2-24b", "object": "model", "created": 1790500000, "owned_by": "local" },
+    { "id": "qwen3-coder-30b-a3b", "object": "model", "created": 1790500000, "owned_by": "local" },
+    { "id": "nomic-embed-text-v1.5", "object": "model", "created": 1790500000, "owned_by": "local" },
+    { "id": "text-embedding-3-small", "object": "model", "created": 1790500000, "owned_by": "local" },
+    { "id": "bge-reranker-v2-m3", "object": "model", "created": 1790500000, "owned_by": "local" }
+  ]
+}

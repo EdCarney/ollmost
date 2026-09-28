@@ -1,0 +1,16 @@
+{
+  "url": "http://localhost:1234/v1/chat/completions",
+  "request": {
+    "model": "ollmost-no-such-model",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "stream": false
+  },
+  "status": 400,
+  "contentType": "application/json",
+  "note": "Written by hand from FINDINGS.md: the response body (lmstudio-error-unknown-model.json) is the cold capture out/lmstudio/extra/error-unknown-model-cold.json, made with curl, which kept no .meta.json of its own."
+}

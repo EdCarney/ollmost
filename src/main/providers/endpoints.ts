@@ -1,18 +1,19 @@
-import { DEFAULT_NUM_CTX, isOllamaCloudUrl } from '@shared/endpoints'
+import { DEFAULT_NUM_CTX, FLAVOR_LABELS, isOllamaCloudUrl } from '@shared/endpoints'
 import { keyPrefix, slugEndpointId } from '@shared/modelKey'
 import type { Endpoint, EndpointFlavor, EndpointKind, EndpointProbe } from '@shared/types'
 import { get } from '../db/index'
 import { countEndpointOverrides, deleteEndpointProfiles } from '../db/kv'
 import { getSettings, setEndpoints, type StoredEndpoint, updateSettings } from '../settings'
-import { normalizeBaseUrl, probeEndpoint, sameServer } from './probe'
+import { apiBaseUrl, normalizeBaseUrl, probeEndpoint, sameServer } from './probe'
 import { invalidateProviders } from './registry'
-import { endpointSecretName, setSecret } from './secrets'
+import { endpointSecretName, getSecret, setSecret } from './secrets'
 
 // Endpoints change only here, never through a settings update. Everything the renderer sends is checked: it may
 // send anything.
 
 type EndpointPatch = Partial<Pick<Endpoint, 'name' | 'baseUrl' | 'enabled' | 'flavor' | 'showCloudCatalog' | 'numCtx' | 'defaultContext'>>
 
+const KINDS: readonly EndpointKind[] = ['ollama', 'openai']
 const FLAVORS: readonly EndpointFlavor[] = ['ollama', 'lmstudio', 'llamacpp', 'vllm', 'generic']
 
 const stored = (): StoredEndpoint[] =>
@@ -64,45 +65,67 @@ export function addEndpoint(input: {
   flavor: EndpointFlavor
   apiKey?: string
 }): Endpoint {
-  if (input.kind !== 'ollama') throw new Error('Ollmost can’t talk to OpenAI-compatible servers yet. That arrives in the next update.')
+  if (!KINDS.includes(input.kind)) throw new Error('Ollmost talks to Ollama and OpenAI-compatible servers only.')
   const name = cleanName(input.name)
-  const baseUrl = normalizeBaseUrl(String(input.baseUrl))
+  const openai = input.kind === 'openai'
+  // Ollama is kept by its root. An OpenAI-compatible server by its API base, as its probe confirmed it (usually …/v1,
+  // not always): its requests go to {baseUrl}/chat/completions.
+  const baseUrl = openai ? apiBaseUrl(String(input.baseUrl)) : normalizeBaseUrl(String(input.baseUrl))
   assertAddressFree(baseUrl)
   const list = stored()
   const id = slugEndpointId(
     name,
     list.map((e) => e.id)
   )
-  // A second Ollama starts without the cloud catalog, so ollama.com's models aren't listed twice.
-  const endpoint: StoredEndpoint = {
-    id,
-    name,
-    kind: 'ollama',
-    flavor: 'ollama',
-    baseUrl,
-    enabled: true,
-    showCloudCatalog: false,
-    numCtx: DEFAULT_NUM_CTX
-  }
+  const flavor: EndpointFlavor = FLAVORS.includes(input.flavor) && input.flavor !== 'ollama' ? input.flavor : 'generic'
+  const endpoint: StoredEndpoint = openai
+    ? { id, name, kind: 'openai', flavor, baseUrl, enabled: true }
+    : // A second Ollama starts without the cloud catalog, so ollama.com's models aren't listed twice.
+      { id, name, kind: 'ollama', flavor: 'ollama', baseUrl, enabled: true, showCloudCatalog: false, numCtx: DEFAULT_NUM_CTX }
   // ollama.com takes the account key; an endpoint key is never kept for it.
   const key = typeof input.apiKey === 'string' ? input.apiKey.trim() : ''
   if (key && !isOllamaCloudUrl(baseUrl)) setSecret(endpointSecretName(id), key)
   return save([...list, endpoint], id)
 }
 
-/** Change an endpoint. Its id never changes, so a server that moves keeps its chats. */
-export function updateEndpoint(id: string, patch: EndpointPatch): Endpoint {
+/**
+ * Change an endpoint. Its id never changes, so a server that moves keeps its chats. An OpenAI-compatible endpoint's
+ * new address is probed first and what the probe confirmed is stored, as when it was added: its API base isn't
+ * always the root plus /v1, and the server found there may be another flavour. The list is read after the probe, so
+ * a change made to any endpoint while it ran is kept.
+ */
+export async function updateEndpoint(id: string, patch: EndpointPatch): Promise<Endpoint> {
+  const typed = patch.baseUrl !== undefined ? String(patch.baseUrl) : undefined
+  let probed: EndpointProbe | undefined
+  if (typed !== undefined && find(id).kind === 'openai') {
+    // Refused at once if it's taken, before asking what answers there.
+    assertAddressFree(normalizeBaseUrl(typed), id)
+    const found = await probeEndpoint(typed, getSecret(endpointSecretName(id)) ?? undefined)
+    if (found.kind !== 'openai')
+      throw new Error(
+        `${FLAVOR_LABELS[found.flavor]} answers at that address, not an OpenAI-compatible server. Add it as an endpoint of its own.`
+      )
+    probed = found
+  }
   const list = stored()
   const i = list.findIndex((e) => e.id === id)
   if (i < 0) throw new Error('That endpoint no longer exists.')
   const next: StoredEndpoint = { ...list[i] }
   if (patch.name !== undefined) next.name = cleanName(patch.name)
-  if (patch.baseUrl !== undefined) {
-    next.baseUrl = normalizeBaseUrl(String(patch.baseUrl))
-    assertAddressFree(next.baseUrl, id)
+  if (typed !== undefined) {
+    // Checked against the list as it is now: another endpoint may have taken the address while a probe ran.
+    assertAddressFree(normalizeBaseUrl(typed), id)
+    if (probed) {
+      next.baseUrl = probed.baseUrl
+      next.flavor = probed.flavor
+      // What the old server refused says nothing about the new one: it's asked for usage again.
+      delete next.streamOptions
+    } else next.baseUrl = normalizeBaseUrl(typed)
   }
   if (patch.enabled !== undefined) next.enabled = patch.enabled === true
-  if (patch.flavor !== undefined && next.kind === 'openai' && FLAVORS.includes(patch.flavor)) next.flavor = patch.flavor
+  // As addEndpoint, an OpenAI-compatible endpoint is never flavoured Ollama; beside a new address, the probe's flavour stands.
+  if (patch.flavor !== undefined && next.kind === 'openai' && !probed && FLAVORS.includes(patch.flavor) && patch.flavor !== 'ollama')
+    next.flavor = patch.flavor
   if (patch.showCloudCatalog !== undefined && next.kind === 'ollama') next.showCloudCatalog = patch.showCloudCatalog === true
   if (patch.numCtx !== undefined && next.kind === 'ollama') next.numCtx = tokens(patch.numCtx, 'The context window')
   if (patch.defaultContext !== undefined && next.kind === 'openai') next.defaultContext = tokens(patch.defaultContext, 'The context size')

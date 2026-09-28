@@ -4,7 +4,7 @@ import { displayAddress } from '@shared/endpoints'
 import { labelForKey, modelLabel, shortModelName } from '@shared/modelLabel'
 import { endpointChips, groupModels, type PickerGroup } from '@shared/pickerGroups'
 import type { Endpoint, ModelInfo } from '@shared/types'
-import { cn, formatContext, formatParams } from '@/lib/format'
+import { cn, contextSizeLabel, formatParams } from '@/lib/format'
 import { selectEndpoints, useApp } from '@/stores/app'
 import { PopoverContent, PopoverRoot, PopoverTrigger, Spinner, Tooltip } from './ui'
 
@@ -47,7 +47,7 @@ function ModelRow({ model, selected, onPick }: { model: ModelInfo; selected: boo
         <span className="block text-xs text-subtle">
           {[
             formatParams(model.parameterSize),
-            formatContext(model.contextLength) && `${formatContext(model.contextLength)} context`,
+            contextSizeLabel(model.contextLength) && `${contextSizeLabel(model.contextLength)} context`,
             model.price && `$${model.price.input} / $${model.price.output} per M`
           ]
             .filter(Boolean)

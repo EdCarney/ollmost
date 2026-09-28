@@ -1,0 +1,226 @@
+{
+  "url": "http://localhost:11434/api/chat",
+  "request": {
+    "model": "gpt-oss:20b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What's the weather in Paris right now? Use the get_weather tool."
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c00000000",
+            "function": {
+              "name": "get_weather",
+              "arguments": {
+                "city": "Paris"
+              }
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "c00000000",
+        "tool_name": "get_weather",
+        "content": "{\"city\":\"Paris\",\"forecast\":\"sunny\",\"celsius\":21}"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "The current weather in a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "The city, e.g. Paris"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      }
+    ],
+    "stream": true
+  },
+  "status": 200,
+  "contentType": "application/x-ndjson",
+  "firstByteMs": 130,
+  "totalMs": 1532,
+  "chunks": [
+    {
+      "atMs": 130,
+      "bytes": 140
+    },
+    {
+      "atMs": 161,
+      "bytes": 143
+    },
+    {
+      "atMs": 191,
+      "bytes": 141
+    },
+    {
+      "atMs": 221,
+      "bytes": 146
+    },
+    {
+      "atMs": 252,
+      "bytes": 138
+    },
+    {
+      "atMs": 283,
+      "bytes": 141
+    },
+    {
+      "atMs": 313,
+      "bytes": 141
+    },
+    {
+      "atMs": 343,
+      "bytes": 146
+    },
+    {
+      "atMs": 373,
+      "bytes": 141
+    },
+    {
+      "atMs": 404,
+      "bytes": 144
+    },
+    {
+      "atMs": 434,
+      "bytes": 144
+    },
+    {
+      "atMs": 465,
+      "bytes": 142
+    },
+    {
+      "atMs": 495,
+      "bytes": 141
+    },
+    {
+      "atMs": 526,
+      "bytes": 144
+    },
+    {
+      "atMs": 556,
+      "bytes": 139
+    },
+    {
+      "atMs": 587,
+      "bytes": 139
+    },
+    {
+      "atMs": 617,
+      "bytes": 140
+    },
+    {
+      "atMs": 647,
+      "bytes": 140
+    },
+    {
+      "atMs": 678,
+      "bytes": 141
+    },
+    {
+      "atMs": 892,
+      "bytes": 127
+    },
+    {
+      "atMs": 923,
+      "bytes": 132
+    },
+    {
+      "atMs": 953,
+      "bytes": 127
+    },
+    {
+      "atMs": 984,
+      "bytes": 130
+    },
+    {
+      "atMs": 1015,
+      "bytes": 130
+    },
+    {
+      "atMs": 1045,
+      "bytes": 128
+    },
+    {
+      "atMs": 1075,
+      "bytes": 127
+    },
+    {
+      "atMs": 1106,
+      "bytes": 127
+    },
+    {
+      "atMs": 1136,
+      "bytes": 126
+    },
+    {
+      "atMs": 1166,
+      "bytes": 126
+    },
+    {
+      "atMs": 1197,
+      "bytes": 126
+    },
+    {
+      "atMs": 1227,
+      "bytes": 129
+    },
+    {
+      "atMs": 1258,
+      "bytes": 126
+    },
+    {
+      "atMs": 1288,
+      "bytes": 136
+    },
+    {
+      "atMs": 1318,
+      "bytes": 126
+    },
+    {
+      "atMs": 1349,
+      "bytes": 127
+    },
+    {
+      "atMs": 1380,
+      "bytes": 126
+    },
+    {
+      "atMs": 1410,
+      "bytes": 127
+    },
+    {
+      "atMs": 1440,
+      "bytes": 127
+    },
+    {
+      "atMs": 1471,
+      "bytes": 126
+    },
+    {
+      "atMs": 1501,
+      "bytes": 125
+    },
+    {
+      "atMs": 1531,
+      "bytes": 326
+    }
+  ],
+  "error": null
+}

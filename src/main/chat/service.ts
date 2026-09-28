@@ -291,6 +291,7 @@ async function generate(
   let thinkStart: number | null = null
   let thinkEnd: number | null = null
   let genMs = 0
+  let timedTokens = 0
   let error: string | null = null
   let savedAt = Date.now()
 
@@ -300,7 +301,7 @@ async function generate(
     const { provider, model: serverName } = resolve(modelName)
     const model = await modelInfo(modelName)
     stats.billing = model.billing
-    const profile = resolveThinkProfile(model.name, model.capabilities, model.overrides.think)
+    const profile = resolveThinkProfile(model.name, model.capabilities, model.overrides.think, model.thinkPreset ?? undefined)
     const vision = model.capabilities.includes('vision')
     const toolsCapable = model.capabilities.includes('tools')
     const numCtx = model.contextWindow
@@ -505,6 +506,7 @@ async function generate(
     toolEvents.push(...result.toolEvents)
     error = result.error
     genMs = result.genMs
+    timedTokens = result.timedTokens
     thinkStart = result.thinkStart
     thinkEnd = result.thinkEnd
     if (!error && !controller.signal.aborted && !content.trim() && result.triedUnknown.length)
@@ -524,8 +526,9 @@ async function generate(
   if (!getMessage(messageId)) return
 
   stats.durationMs = Date.now() - startedAt
-  // The server's own generation time, where it reports one (local Ollama models do; cloud ones don't).
-  if (genMs && stats.completionTokens) stats.tokensPerSecond = stats.completionTokens / (genMs / 1000)
+  // The server's own generation time, else the time from its first token to the end, over the tokens of the rounds
+  // so timed (see runRounds).
+  if (genMs && timedTokens) stats.tokensPerSecond = timedTokens / (genMs / 1000)
   if (thinkStart) stats.thinkingMs = (thinkEnd ?? Date.now()) - thinkStart
 
   const message = updateMessage(messageId, {
@@ -685,7 +688,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
   try {
     const { provider, model: serverName } = resolve(opts.model)
     const info = await modelInfo(opts.model)
-    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think)
+    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think, info.thinkPreset ?? undefined)
     const contextWindow = info.contextWindow
     const focus = opts.focus.trim()
     const system = focus ? `${COMPACT_PROMPT}\n\nAbove all, keep what the user asked for: ${focus}` : COMPACT_PROMPT
@@ -822,7 +825,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
     const modelName = titleModelFor(chatModel)
     const { provider, model: serverName } = resolve(modelName)
     const info = await modelInfo(modelName)
-    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think)
+    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think, info.thinkPreset ?? undefined)
     const request: ChatRequest = {
       model: serverName,
       messages: [
