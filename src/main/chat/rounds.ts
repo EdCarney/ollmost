@@ -9,11 +9,11 @@ import { paths } from '../paths'
 import { requestCost } from '../usage/pricing'
 import { errorMessage, estimateTokens } from '../util'
 import { EVERY_TIME, waitForDecision } from './approvals'
-import { TOOL_RESULT_CHARS } from './results'
 import {
   allowKeyFor,
   approvalFor,
   declinedResult,
+  maxResultCharsFor,
   noteAllowedForChat,
   notRunEvent,
   pendingEvent,
@@ -364,16 +364,18 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
           shown.push({ call, index, pending })
         }
         // Each call's share of the room as it stands now: the calls still to run split it, so a batch's calls never
-        // take more than there is between them.
-        const maxResultChars = Math.min(TOOL_RESULT_CHARS, Math.max(MIN_RESULT_CHARS, Math.floor(roomChars / callsLeft)))
+        // take more than there is between them. No call gets more than its tool's results may be (a sub-agent's
+        // reply may be longer than other results).
+        const share = Math.max(MIN_RESULT_CHARS, Math.floor(roomChars / callsLeft))
+        const shareOf = ({ call }: ShownCall) => Math.min(maxResultCharsFor(call, toolContext), share)
         const results =
           shown.length === 1
-            ? [await runCall(shown[0], maxResultChars)]
+            ? [await runCall(shown[0], shareOf(shown[0]))]
             : await runTogether(
                 shown,
                 parallel,
                 input.signal,
-                (c) => runCall(c, maxResultChars),
+                (c) => runCall(c, shareOf(c)),
                 // A call still waiting its turn when the reply stopped never ran, and its card says so.
                 ({ index, pending }) => {
                   toolEvents[index] = { ...notRunEvent(pending), at: pending.at }

@@ -604,10 +604,11 @@ export interface Settings {
    */
   code: { edits: 'ask' | 'allow'; commands: 'ask' | 'allow'; timeoutSec: number; maxRounds: number; defaultNetwork: CodeNetwork }
   /**
-   * Whether a model may delegate to a sub-agent (the delegate tool), how many requests one may make, and how many one
-   * reply may run at the same time (1 to 5; 1 runs them one after another).
+   * Whether a model may delegate to a sub-agent (the delegate tool), how many requests one may make, how many one
+   * reply may run at the same time (1 to 5; 1 runs them one after another), and how many characters of a sub-agent's
+   * reply come back to the chat (1,500 to 48,000; the rest is cut, and less comes back when the chat is short of room).
    */
-  delegate: { enabled: boolean; maxRounds: number; parallel: number }
+  delegate: { enabled: boolean; maxRounds: number; parallel: number; resultChars: number }
   /** Record every request for the debugger window. */
   debug: { record: boolean }
   /** Hover cards on links; `previews` fetches page title/image from this Mac (off by default for privacy). */
