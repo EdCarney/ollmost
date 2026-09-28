@@ -123,6 +123,10 @@ interface Provider {
 }
 ```
 
+PR 1 shipped the tool call as today's shape plus an id, not as `ToolCallOut` above: `ToolCall { id?: string;
+function: { name: string; arguments: Record<string, unknown> | string } }`, with `IdentifiedToolCall` (`ToolCall &
+{ id: string }`) once an adapter or `assemble()` has given it an id.
+
 Rules:
 
 1. **The shared format follows OpenAI's.** Tool calls carry ids and tool results carry `toolCallId`. The Ollama
@@ -295,7 +299,8 @@ Today's behaviour, moved:
 - `options.num_ctx` comes from `contextWindow` when `contextControl === 'client'`;
 - `options.temperature` is used;
 - `thinking` is sent back within a turn;
-- the tool-call ids are dropped and `tool_name` is used;
+- the ids Ollmost made up are dropped (a call Ollama sent goes back as sent, with its own id and index) and
+  `tool_name` is used;
 - `done` is built from `prompt_eval_count`/`eval_count`/`done_reason`, plus `load_duration`/`prompt_eval_duration`/
   `eval_duration` converted from ns to ms;
 - the cloud catalog and `toDaemonCloudName` behave as today;
