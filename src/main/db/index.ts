@@ -1,12 +1,14 @@
+import { existsSync, mkdirSync, rmSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
-import { MIGRATIONS } from './migrations'
+import { MIGRATIONS, MODEL_KEYS_MIGRATION } from './migrations'
 
 let db: DatabaseSync | null = null
 
 export function openDatabase(file: string): DatabaseSync {
   db = new DatabaseSync(file)
   db.exec('PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 3000;')
-  migrate(db)
+  migrate(db, file === ':memory:' ? null : join(dirname(file), 'backups'))
   return db
 }
 
@@ -15,13 +17,36 @@ export function getDb(): DatabaseSync {
   return db
 }
 
-function migrate(d: DatabaseSync): void {
+/** Where the copy made before the model-key migration goes: <userData>/backups, one a day at most. */
+export function endpointsBackupPath(dir: string, at: Date): string {
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return join(dir, `ollmost-before-endpoints-${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}.db`)
+}
+
+function migrate(d: DatabaseSync, backups: string | null): void {
   const current = (d.prepare('PRAGMA user_version').get() as { user_version: number }).user_version
+  // The model-key entry is one-way (an older Ollmost can't read keys), so the database is copied as it is first. A new
+  // one has nothing to copy. VACUUM INTO can't run inside a transaction, so it goes before any of them.
+  if (backups && current > 0 && current <= MODEL_KEYS_MIGRATION) backUp(d, endpointsBackupPath(backups, new Date()))
   for (let v = current; v < MIGRATIONS.length; v++) {
     transaction(() => {
       d.exec(MIGRATIONS[v])
       d.exec(`PRAGMA user_version = ${v + 1}`)
     }, d)
+  }
+}
+
+function backUp(d: DatabaseSync, file: string): void {
+  if (existsSync(file)) return
+  try {
+    mkdirSync(dirname(file), { recursive: true })
+    d.prepare('VACUUM INTO ?').run(file)
+  } catch (err) {
+    // A half-written copy would pass for a backup tomorrow.
+    rmSync(file, { force: true })
+    throw new Error(`Ollmost couldn't back up its database before updating it, so it left it as it was: ${(err as Error).message}`, {
+      cause: err
+    })
   }
 }
 

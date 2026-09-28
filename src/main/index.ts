@@ -185,7 +185,13 @@ app.whenReady().then(async () => {
   void trackProcesses(join(paths.data, 'processes.json')).then((n) => {
     if (n) console.warn(`Ollmost: stopped ${n} process ${n === 1 ? 'group' : 'groups'} left running by an earlier session`)
   })
-  openDatabase(paths.db)
+  try {
+    openDatabase(paths.db)
+  } catch (err) {
+    // Nothing may run on a database that failed to open or update, such as a backup that couldn't be written.
+    dialog.showErrorBox("Ollmost couldn't open its database", `${errorMessage(err)}\n\nYour data is in ${paths.data}.`)
+    return app.exit(1)
+  }
   if (migrating) await finishMigration(paths.data, OLLMOST_DIR)
   // Ask the login shell for its PATH now, so a tool Ollmost starts later doesn't wait for it.
   void childPath().then((path) => {

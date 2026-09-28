@@ -1,3 +1,23 @@
+/**
+ * Model names become keys, "<endpoint id>/<name>" (model endpoints). Every name so far is on the Ollama endpoint the
+ * settings migration makes, `ollama` (settings.ts, migrateSettings). It can't be undone by an older Ollmost, so
+ * db/index.ts backs the database up before it runs.
+ */
+const MODEL_KEYS = /* sql */ `
+  UPDATE conversations  SET model = 'ollama/' || model WHERE model IS NOT NULL;
+  UPDATE messages       SET model = 'ollama/' || model WHERE model IS NOT NULL;
+  UPDATE usage_events   SET model = 'ollama/' || model;
+  UPDATE traces         SET model = 'ollama/' || model WHERE model IS NOT NULL;
+  UPDATE model_profiles SET model = 'ollama/' || model;
+  -- What Ollmost learned about a model (a server that refused tools, a context size from an error), kept apart from
+  -- the user's overrides so the daily info refresh never wipes it.
+  ALTER TABLE model_profiles ADD COLUMN detected TEXT NOT NULL DEFAULT '{}';
+  -- Whether a row could be priced. Ollama cloud rows were; the rest ran locally, which a zero cost used to stand for.
+  ALTER TABLE usage_events ADD COLUMN billing TEXT NOT NULL DEFAULT 'local';
+  UPDATE usage_events SET billing = 'priced'
+    WHERE cost_usd IS NULL OR cost_usd > 0 OR model LIKE '%-cloud' OR model LIKE '%:cloud';
+  `
+
 // Each entry runs once, in order, tracked by PRAGMA user_version. Never edit a shipped entry — append.
 export const MIGRATIONS: string[] = [
   /* sql */ `
@@ -215,5 +235,9 @@ export const MIGRATIONS: string[] = [
   -- A project's files can sit in folders (#100): a relative path such as 'docs/meetings', '' at the root. Folders are
   -- these prefixes, nothing more.
   ALTER TABLE project_files ADD COLUMN folder TEXT NOT NULL DEFAULT '';
-  `
+  `,
+  MODEL_KEYS
 ]
+
+/** The model-key entry's place: the database is backed up before it runs. */
+export const MODEL_KEYS_MIGRATION = MIGRATIONS.indexOf(MODEL_KEYS)
