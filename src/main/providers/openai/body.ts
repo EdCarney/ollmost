@@ -14,14 +14,15 @@ export const EMPTY_TOOL_CALL_CONTENT: '' | null = ''
  * LM Studio is its own case (capture/FINDINGS.md, question 1): `reasoning_effort` and OpenAI's own values are the
  * only thing that moves it there, `none` is its working "off", and `chat_template_kwargs` and the `reasoning`
  * object are accepted but silently ignored. "off"/"on" (LM Studio's own on/off vocabulary) are rejected with 400,
- * so they're never sent; leaving the field out for "on" lets the model's own default, which reasons, apply.
+ * so they're never sent. "on" sends `medium`: on an on/off model every value but `none` keeps full reasoning, so it
+ * costs nothing where the default reasons, and can turn reasoning on for a model whose default is off.
  */
 export function openAIThink(profile: ThinkProfile, setting: ThinkSetting | null, flavor?: EndpointFlavor): Record<string, unknown> {
   const s = normalizeThinkSetting(profile, setting)
   if (flavor === 'lmstudio') {
     switch (profile.kind) {
       case 'toggle':
-        return s === 'on' ? {} : { reasoning_effort: 'none' }
+        return { reasoning_effort: s === 'on' ? 'medium' : 'none' }
       case 'levels':
         return s === 'off' ? { reasoning_effort: 'none' } : { reasoning_effort: s }
       default:

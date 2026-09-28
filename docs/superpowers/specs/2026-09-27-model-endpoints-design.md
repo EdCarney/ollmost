@@ -470,7 +470,7 @@ Answers (capture, 2026-09-28, LM Studio 0.4.24+1):
 
 1. `reasoning_effort` changes reasoning, with OpenAI's values (`none`, `minimal`, `low`, `medium`, `high`, `xhigh`);
    `chat_template_kwargs` and the `reasoning` object are ignored, and LM Studio's own `off`/`on` are rejected with
-   400. PR 3 sends LM Studio `reasoning_effort: "none"` for off, leaves the field out for on, and passes
+   400. PR 3 sends LM Studio `reasoning_effort: "none"` for off, sends medium for on, and passes
    low/medium/high through; other servers keep the table's mapping.
 2. Deltas: the first fragment carries `id` and `name`, the second the whole arguments; ids are 9-digit numbers. No
    change: fragments are collected by `index` and ids echoed.

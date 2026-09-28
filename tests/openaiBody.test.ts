@@ -157,7 +157,8 @@ describe('openAIThink', () => {
   it('LM Studio: none is the working off; kwargs and the reasoning object are ignored, so a level goes straight through', () => {
     expect(openAIThink({ kind: 'toggle' }, 'off', 'lmstudio')).toEqual({ reasoning_effort: 'none' })
     expect(openAIThink({ kind: 'toggle' }, null, 'lmstudio')).toEqual({ reasoning_effort: 'none' })
-    expect(openAIThink({ kind: 'toggle' }, 'on', 'lmstudio')).toEqual({})
+    // Any value but none keeps an on/off model reasoning, so medium turns on one whose default is off too.
+    expect(openAIThink({ kind: 'toggle' }, 'on', 'lmstudio')).toEqual({ reasoning_effort: 'medium' })
     expect(openAIThink({ kind: 'levels', canDisable: true }, 'off', 'lmstudio')).toEqual({ reasoning_effort: 'none' })
     expect(openAIThink({ kind: 'levels', canDisable: true }, 'high', 'lmstudio')).toEqual({ reasoning_effort: 'high' })
     expect(openAIThink({ kind: 'levels', canDisable: false }, null, 'lmstudio')).toEqual({ reasoning_effort: 'medium' })
