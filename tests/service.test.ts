@@ -237,7 +237,7 @@ describe('reply loop', () => {
 
   it('stop() resolves only after the partial reply is saved', async () => {
     chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'partial' }, done: false })]) // then hangs
-    const r = start()
+    const r = start('stop me for a delete')
     await waitFor(() => events.some((e) => e.type === 'delta' && e.conversationId === r.conversation.id))
     await service.stop(r.conversation.id, { quiet: true }) // as deleting the chat does
     const saved = getMessage(r.assistantMessageId)!
@@ -247,9 +247,9 @@ describe('reply loop', () => {
     // The chat can now be deleted without the reply writing to it afterwards.
     deleteConversation(r.conversation.id)
     expect(service.isReplying()).toBe(false)
-    // A stop for a delete (or a quit) doesn't start a title request.
+    // A stop for a delete (or a quit) doesn't start a title request (an earlier test's title request may still arrive here).
     await new Promise((r) => setTimeout(r, 50))
-    expect(titleCalls).toHaveLength(0)
+    expect(titleCalls.some((t) => JSON.stringify(t.messages).includes('stop me for a delete'))).toBe(false)
   })
 
   it('stop() keeps the thinking of the round it stopped in', async () => {
