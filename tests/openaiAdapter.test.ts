@@ -267,6 +267,20 @@ describe('chatStream', () => {
     expect(text(seen, 'content')).toBe('Half an ans')
   })
 
+  it('says the connection dropped, naming the endpoint, when the server goes away mid-reply', async () => {
+    server.handler = async (_r, res) => {
+      await streamSse(res, [sseDelta({ content: 'Half an ans' })])
+      await new Promise((r) => setTimeout(r, 50))
+      res.socket?.destroy()
+    }
+    const seen: ChatEvent[] = []
+    const read = async () => {
+      for await (const e of provider().chatStream(req(), new AbortController().signal)) seen.push(e)
+    }
+    await expect(read()).rejects.toThrow('The connection to LM Studio dropped before the reply finished.')
+    expect(text(seen, 'content')).toBe('Half an ans')
+  })
+
   it('accepts a finish_reason with no [DONE], and a [DONE] with no finish_reason', async () => {
     expect(text(await replay([sseDelta({ content: 'Hi' }), sseDelta({}, 'stop')]), 'content')).toBe('Hi')
     expect(text(await replay([sseDelta({ content: 'Hi' }), sseDone]), 'content')).toBe('Hi')

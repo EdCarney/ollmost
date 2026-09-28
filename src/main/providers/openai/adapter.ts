@@ -202,6 +202,7 @@ export class OpenAIProvider implements Provider {
       if (!res.body) throw new OpenAIError(`${name} returned an empty response.`)
       const idleMs = req.tools?.length ? t.toolIdleMs : t.idleMs
       const idle = `${name} stopped responding in the middle of the reply (nothing for ${minutes(idleMs)} minutes).`
+      const dropped = `The connection to ${name} dropped before the reply finished.`
       const calls = createToolCallAccumulator()
       let finishReason: string | undefined
       let usage: Usage | null | undefined
@@ -209,7 +210,15 @@ export class OpenAIProvider implements Provider {
       let sawDone = false
       const payloads = sseData(res.body)
       for (;;) {
-        const next = await payloads.next()
+        let next: IteratorResult<string, boolean>
+        try {
+          next = await payloads.next()
+        } catch (err) {
+          // A stall or Stop aborted the read, and the catch below says which. Anything else broke the connection
+          // mid-reply: the server quit or the socket reset.
+          if (inner.signal.aborted) throw err
+          throw new OpenAIError(dropped)
+        }
         if (next.done) {
           sawDone = next.value
           break
@@ -239,7 +248,7 @@ export class OpenAIProvider implements Provider {
         if (!events.length) events.push({ type: 'content', text: '' })
         yield* events
       }
-      if (!sawDone && !finishReason) throw new OpenAIError(`The connection to ${name} dropped before the reply finished.`)
+      if (!sawDone && !finishReason) throw new OpenAIError(dropped)
       if (!separated) yield* splitEvents(splitter.flush())
       // Calls go out whole, once the stream has said it's finished (finish_reason, then [DONE] or the end). One sent
       // without an id is numbered past the ids this turn's earlier rounds made up.
