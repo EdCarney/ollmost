@@ -220,7 +220,13 @@ export function curlKeyVar(t: Pick<TraceDetail, 'auth' | 'endpointId'>): string 
   return name === 'OLLAMA_API_KEY' ? 'OLLAMA_ENDPOINT_API_KEY' : name
 }
 
-/** A curl command that reproduces the request (non-streaming). The API key is never embedded. */
+/** A word a POSIX shell reads as written: in single quotes, each ' closing them for an escaped one. */
+const shellQuote = (s: string) => `'${s.replace(/'/g, `'\\''`)}'`
+
+/**
+ * A curl command that reproduces the request (non-streaming). The API key is never embedded. The address is quoted:
+ * its path is kept as typed and may hold what a shell acts on, and zsh reads an unquoted [::1] as a glob.
+ */
 export function toCurl(endpoint: string, body: unknown, keyVar: string | null): string {
   const { body: clean, removed } = stripImagePlaceholders(body)
   // One request, not a stream: stream_options is only allowed with a stream.
@@ -228,5 +234,5 @@ export function toCurl(endpoint: string, body: unknown, keyVar: string | null): 
   const payload = JSON.stringify({ ...rest, stream: false }, null, 2)
   const auth = keyVar ? ` \\\n  -H "Authorization: Bearer $${keyVar}"` : ''
   const note = removed ? `# ${removed} image(s) weren't recorded and are left out.\n` : ''
-  return `${note}curl ${endpoint} \\\n  -H 'Content-Type: application/json'${auth} \\\n  -d @- <<'JSON'\n${payload}\nJSON`
+  return `${note}curl ${shellQuote(endpoint)} \\\n  -H 'Content-Type: application/json'${auth} \\\n  -d @- <<'JSON'\n${payload}\nJSON`
 }

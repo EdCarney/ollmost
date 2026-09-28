@@ -500,7 +500,11 @@ export interface TraceDetail extends TraceSummary {
     content?: string
     thinking?: string
     toolCalls?: unknown[]
-    /** Ollama's final chunk (stats, done_reason) without the message. */
+    /**
+     * The server's closing stats, without the reply. Ollama: its final chunk or response (done_reason, counts,
+     * durations). OpenAI-compatible: a streamed round's `{ finish_reason, usage, timings }`; a title, /compact or
+     * replay response read whole, with finish_reason lifted out of `choices` (replay.ts's statsOf).
+     */
     final?: unknown
     /** For tool traces: what was returned to the model. */
     result?: string

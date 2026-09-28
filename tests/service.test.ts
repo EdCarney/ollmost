@@ -3771,6 +3771,17 @@ describe('one reply loop, both dialects', () => {
     })
   })
 
+  // A title is read whole: an OpenAI response keeps its finish reason in choices[], where the debugger doesn't look.
+  it('records an OpenAI title’s finish reason in its trace’s stats', async () => {
+    const { messageId } = await runScript('openai', SCRIPTS['plain reply'])
+    const conversationId = getMessage(messageId)!.conversationId
+    const title = () => listTraces(conversationId).find((t) => t.kind === 'title' && t.status !== 'running')
+    await waitFor(() => !!title())
+    const final = getTrace(title()!.id)!.response.final
+    expect(final).toMatchObject({ finish_reason: 'stop', usage: { prompt_tokens: 20, completion_tokens: 2 } })
+    expect(final).not.toHaveProperty('choices')
+  })
+
   it.each(Object.keys(SCRIPTS))('%s: both dialects save the same reply, tool events and usage', async (name) => {
     const ollamaRun = await runScript('ollama', SCRIPTS[name])
     const openaiRun = await runScript('openai', SCRIPTS[name])

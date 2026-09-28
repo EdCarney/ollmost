@@ -12,8 +12,11 @@ interface ReplayBody extends Record<string, unknown> {
   messages: unknown[]
 }
 
-/** The response's stats without the reply itself, which the trace shows on its own. */
-function statsOf(raw: unknown): unknown {
+/**
+ * A response read whole, as a trace's stats: without the reply itself, which the trace shows on its own, and with an
+ * OpenAI response's finish_reason lifted out of `choices`.
+ */
+export function statsOf(raw: unknown): unknown {
   if (!raw || typeof raw !== 'object') return raw
   const { message: _message, choices, ...rest } = raw as Record<string, unknown>
   const finish = Array.isArray(choices) ? (choices[0] as { finish_reason?: unknown } | undefined)?.finish_reason : undefined

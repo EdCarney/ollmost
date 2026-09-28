@@ -39,6 +39,7 @@ import { imageForModel, removeFiles } from '../files/ingest'
 import { modelInfo, resolve } from '../providers/registry'
 import type { ChatRequest, Provider } from '../providers/types'
 import { webAvailable } from '../ollama/web'
+import { statsOf } from '../debug/replay'
 import { startTrace, type Trace } from '../debug/traces'
 import { getSettings } from '../settings'
 import { getSkill, listSkills } from '../skills/library'
@@ -788,7 +789,7 @@ async function summarizeOnce(
     if (!summary) throw new Error('The model gave no summary; nothing was compacted.')
     trace.finish({
       status: 'ok',
-      response: { content: summary, final: res.raw },
+      response: { content: summary, final: statsOf(res.raw) },
       promptTokens,
       completionTokens,
       costUsd,
@@ -872,7 +873,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
     emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) })
     titleTrace.finish({
       status: 'ok',
-      response: { content: res.content, thinking: res.thinking || undefined, final: res.raw },
+      response: { content: res.content, thinking: res.thinking || undefined, final: statsOf(res.raw) },
       promptTokens,
       completionTokens,
       costUsd,

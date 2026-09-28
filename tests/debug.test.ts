@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   curlKeyVar,
@@ -11,6 +12,7 @@ import {
 } from '@shared/debug'
 import type { Endpoint } from '@shared/types'
 import { replayRequest } from '../src/main/debug/replay'
+import { EndpointGoneError } from '../src/main/providers/registry'
 
 // replay.ts with the registry, traces, usage rows and prices stood in for: what it sends where, and what it records.
 const hits = vi.hoisted(() => ({
@@ -177,6 +179,17 @@ describe('debug helpers', () => {
     expect(openai).toContain("1 image(s) weren't recorded")
   })
 
+  it('quotes the address, so a shell reads it as written and runs nothing in it', () => {
+    // An address keeps its path, and a path can hold what a shell would act on.
+    const url = "http://box:8000/it's$(id);true&|/v1/chat/completions"
+    const curl = toCurl(url, { model: 'm', messages: [] }, null)
+    const quoted = curl.match(/^curl (.*) \\$/m)![1]
+    expect(quoted).toBe(`'http://box:8000/it'\\''s$(id);true&|/v1/chat/completions'`)
+    expect(execFileSync('sh', ['-c', `printf %s ${quoted}`], { encoding: 'utf8' })).toBe(url)
+    // zsh reads an unquoted [::1] as a glob, and stops at "no matches found".
+    expect(toCurl('http://[::1]:11434/api/chat', { model: 'm', messages: [] }, null)).toContain("curl 'http://[::1]:11434/api/chat' \\\n")
+  })
+
   it('reads the key from an environment variable named after the endpoint', () => {
     expect(curlKeyVar({ auth: 'ollama.com', endpointId: 'ollama' })).toBe('OLLAMA_API_KEY')
     expect(curlKeyVar({ auth: 'endpoint', endpointId: 'lm-studio' })).toBe('LM_STUDIO_API_KEY')
@@ -203,6 +216,9 @@ describe('where a trace’s request went', () => {
   it('records which key a request carried, never the key', () => {
     expect(traceTarget(e({}))).toEqual({ dialect: 'ollama', auth: null, endpointId: 'ollama', endpointName: 'Ollama' })
     expect(traceTarget(e({ id: 'cloud', name: 'Ollama cloud', baseUrl: 'https://ollama.com' })).auth).toBe('ollama.com')
+    // As the Ollama wire sends keys: ollama.com gets the account key over https, nothing over http, and never an endpoint key.
+    expect(traceTarget(e({ id: 'cloud', baseUrl: 'https://ollama.com', hasKey: true })).auth).toBe('ollama.com')
+    expect(traceTarget(e({ id: 'cloud', baseUrl: 'http://ollama.com', hasKey: true })).auth).toBeNull()
     expect(
       traceTarget(e({ id: 'lab', name: 'Lab vLLM', kind: 'openai', flavor: 'vllm', baseUrl: 'http://10.0.0.5:8000/v1', hasKey: true }))
     ).toEqual({ dialect: 'openai', auth: 'endpoint', endpointId: 'lab', endpointName: 'Lab vLLM' })
@@ -254,9 +270,11 @@ describe('replaying a recorded request', () => {
     await expect(replayRequest(null, 'old-box/llama3', { model: 'llama3', messages }, 'Old box')).rejects.toThrow(
       "This trace's endpoint (Old box) no longer exists."
     )
-    await expect(replayRequest(null, 'old-box/llama3', { model: 'llama3', messages })).rejects.toThrow(
-      "This trace's endpoint (old-box) no longer exists."
-    )
+    const err = await replayRequest(null, 'old-box/llama3', { model: 'llama3', messages }).catch((e: Error) => e)
+    expect(err).toMatchObject({ message: "This trace's endpoint (old-box) no longer exists." })
+    // The registry's error is kept as the cause.
+    expect((err as Error).cause).toBeInstanceOf(EndpointGoneError)
+    expect((err as Error).cause).toMatchObject({ endpointId: 'old-box' })
     expect(hits.sent).toEqual([])
   })
 })
