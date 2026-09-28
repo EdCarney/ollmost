@@ -122,6 +122,8 @@ export interface Turn {
   toolCalls?: Array<{ name: string; args: Record<string, unknown> }>
   /** Counts the server reports; left out, Ollmost estimates them. */
   usage?: { prompt: number; completion: number }
+  /** Generation time the server reports, in ms (Ollama's eval_duration, llama.cpp's timings); left out, Ollmost times it. */
+  genMs?: number
   /** done_reason / finish_reason, 'stop' unless given (Ollama says 'stop' for tool rounds too). */
   finish?: string
   /** 'hang': stop writing and keep the socket open, as a model still writing; 'drop': close it with no ending. */
@@ -148,7 +150,8 @@ export function turnChunks(dialect: Dialect, turn: Turn, opts: { includeUsage?: 
             line({
               done: true,
               done_reason: finish,
-              ...(turn.usage && { prompt_eval_count: turn.usage.prompt, eval_count: turn.usage.completion })
+              ...(turn.usage && { prompt_eval_count: turn.usage.prompt, eval_count: turn.usage.completion }),
+              ...(turn.genMs !== undefined && { eval_duration: turn.genMs * 1e6 })
             })
           ])
     ]
@@ -184,7 +187,9 @@ export function turnChunks(dialect: Dialect, turn: Turn, opts: { includeUsage?: 
     ...(turn.thinking ? [sseDelta({ reasoning_content: turn.thinking })] : []),
     ...(turn.content ? [sseDelta({ content: turn.content })] : []),
     ...calls,
-    ...(turn.cut ? [] : [sseDelta({}, finish), ...usage, sseDone])
+    ...(turn.cut
+      ? []
+      : [sseDelta({}, finish, turn.genMs !== undefined ? { timings: { predicted_ms: turn.genMs } } : {}), ...usage, sseDone])
   ]
 }
 

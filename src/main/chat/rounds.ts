@@ -29,6 +29,9 @@ import {
 export const CHARS_PER_TOKEN = 4
 const ROOM_SHARE = 0.9
 const MIN_RESULT_CHARS = 1_500
+// A round timed by the clock counts toward tok/s only across this long: a shorter span over n−1 gaps between tokens
+// gives absurd figures.
+const MIN_CLOCKED_MS = 50
 
 export type UsageKind = 'chat' | 'delegate'
 
@@ -85,8 +88,10 @@ export interface RoundsResult {
   rounds: number
   /** Set when a request failed; null when the rounds ended or were stopped. */
   error: string | null
-  /** Generation time in ms: each round's reported genMs, else its first token → done. */
+  /** Generation time in ms: each round's reported genMs, else its first token → done (if at least MIN_CLOCKED_MS). */
   genMs: number
+  /** Completion tokens of the rounds genMs times: tok/s leaves out a round nothing timed, such as a tool-only one. */
+  timedTokens: number
   thinkStart: number | null
   thinkEnd: number | null
   /** Names the model called that nothing offers. */
@@ -120,6 +125,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
   let thinkStart: number | null = null
   let thinkEnd: number | null = null
   let genMs = 0
+  let timedTokens = 0
   let error: string | null = null
   let rounds = 0
   let openRound: { content: string; thinking: string; promptEstimate: number } | null = null
@@ -279,7 +285,13 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
       })
       roundTrace = null
       // A server that reports no generation time (LM Studio, vLLM, Ollama's cloud models) is timed from its first token.
-      genMs += done?.timing?.genMs ?? (done && firstTokenAt !== null ? Date.now() - firstTokenAt : 0)
+      // A round that streamed no text (only a tool call) has no first token, so it's left out, tokens and all.
+      const reported = done?.timing?.genMs
+      const clocked = done && firstTokenAt !== null ? Date.now() - firstTokenAt : 0
+      if (reported !== undefined || clocked >= MIN_CLOCKED_MS) {
+        genMs += reported ?? clocked
+        timedTokens += billed?.completionTokens ?? 0
+      }
       if (!calls.length) break
 
       body.messages.push({ role: 'assistant', content: roundContent, thinking: roundThinking || undefined, toolCalls: calls })
@@ -442,7 +454,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
     })
   }
 
-  return { content, thinking, thinkingSegments, toolEvents, rounds, error, genMs, thinkStart, thinkEnd, triedUnknown }
+  return { content, thinking, thinkingSegments, toolEvents, rounds, error, genMs, timedTokens, thinkStart, thinkEnd, triedUnknown }
 }
 
 /** A call the round has shown on its card, waiting to run. */

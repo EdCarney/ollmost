@@ -291,6 +291,7 @@ async function generate(
   let thinkStart: number | null = null
   let thinkEnd: number | null = null
   let genMs = 0
+  let timedTokens = 0
   let error: string | null = null
   let savedAt = Date.now()
 
@@ -505,6 +506,7 @@ async function generate(
     toolEvents.push(...result.toolEvents)
     error = result.error
     genMs = result.genMs
+    timedTokens = result.timedTokens
     thinkStart = result.thinkStart
     thinkEnd = result.thinkEnd
     if (!error && !controller.signal.aborted && !content.trim() && result.triedUnknown.length)
@@ -524,8 +526,9 @@ async function generate(
   if (!getMessage(messageId)) return
 
   stats.durationMs = Date.now() - startedAt
-  // The server's own generation time, else the time from its first token to the end (see runRounds).
-  if (genMs && stats.completionTokens) stats.tokensPerSecond = stats.completionTokens / (genMs / 1000)
+  // The server's own generation time, else the time from its first token to the end, over the tokens of the rounds
+  // so timed (see runRounds).
+  if (genMs && timedTokens) stats.tokensPerSecond = timedTokens / (genMs / 1000)
   if (thinkStart) stats.thinkingMs = (thinkEnd ?? Date.now()) - thinkStart
 
   const message = updateMessage(messageId, {

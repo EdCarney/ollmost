@@ -2557,6 +2557,39 @@ describe('runRounds', () => {
       off()
     }
   })
+
+  it('times a round by the clock only across 50 ms or more, and always by a generation time its server reports', async () => {
+    let now = Date.now()
+    const clock = vi.spyOn(Date, 'now').mockImplementation(() => now)
+    try {
+      // One text round, `spanMs` from its first token to its end, with or without the server's own time.
+      const round = async (spanMs: number, reported?: number) => {
+        const { input } = await setup()
+        const provider: Provider = {
+          id: 'fake',
+          endpoint: { id: 'fake', name: 'Fake', kind: 'openai', flavor: 'generic', baseUrl: 'fake://', enabled: true, hasKey: false },
+          listModels: () => Promise.resolve([]),
+          modelInfo: () => Promise.reject(new Error('not used')),
+          async *chatStream() {
+            yield { type: 'content', text: 'Hi there' }
+            now += spanMs
+            yield { type: 'done', usage: { prompt: 5, completion: 4 }, finishReason: 'stop', timing: { genMs: reported }, raw: {} }
+          },
+          chatOnce: () => Promise.reject(new Error('not used')),
+          wire: (req, stream) => ({ endpoint: 'fake://chat', body: { model: req.model, stream } }),
+          wireEndpoint: () => 'fake://chat',
+          sendWire: () => Promise.reject(new Error('not used'))
+        }
+        const { genMs, timedTokens, error } = await runRounds({ ...input, provider })
+        return { genMs, timedTokens, error }
+      }
+      expect(await round(30)).toEqual({ genMs: 0, timedTokens: 0, error: null })
+      expect(await round(60)).toEqual({ genMs: 60, timedTokens: 4, error: null })
+      expect(await round(0, 10)).toEqual({ genMs: 10, timedTokens: 4, error: null })
+    } finally {
+      clock.mockRestore()
+    }
+  })
 })
 
 describe('sub-agents', () => {
@@ -3716,9 +3749,25 @@ describe('one reply loop, both dialects', () => {
       }
     })
 
+    // Paced so the first token and the end are well past the 50 ms a clocked round needs.
     it('times tok/s from the first token when the server reports no generation time', async () => {
-      const { messageId } = await runScript(dialect, { ...SCRIPTS['plain reply'], pauseMs: 30 })
+      const { messageId } = await runScript(dialect, { ...SCRIPTS['plain reply'], pauseMs: 50 })
       expect(getMessage(messageId)!.stats!.tokensPerSecond).toBeGreaterThan(0)
+    })
+
+    // A round that only calls a tool streams no text (LM Studio sends it no content at all, FINDINGS Q2), so nothing
+    // times it: its tokens stay out of the figure.
+    it('works tok/s out from the timed rounds’ tokens only, leaving out a tool-only round’s', async () => {
+      const { messageId } = await runScript(dialect, {
+        prompt: 'look it up',
+        turn: (_b, n) =>
+          n === 1
+            ? { toolCalls: [{ name: 'web_search', args: { query: 'ollmost' } }], usage: { prompt: 10, completion: 25 } }
+            : { content: 'Found it.', usage: { prompt: 10, completion: 3 }, genMs: 1500 },
+        web: SCRIPTS['tool round'].web
+      })
+      // The text round's 3 tokens in the server's own 1.5 s; the tool round's 25 as well would read 18.7.
+      expect(getMessage(messageId)!.stats).toMatchObject({ completionTokens: 28, tokensPerSecond: 2 })
     })
   })
 
