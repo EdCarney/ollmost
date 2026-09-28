@@ -1,5 +1,5 @@
 import { displayAddress } from '@shared/endpoints'
-import { formatContext } from '@shared/format'
+import { contextSizeLabel } from '@shared/format'
 import type { Endpoint, EndpointFlavor, ModelDetected } from '@shared/types'
 import { isRecord } from '../json'
 
@@ -90,8 +90,8 @@ export function friendlyOpenAIError(
   const window = contextLimitOf(detail, error)
   if (window)
     return fail(
-      `This chat no longer fits ${model ?? 'the model'} on ${name} (a ${formatContext(window)} context). Ollmost now plans for that size: retry, use /compact, or start a new chat.`,
-      { contextLength: window, reason: `${name} reported a ${formatContext(window)} context` }
+      `This chat no longer fits ${model ?? 'the model'} on ${name} (a ${contextSizeLabel(window)} context). Ollmost now plans for that size: retry, use /compact, or start a new chat.`,
+      { contextLength: window, reason: `${name} reported a ${contextSizeLabel(window)} context` }
     )
   if (model && /model/i.test(detail) && (status === 404 || MISSING_MODEL.test(detail)))
     return fail(`${name} doesn't have a model called ${model}.`)

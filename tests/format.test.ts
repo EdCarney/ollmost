@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { formatTokens } from '../src/shared/format'
+import { contextSizeLabel, formatTokens } from '../src/shared/format'
 
 describe('formatTokens', () => {
   it('shows a count under a thousand as is', () => {
@@ -29,5 +29,16 @@ describe('formatTokens', () => {
     expect(formatTokens(9_999_500)).toBe('10.0M')
     expect(formatTokens(99_999_999)).toBe('100M')
     expect(formatTokens(99_950_000)).toBe('100M')
+  })
+})
+
+describe('contextSizeLabel', () => {
+  it('reads a size that divides evenly in binary units, and any other as formatContext does', () => {
+    expect(contextSizeLabel(65_536)).toBe('64K')
+    expect(contextSizeLabel(131_072)).toBe('128K')
+    expect(contextSizeLabel(1_048_576)).toBe('1M')
+    // Not a multiple of 1024: formatContext's.
+    expect(contextSizeLabel(42_496)).toBe('42K')
+    expect(contextSizeLabel(null)).toBe('')
   })
 })

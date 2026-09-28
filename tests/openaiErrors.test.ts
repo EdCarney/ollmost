@@ -86,9 +86,9 @@ describe('friendlyOpenAIError', () => {
     })
     const { error, detected } = friendlyOpenAIError(gpu, 400, body, 'Qwen/Qwen3-8B')
     expect(error.message).toBe(
-      'This chat no longer fits Qwen/Qwen3-8B on GPU box (a 33K context). Ollmost now plans for that size: retry, use /compact, or start a new chat.'
+      'This chat no longer fits Qwen/Qwen3-8B on GPU box (a 32K context). Ollmost now plans for that size: retry, use /compact, or start a new chat.'
     )
-    expect(detected).toEqual({ contextLength: 32768, reason: 'GPU box reported a 33K context' })
+    expect(detected).toEqual({ contextLength: 32768, reason: 'GPU box reported a 32K context' })
   })
 
   it('learns it from llama.cpp’s exceed_context_size_error', () => {

@@ -6,7 +6,7 @@ import { resolveThinkProfile } from '@shared/thinking'
 import type { Endpoint, ModelInfo, ModelListResult, ModelOverrides, Settings, ThinkProfile } from '@shared/types'
 import { Badge, Button, Field, Switch, TextField } from '@/components/ui'
 import { api } from '@/lib/api'
-import { cn, formatContext } from '@/lib/format'
+import { cn, contextSizeLabel } from '@/lib/format'
 import { reportError, useApp } from '@/stores/app'
 import { useConfirm } from '@/stores/confirm'
 import { BlurField, Row, Section } from '../settingsParts'
@@ -25,13 +25,6 @@ const CONTEXT_SIZES = [8192, 16384, 32768, 65536, 131072]
 
 const statusOf = (e: Endpoint, errors: ModelListResult['errors']): Status =>
   !e.enabled ? 'off' : errors.some((x) => x.endpointId === e.id) ? 'offline' : 'ok'
-
-// A context size in binary units when it divides evenly (65536 is "64K", 1048576 "1M", not "66K", "1.0M"), else formatContext's.
-function contextSizeLabel(n: number | null): string {
-  if (!n) return ''
-  if (n % 1_048_576 === 0) return `${n / 1_048_576}M`
-  return n % 1024 === 0 ? `${n / 1024}K` : formatContext(n)
-}
 
 /** A window-size menu. A saved size off the list keeps an option of its own. */
 function ContextSelect({ value, onChange }: { value: number; onChange: (n: number) => void }) {
