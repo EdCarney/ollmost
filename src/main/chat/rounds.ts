@@ -4,9 +4,8 @@ import type { MessageStats, ModelInfo, ThinkingSegment, ToolDecision, ToolEvent 
 import { getConversation, updateConversation } from '../db/conversations'
 import { insertUsageEvent } from '../db/usage'
 import { startTrace, type Trace } from '../debug/traces'
-import { type ChatBody, type ChatChunk, chatStream, endpointFor, streamTimeoutsFor } from '../providers/ollama/wire'
-import type { ToolCall } from '../providers/types'
 import { paths } from '../paths'
+import type { ChatEvent, ChatRequest, IdentifiedToolCall, Provider, ToolCall } from '../providers/types'
 import { requestCost } from '../usage/pricing'
 import { errorMessage, estimateTokens } from '../util'
 import { EVERY_TIME, waitForDecision } from './approvals'
@@ -49,8 +48,10 @@ export interface RoundsInput {
   loopId: string
   modelName: string
   model: ModelInfo
+  /** The model's server: every round's request goes through it. */
+  provider: Provider
   /** The request so far; rounds append to its messages and may withdraw its tools. */
-  body: ChatBody
+  body: ChatRequest
   budget: number
   maxRounds: number
   /**
@@ -83,12 +84,16 @@ export interface RoundsResult {
   rounds: number
   /** Set when a request failed; null when the rounds ended or were stopped. */
   error: string | null
-  evalNs: number
+  /** The server's own generation time over the rounds that reported it; 0 when none did. */
+  genMs: number
   thinkStart: number | null
   thinkEnd: number | null
   /** Names the model called that nothing offers. */
   triedUnknown: string[]
 }
+
+/** The event that ends a finished round: its usage, timing and the reason it ended. */
+type DoneEvent = Extract<ChatEvent, { type: 'done' }>
 
 /**
  * The reply's round loop: stream a request, run the tool calls it makes (asking first where a tool needs it), keep
@@ -97,7 +102,7 @@ export interface RoundsResult {
  * quietly.
  */
 export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
-  const { body, budget, maxRounds, toolContext, conversationId, modelName, model } = input
+  const { body, budget, maxRounds, toolContext, conversationId, modelName, provider } = input
   const parallel = input.parallel ?? 1
   const stats = input.stats
   let content = ''
@@ -113,18 +118,18 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
   const toolEvents: ToolEvent[] = []
   let thinkStart: number | null = null
   let thinkEnd: number | null = null
-  let evalNs = 0
+  let genMs = 0
   let error: string | null = null
   let rounds = 0
   let openRound: { content: string; thinking: string; promptEstimate: number } | null = null
   let roundTrace: Trace | null = null
 
   // Each round is a separate billed request: log it, and roll it into the message's stats.
-  const recordRound = (final: ChatChunk | null) => {
+  const recordRound = (done: DoneEvent | null) => {
     if (!openRound) return null
-    const estimated = !final?.eval_count
-    const promptTokens = final?.prompt_eval_count ?? openRound.promptEstimate
-    const completionTokens = final?.eval_count ?? estimateTokens(openRound.content + openRound.thinking)
+    const estimated = !done?.usage.completion
+    const promptTokens = done?.usage.prompt ?? openRound.promptEstimate
+    const completionTokens = done?.usage.completion ?? estimateTokens(openRound.content + openRound.thinking)
     const costUsd = requestCost(modelName, promptTokens, completionTokens)
     insertUsageEvent({
       conversationId,
@@ -162,11 +167,11 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
     const allowedInChat = () => getConversation(conversationId)?.allowedTools ?? []
     // This turn's tool results, oldest first: when the request outgrows the context window, the oldest are shortened.
     const turnResults: Array<{ index: number; round: number; note: string }> = []
-    // Ollama's token count for the last request, and what we estimated it at, to correct later estimates.
+    // The server's token count for the last request, and what we estimated it at, to correct later estimates.
     let lastCount: { actual: number; estimated: number } | null = null
     const promptTokens = () => {
       const estimate = estimatePrompt(body)
-      // Ollama's count plus our estimate of what's been added since, but never below our own estimate: a local
+      // The server's count plus our estimate of what's been added since, but never below our own estimate: a local
       // model that reused its cache can report fewer tokens than the request holds.
       return lastCount ? Math.max(estimate, lastCount.actual + estimate - lastCount.estimated) : estimate
     }
@@ -186,11 +191,12 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         body.messages[r.index] = { ...body.messages[r.index], content: r.note }
         stats.shortenedToolResults = (stats.shortenedToolResults ?? 0) + 1
       }
-      debugLog(body)
-      const calls: ToolCall[] = []
+      const wire = provider.wire(body, true)
+      debugLog(wire.body)
+      const calls: IdentifiedToolCall[] = []
       let roundContent = ''
       let roundThinking = ''
-      let final: ChatChunk | null = null
+      let done: DoneEvent | null = null
       openRound = { content: '', thinking: '', promptEstimate: estimatePrompt(body) }
       roundAt = { at: nextRoundAt ?? content.length, index: toolEvents.length }
       nextRoundAt = null
@@ -202,68 +208,76 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         messageId: input.loopId,
         model: modelName,
         round,
-        endpoint: endpointFor('/api/chat'),
-        request: { ...body, stream: true },
+        endpoint: wire.endpoint,
+        request: wire.body,
         summary: 'Streaming…'
       })
+      // Events, not network chunks: an adapter sends an empty `content` for a chunk that carried nothing.
       let chunks = 0
-      for await (const chunk of chatStream(body, input.signal, streamTimeoutsFor(model.location))) {
+      for await (const ev of provider.chatStream(body, input.signal)) {
         chunks++
         roundTrace.firstByte()
-        const m = chunk.message
-        if (m?.thinking || m?.content) {
+        if ((ev.type === 'thinking' || ev.type === 'content') && ev.text) {
           roundTrace.firstToken()
           roundTrace.progress(roundContent || 'Thinking…', estimateTokens(roundContent + roundThinking))
         }
-        if (m?.thinking) {
-          thinkStart ??= Date.now()
-          thinking += m.thinking
-          roundThinking += m.thinking
-          openRound.thinking += m.thinking
-          roundThinkStart ??= Date.now()
-          input.onDelta({ thinking: m.thinking, round: roundAt })
+        switch (ev.type) {
+          case 'thinking':
+            if (!ev.text) break
+            thinkStart ??= Date.now()
+            thinking += ev.text
+            roundThinking += ev.text
+            openRound.thinking += ev.text
+            roundThinkStart ??= Date.now()
+            input.onDelta({ thinking: ev.text, round: roundAt })
+            break
+          case 'content':
+            if (!ev.text) break
+            if (thinkStart && !thinkEnd) thinkEnd = Date.now()
+            if (roundThinkStart && !roundThinkEnd) roundThinkEnd = Date.now()
+            content += ev.text
+            roundContent += ev.text
+            openRound.content += ev.text
+            input.onDelta({ content: ev.text })
+            break
+          // An adapter sends a call only once it's complete, so it can run as it is.
+          case 'toolCall':
+            calls.push(ev.call)
+            break
+          case 'done':
+            done = ev
+            break
         }
-        if (m?.content) {
-          if (thinkStart && !thinkEnd) thinkEnd = Date.now()
-          if (roundThinkStart && !roundThinkEnd) roundThinkEnd = Date.now()
-          content += m.content
-          roundContent += m.content
-          openRound.content += m.content
-          input.onDelta({ content: m.content })
-        }
-        if (m?.tool_calls?.length) calls.push(...m.tool_calls)
-        if (chunk.done) final = chunk
         checkpoint()
       }
-      if (final?.prompt_eval_count) lastCount = { actual: final.prompt_eval_count, estimated: openRound.promptEstimate }
-      const billed = recordRound(final)
+      if (done?.usage.prompt) lastCount = { actual: done.usage.prompt, estimated: openRound.promptEstimate }
+      const billed = recordRound(done)
       // After recordRound: it cleared openRound, so the catch below won't push this round's thinking a second time.
       if (roundThinking) thinkingSegments.push({ text: roundThinking, ...roundAt, ms: roundThinkMs() })
       // Another round follows a tool call: show the chat's totals now rather than when the reply ends (the done carries them).
       if (calls.length) input.onUsage()
       // The last round's reason is the reply's: "length" means the model was cut off mid-answer.
-      if (final?.done_reason) stats.doneReason = final.done_reason
-      const { message: _message, ...finalStats } = final ?? { done: true }
+      if (done?.finishReason) stats.doneReason = done.finishReason
       roundTrace.finish({
         status: 'ok',
         response: {
           content: roundContent,
           thinking: roundThinking,
           toolCalls: calls.length ? calls : undefined,
-          final: finalStats,
+          final: done?.raw ?? { done: true },
           chunks
         },
         promptTokens: billed?.promptTokens,
         completionTokens: billed?.completionTokens,
         costUsd: billed?.costUsd,
         summary: calls.length ? `→ ${calls.map((c) => c.function.name).join(', ')}` : roundContent.trim() || '(empty reply)',
-        ollama: final ?? undefined
+        timing: done?.timing
       })
       roundTrace = null
-      evalNs += final?.eval_duration ?? 0
+      genMs += done?.timing?.genMs ?? 0
       if (!calls.length) break
 
-      body.messages.push({ role: 'assistant', content: roundContent, thinking: roundThinking || undefined, tool_calls: calls })
+      body.messages.push({ role: 'assistant', content: roundContent, thinking: roundThinking || undefined, toolCalls: calls })
       // The newest round's results are never shortened, so together they must fit what's left of the budget once this
       // turn's older results are (next round). Share that room between the calls as they finish.
       const shortenable = turnResults.reduce(
@@ -387,7 +401,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
           if (result.unknown) triedUnknown.push(call.function.name)
           else onlyUnknown = false
           if (!result.withheld) onlyWithheld = false
-          body.messages.push({ role: 'tool', content: result.content, tool_name: call.function.name })
+          body.messages.push({ role: 'tool', content: result.content, toolName: call.function.name, toolCallId: call.id })
           const note = `[Ollmost shortened this earlier ${call.function.name} result to make room in the context window. It was: ${result.event.summary}. Call the tool again if you need it in full.]`
           if (result.content.length > note.length) turnResults.push({ index: body.messages.length - 1, round, note })
         }
@@ -421,7 +435,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
     })
   }
 
-  return { content, thinking, thinkingSegments, toolEvents, rounds, error, evalNs, thinkStart, thinkEnd, triedUnknown }
+  return { content, thinking, thinkingSegments, toolEvents, rounds, error, genMs, thinkStart, thinkEnd, triedUnknown }
 }
 
 /** A call the round has shown on its card, waiting to run. */
@@ -481,19 +495,18 @@ async function runTogether<T, R>(
   return results
 }
 
-/** With OLLMOST_DEBUG=1, append each request (images elided) to <userData>/debug.log. */
-function debugLog(body: ChatBody): void {
+/** With OLLMOST_DEBUG=1, append each request as it's sent (images elided) to <userData>/debug.log. */
+function debugLog(body: unknown): void {
   if (!process.env.OLLMOST_DEBUG) return
-  const redacted = {
-    ...body,
-    messages: body.messages.map((m) => (m.images ? { ...m, images: m.images.map(() => '<image>') } : m))
-  }
-  appendFileSync(join(paths.data, 'debug.log'), `${new Date().toISOString()} ${JSON.stringify(redacted)}\n`)
+  const redacted = JSON.stringify(body, (key, value: unknown) =>
+    key === 'images' && Array.isArray(value) ? value.map(() => '<image>') : value
+  )
+  appendFileSync(join(paths.data, 'debug.log'), `${new Date().toISOString()} ${redacted}\n`)
 }
 
 /** Roughly what the tool definitions add to a request: every round sends them all. */
-export const toolsTokens = (tools: ChatBody['tools']) => (tools?.length ? estimateTokens(JSON.stringify(tools)) : 0)
+export const toolsTokens = (tools: ChatRequest['tools']) => (tools?.length ? estimateTokens(JSON.stringify(tools)) : 0)
 
-function estimatePrompt(body: ChatBody): number {
+function estimatePrompt(body: ChatRequest): number {
   return body.messages.reduce((n, m) => n + estimateTokens(m.content) + (m.images?.length ?? 0) * 1600, toolsTokens(body.tools))
 }

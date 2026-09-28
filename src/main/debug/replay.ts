@@ -1,6 +1,7 @@
 import { stripImagePlaceholders } from '@shared/debug'
 import type { TraceDetail } from '@shared/types'
 import { insertUsageEvent } from '../db/usage'
+import { resultFromOllama } from '../providers/ollama/adapter'
 import { type ChatBody, chatOnce, endpointFor } from '../providers/ollama/wire'
 import { requestCost } from '../usage/pricing'
 import { errorMessage } from '../util'
@@ -48,7 +49,7 @@ export async function replayRequest(conversationId: string | null, raw: unknown)
       completionTokens,
       costUsd,
       summary: `Replay: ${message?.content?.trim() || (message?.tool_calls?.length ? 'tool call' : '(empty)')}`,
-      ollama: res
+      timing: resultFromOllama(res).timing
     })
   } catch (err) {
     const error = errorMessage(err)

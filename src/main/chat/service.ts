@@ -3,7 +3,7 @@ import { parseMessage } from '@shared/artifactParser'
 import { normalizeSpaces } from '@shared/text'
 import { contextOptions, effectiveContext } from '@shared/context'
 import { EVENT_CHANNELS } from '@shared/ipc'
-import { resolveThinkProfile, toOllamaThink } from '@shared/thinking'
+import { resolveThinkProfile } from '@shared/thinking'
 import type {
   ChatEvent,
   Compaction,
@@ -34,9 +34,10 @@ import {
 } from '../db/conversations'
 import { getProject, projectKnowledge, touchProject } from '../db/projects'
 import { imageForModel, removeFiles } from '../files/ingest'
-import { toOllamaMessage } from '../providers/ollama/adapter'
+import { resultFromOllama } from '../providers/ollama/adapter'
 import { type ChatBody, chatOnce, endpointFor } from '../providers/ollama/wire'
-import { modelInfo } from '../providers/registry'
+import { modelInfo, resolve } from '../providers/registry'
+import type { ChatRequest } from '../providers/types'
 import { webAvailable } from '../ollama/web'
 import { startTrace, type Trace } from '../debug/traces'
 import { getSettings } from '../settings'
@@ -285,13 +286,14 @@ async function generate(
   const startedAt = Date.now()
   let thinkStart: number | null = null
   let thinkEnd: number | null = null
-  let evalNs = 0
+  let genMs = 0
   let error: string | null = null
   let savedAt = Date.now()
 
   try {
     const conversation = getConversation(conversationId)!
     const settings = getSettings()
+    const { provider, model: serverName } = resolve(modelName)
     const model = await modelInfo(modelName)
     const profile = resolveThinkProfile(modelName, model.capabilities, model.overrides.think)
     const vision = model.capabilities.includes('vision')
@@ -450,13 +452,14 @@ async function generate(
     })
     if (assembled.droppedTurns) stats.truncatedHistory = assembled.droppedTurns
 
-    const body: ChatBody = {
-      model: modelName,
-      messages: assembled.messages.map(toOllamaMessage),
-      think: toOllamaThink(profile, think),
+    const request: ChatRequest = {
+      model: serverName,
+      messages: assembled.messages,
+      think,
+      profile,
       tools,
-      // Cloud models manage their own context; local ones default to a small window unless told otherwise.
-      options: contextOptions(model, settings.localNumCtx)
+      // The window the history was fitted to. The adapter decides whether its server takes one (Ollama's num_ctx).
+      contextWindow: numCtx
     }
 
     const result = await runRounds({
@@ -465,7 +468,8 @@ async function generate(
       loopId: messageId,
       modelName,
       model,
-      body,
+      provider,
+      body: request,
       budget,
       maxRounds,
       parallel: atOnce,
@@ -495,7 +499,7 @@ async function generate(
     thinkingSegments.push(...result.thinkingSegments)
     toolEvents.push(...result.toolEvents)
     error = result.error
-    evalNs = result.evalNs
+    genMs = result.genMs
     thinkStart = result.thinkStart
     thinkEnd = result.thinkEnd
     if (!error && !controller.signal.aborted && !content.trim() && result.triedUnknown.length)
@@ -515,7 +519,8 @@ async function generate(
   if (!getMessage(messageId)) return
 
   stats.durationMs = Date.now() - startedAt
-  if (evalNs && stats.completionTokens) stats.tokensPerSecond = stats.completionTokens / (evalNs / 1e9)
+  // The server's own generation time, where it reports one (local Ollama models do; cloud ones don't).
+  if (genMs && stats.completionTokens) stats.tokensPerSecond = stats.completionTokens / (genMs / 1000)
   if (thinkStart) stats.thinkingMs = (thinkEnd ?? Date.now()) - thinkStart
 
   const message = updateMessage(messageId, {
@@ -837,7 +842,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       completionTokens,
       costUsd,
       summary: `Title: ${title || '(empty)'}`,
-      ollama: res
+      timing: resultFromOllama(res).timing
     })
   } catch (err) {
     titleTrace?.finish({ status: 'error', response: { error: errorMessage(err) }, summary: `Title failed: ${errorMessage(err)}` })

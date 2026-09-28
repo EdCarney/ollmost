@@ -1,14 +1,12 @@
 // A sub-agent: a fresh reply loop on one task the model describes, with the parent's model, tools and approvals,
 // whose reply is the tool result. Only that result enters the parent's context; the child's reading stays here,
 // on the parent's tool event, for the transcript (#97).
-import { contextOptions, effectiveContext } from '@shared/context'
-import { resolveThinkProfile, toOllamaThink } from '@shared/thinking'
+import { effectiveContext } from '@shared/context'
+import { resolveThinkProfile } from '@shared/thinking'
 import { childId } from '@shared/toolEvents'
 import type { MessageStats, Settings, ToolEvent } from '@shared/types'
-import { toOllamaMessage } from '../providers/ollama/adapter'
-import type { ChatBody } from '../providers/ollama/wire'
-import { modelInfo } from '../providers/registry'
-import type { ToolDef } from '../providers/types'
+import { modelInfo, resolve } from '../providers/registry'
+import type { ChatRequest, ToolDef } from '../providers/types'
 import { DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
 import { assemble, promptBudget } from './assemble'
 import { TOOL_RESULT_CHARS } from './results'
@@ -103,6 +101,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   if (!reply || ctx.callIndex === undefined || !signal) return fail('delegate is not available here')
 
   const settings = getSettings()
+  const { provider, model: serverName } = resolve(reply.model)
   const model = await modelInfo(reply.model)
   const profile = resolveThinkProfile(reply.model, model.capabilities, model.overrides.think)
   const numCtx = effectiveContext(model, settings.localNumCtx)
@@ -137,12 +136,13 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
     compaction: null,
     child: { task }
   })
-  const body: ChatBody = {
-    model: reply.model,
-    messages: assembled.messages.map(toOllamaMessage),
-    think: toOllamaThink(profile, reply.think),
+  const body: ChatRequest = {
+    model: serverName,
+    messages: assembled.messages,
+    think: reply.think,
+    profile,
     tools,
-    options: contextOptions(model, settings.localNumCtx)
+    contextWindow: numCtx
   }
 
   const events: ToolEvent[] = []
@@ -166,6 +166,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
     loopId: childId(reply.messageId, ctx.callIndex),
     modelName: reply.model,
     model,
+    provider,
     body,
     budget: promptBudget(numCtx),
     maxRounds: Math.max(1, Math.min(settings.delegate.maxRounds, reply.maxRounds)),

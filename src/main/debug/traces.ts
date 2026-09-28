@@ -3,6 +3,7 @@ import { redactImages } from '@shared/debug'
 import { EVENT_CHANNELS, type TraceEvent } from '@shared/ipc'
 import type { TraceDetail, TraceKind, TraceStatus, TraceSummary, TraceTiming } from '@shared/types'
 import { all, get, run } from '../db/index'
+import type { ChatTiming } from '../providers/types'
 import { getSettings } from '../settings'
 import { parseJson, uid } from '../util'
 
@@ -90,17 +91,18 @@ export class Trace {
     completionTokens?: number | null
     costUsd?: number | null
     summary: string
-    ollama?: { load_duration?: number; prompt_eval_duration?: number; eval_duration?: number }
+    /** The server's own durations for the request, when it reports them. */
+    timing?: ChatTiming
   }): TraceDetail {
     const now = Date.now()
-    const ns = (v?: number) => (typeof v === 'number' ? Math.round(v / 1e6) : null)
+    const ms = (v?: number) => (typeof v === 'number' ? Math.round(v) : null)
     const timing: TraceTiming = {
       ttfbMs: this.firstByteAt ? this.firstByteAt - this.startedAt : null,
       firstTokenMs: this.firstTokenAt ? this.firstTokenAt - this.startedAt : null,
       totalMs: now - this.startedAt,
-      loadMs: ns(result.ollama?.load_duration),
-      promptEvalMs: ns(result.ollama?.prompt_eval_duration),
-      evalMs: ns(result.ollama?.eval_duration)
+      loadMs: ms(result.timing?.loadMs),
+      promptEvalMs: ms(result.timing?.promptMs),
+      evalMs: ms(result.timing?.genMs)
     }
     const response = {
       ...result.response,
