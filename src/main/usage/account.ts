@@ -105,10 +105,8 @@ export function getAccountUsage(refresh = false): Promise<AccountUsage> {
   if (!inflight) {
     const started = generation
     const run: Promise<AccountUsage> = load()
-      .then((u) => {
-        if (started === generation) cache = u
-        return u
-      })
+      // A load that settings changed under (a key removed mid-request) is dropped: its caller gets a read made after.
+      .then((u) => (started === generation ? (cache = u) : getAccountUsage()))
       .finally(() => {
         if (inflight === run) inflight = null
       })

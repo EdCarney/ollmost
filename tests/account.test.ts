@@ -107,7 +107,7 @@ describe('the account’s plan (/api/me)', () => {
 })
 
 describe('the account’s usage', () => {
-  it('starts a new load after the key is removed, and the load in flight then does not land in the cache', async () => {
+  it('after the key is removed, reads fresh and gives the load in flight that read, not its own result', async () => {
     // No endpoints: nothing asks for the plan, so the only request is the usage one, held until it's released.
     state.endpoints = []
     state.key = 'a-key'
@@ -122,7 +122,8 @@ describe('the account’s usage', () => {
       // The read after the removal must not wait for the keyed request: without a key it settles at once.
       const fresh = await Promise.race([getAccountUsage(), new Promise<null>((resolve) => setTimeout(resolve, 200, null))])
       release(new Response('{}'))
-      await stale
+      // Whoever asked before the removal (the chip's poll) gets what's read after it, never the keyed result.
+      expect((await stale).needsKey).toBe(true)
       expect(fresh?.needsKey).toBe(true)
       expect((await getAccountUsage()).needsKey).toBe(true)
       expect(usage).toHaveBeenCalledTimes(1)
