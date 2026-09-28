@@ -33,7 +33,7 @@ describe('formatTokens', () => {
 })
 
 describe('contextSizeLabel', () => {
-  it('reads a size that divides evenly in binary units, and any other as formatContext does', () => {
+  it('reads a size that divides evenly in binary units unless it is a round decimal size, and any other as formatContext does', () => {
     expect(contextSizeLabel(65_536)).toBe('64K')
     expect(contextSizeLabel(131_072)).toBe('128K')
     expect(contextSizeLabel(1_048_576)).toBe('1M')

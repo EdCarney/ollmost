@@ -54,7 +54,7 @@ const THINK_KINDS: ReadonlyArray<ThinkProfile['kind']> = ['toggle', 'levels', 'a
 // The windows a server can be told a model has, for a model it reports none for (or reports wrongly). CONTEXT_SIZES,
 // above, stay the endpoint page's num_ctx and "Context when not reported" choices.
 const MODEL_CONTEXT_SIZES = [4_096, 8_192, 16_384, 32_768, 65_536, 131_072, 262_144]
-const SELECT = 'h-8 rounded-md border border-line bg-canvas px-1.5 text-xs outline-none'
+const SELECT = 'h-8 rounded-md border border-line bg-transparent px-1.5 text-xs outline-none'
 
 function OnOff({
   label,

@@ -30,7 +30,7 @@ export function BlurField({
       onChange={(e) => setLocal(e.target.value)}
       onBlur={commit}
       // Enter saves by leaving the field, so the blur is the one save (not Enter's and then the blur's).
-      onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+      onKeyDown={(e) => e.key === 'Enter' && !e.nativeEvent.isComposing && e.currentTarget.blur()}
       {...rest}
     />
   )
