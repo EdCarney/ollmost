@@ -771,12 +771,15 @@ describe('the title model', () => {
     invalidateProviders()
   })
 
+  // A title from the test before can land after beforeEach empties titleCalls, so each chat's title is found by its
+  // first message.
+  const titleOf = (content: string) => waitFor(() => titleCalls.find((t) => JSON.stringify(t.messages).includes(content)))
+
   it('titles with the model set in Settings', async () => {
     updateSettings({ titleModel: 'ollama/tiny-title' })
     chat = reply('Hi')
-    start()
-    await waitFor(() => titleCalls.length > 0)
-    expect(titleCalls[0].model).toBe('tiny-title')
+    start('title me with tiny-title')
+    expect((await titleOf('title me with tiny-title')).model).toBe('tiny-title')
   })
 
   it('falls back to the chat’s model when the title model’s endpoint is gone or turned off', async () => {
@@ -787,11 +790,9 @@ describe('the title model', () => {
     invalidateProviders()
     for (const titleModel of ['lm-studio/qwen/qwen3-8b', 'off/tiny-title']) {
       updateSettings({ titleModel })
-      titleCalls = []
       chat = reply('Hi')
-      start()
-      await waitFor(() => titleCalls.length > 0)
-      expect(titleCalls[0].model).toBe('llama3.2')
+      start(`title me without ${titleModel}`)
+      expect((await titleOf(`title me without ${titleModel}`)).model).toBe('llama3.2')
     }
   })
 })
