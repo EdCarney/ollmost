@@ -46,8 +46,12 @@ describe('whether a chat’s model can be used', () => {
     expect(unavailableText('endpoint-disabled', 'gpu-box/qwen3:8b', endpoints)).toBe(
       'qwen3:8b is unavailable: GPU box is turned off in Settings → Models. Turn it on, or pick another model.'
     )
+    // The endpoint's name is gone with it, so the model's own name stands alone.
     expect(unavailableText('endpoint-removed', 'vllm/Qwen/Qwen3-32B', endpoints)).toBe(
-      'vllm/Qwen/Qwen3-32B is unavailable: its endpoint was removed. Pick another model to keep chatting.'
+      'Qwen/Qwen3-32B is unavailable: its endpoint was removed. Pick another model to keep chatting.'
+    )
+    expect(unavailableText('endpoint-removed', 'second-ollama/gpt-oss:120b', endpoints)).toBe(
+      'gpt-oss:120b is unavailable: its endpoint was removed. Pick another model to keep chatting.'
     )
     expect(unavailableText('model-missing', 'ollama/mistral:7b', endpoints)).toBe(
       'mistral:7b is unavailable: Ollama doesn’t list it any more. Pick another model.'

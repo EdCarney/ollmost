@@ -45,7 +45,8 @@ function ContextSelect({ value, onChange }: { value: number; onChange: (n: numbe
     >
       {sizes.map((n) => (
         <option key={n} value={n}>
-          {formatContext(n)}
+          {/* The sizes are powers of two, so 65536 reads "64K" rather than formatContext's "66K". */}
+          {n % 1024 === 0 ? `${n / 1024}K` : formatContext(n)}
         </option>
       ))}
     </select>

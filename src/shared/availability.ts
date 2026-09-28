@@ -40,8 +40,12 @@ export function unavailableText(reason: ModelAvailability, key: string, endpoint
         ).endpointId
     )?.name ?? 'its endpoint'
   switch (reason) {
-    case 'endpoint-removed':
-      return `${label} is unavailable: its endpoint was removed. Pick another model to keep chatting.`
+    case 'endpoint-removed': {
+      // The endpoint's name went with it, so the line names the model alone ("gpt-oss:120b"), not the whole key.
+      const prefix = keyPrefix(key)
+      const model = prefix === null ? label : splitModelKey(key, [prefix]).model
+      return `${model} is unavailable: its endpoint was removed. Pick another model to keep chatting.`
+    }
     case 'endpoint-disabled':
       return `${label} is unavailable: ${endpoint} is turned off in Settings → Models. Turn it on, or pick another model.`
     case 'endpoint-offline':
