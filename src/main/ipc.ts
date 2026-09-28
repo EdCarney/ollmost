@@ -94,6 +94,7 @@ import {
   statuses as serverStatuses,
   toolFingerprint
 } from './mcp/manager'
+import { addEndpoint, endpointRemovalImpact, probeNewEndpoint, removeEndpoint, setEndpointKey, updateEndpoint } from './providers/endpoints'
 import { listAllModels, modelInfo, resolve } from './providers/registry'
 import { getPriceTable, refreshPrices } from './usage/pricing'
 import {
@@ -211,6 +212,16 @@ const impl: Impl = {
       writeModelOverrides(canonical, overrides)
       return modelInfo(canonical)
     }
+  },
+
+  endpoints: {
+    list: async () => getSettings().endpoints,
+    probe: (input) => probeNewEndpoint(input),
+    add: async (input) => addEndpoint(input),
+    update: async (id, patch) => updateEndpoint(id, patch),
+    removalImpact: async (id) => endpointRemovalImpact(id),
+    remove: async (id) => removeEndpoint(id),
+    setKey: async (id, key) => setEndpointKey(id, key)
   },
 
   projects: {

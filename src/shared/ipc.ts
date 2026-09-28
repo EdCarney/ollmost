@@ -10,6 +10,10 @@ import type {
   CodeNetwork,
   Conversation,
   ConversationDetail,
+  Endpoint,
+  EndpointFlavor,
+  EndpointKind,
+  EndpointProbe,
   FileSource,
   ID,
   McpImportResult,
@@ -100,6 +104,22 @@ export interface OllmostApi {
     list(refresh?: boolean): Promise<ModelListResult>
     info(key: string): Promise<ModelInfo>
     setOverrides(key: string, overrides: ModelOverrides): Promise<ModelInfo>
+  }
+  /** Model servers. Never changed through settings.update: its deep-merge can't hold a list. */
+  endpoints: {
+    list(): Promise<Endpoint[]>
+    /** What answers at an address (refused at once when another endpoint has it). */
+    probe(input: { baseUrl: string; apiKey?: string }): Promise<EndpointProbe>
+    add(input: { name: string; baseUrl: string; kind: EndpointKind; flavor: EndpointFlavor; apiKey?: string }): Promise<Endpoint>
+    update(
+      id: string,
+      patch: Partial<Pick<Endpoint, 'name' | 'baseUrl' | 'enabled' | 'flavor' | 'showCloudCatalog' | 'numCtx' | 'defaultContext'>>
+    ): Promise<Endpoint>
+    /** What removing it would lose: the chats on its models, its key, its models' settings. */
+    removalImpact(id: string): Promise<{ chats: number; hasKey: boolean; overrides: number }>
+    remove(id: string): Promise<void>
+    /** Its own key; null removes it. ollama.com's is the account key (settings.setApiKey). */
+    setKey(id: string, key: string | null): Promise<Endpoint>
   }
   projects: {
     list(): Promise<Project[]>
@@ -289,6 +309,7 @@ export const INVOKE_CHANNELS = {
   app: ['info', 'setNativeTheme', 'openExternal', 'openDataFolder', 'migrationNotice', 'dismissMigrationNotice'],
   settings: ['get', 'update', 'setApiKey'],
   models: ['list', 'info', 'setOverrides'],
+  endpoints: ['list', 'probe', 'add', 'update', 'removalImpact', 'remove', 'setKey'],
   projects: ['list', 'get', 'create', 'update', 'delete', 'files', 'addFiles', 'removeFile', 'moveFile', 'openFile', 'revealFile'],
   conversations: ['list', 'get', 'update', 'delete', 'search'],
   chat: ['send', 'regenerate', 'edit', 'stop', 'compact', 'decide'],

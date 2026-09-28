@@ -78,6 +78,11 @@ export function deleteEndpointProfiles(endpointId: string): number {
   return Number(getDb().prepare('DELETE FROM model_profiles WHERE model LIKE ?').run(`${endpointId}/%`).changes)
 }
 
+/** How many of an endpoint's models have settings the user chose, for the question before it's removed. */
+export function countEndpointOverrides(endpointId: string): number {
+  return get<{ n: number }>("SELECT COUNT(*) AS n FROM model_profiles WHERE model LIKE ? AND overrides != '{}'", `${endpointId}/%`)?.n ?? 0
+}
+
 // ---- Custom themes ------------------------------------------------------
 
 export function listCustomThemes(): ThemeDef[] {

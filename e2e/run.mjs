@@ -737,7 +737,7 @@ writeFileSync(
   const win = await app.firstWindow()
   await win.waitForSelector('textarea', { timeout: 20000 })
   await win.evaluate(
-    (host) => window.ollmost.settings.update({ connection: { mode: 'local', host }, showCloudCatalog: false }),
+    (host) => window.ollmost.endpoints.update('ollama', { baseUrl: host, showCloudCatalog: false }),
     `http://127.0.0.1:${fakeOllama.address().port}`
   )
   await win.reload()
@@ -1104,7 +1104,7 @@ const fixtureRunning = () => {
   try {
     await win.waitForSelector('textarea', { timeout: 20000 })
     await win.evaluate(
-      (host) => window.ollmost.settings.update({ connection: { mode: 'local', host }, showCloudCatalog: false }),
+      (host) => window.ollmost.endpoints.update('ollama', { baseUrl: host, showCloudCatalog: false }),
       `http://127.0.0.1:${mcpOllama.address().port}`
     )
     await win.reload()
@@ -1471,7 +1471,7 @@ const evilSvg = (port) =>
   try {
     await win.waitForSelector('textarea', { timeout: 20000 })
     await win.evaluate(
-      (host) => window.ollmost.settings.update({ connection: { mode: 'local', host }, showCloudCatalog: false }),
+      (host) => window.ollmost.endpoints.update('ollama', { baseUrl: host, showCloudCatalog: false }),
       `http://127.0.0.1:${runnerOllama.address().port}`
     )
     await win.reload()
@@ -1747,7 +1747,7 @@ const evilSvg = (port) =>
     try {
       await win.waitForSelector('textarea', { timeout: 20000 })
       await win.evaluate(
-        (host) => window.ollmost.settings.update({ connection: { mode: 'local', host }, showCloudCatalog: false }),
+        (host) => window.ollmost.endpoints.update('ollama', { baseUrl: host, showCloudCatalog: false }),
         `http://127.0.0.1:${sessionOllama.address().port}`
       )
       await win.reload()
@@ -2047,7 +2047,7 @@ const evilSvg = (port) =>
   let { app, win } = await launchAt(seed)
   let conversationId
   try {
-    await win.evaluate((h) => window.ollmost.settings.update({ connection: { mode: 'local', host: h }, showCloudCatalog: false }), host)
+    await win.evaluate((h) => window.ollmost.endpoints.update('ollama', { baseUrl: h, showCloudCatalog: false }), host)
     await win.evaluate(
       async (fixture) => {
         await window.ollmost.settings.setApiKey('kiln-era-key')
@@ -2089,7 +2089,12 @@ const evilSvg = (port) =>
     // the schema is taken out first, or they'd fail on it. A new schema migration means updating this too.
     const KILN_DB_VERSION = 8
     const version = db.prepare('PRAGMA user_version').get().user_version
-    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 8, `database version ${version}`)
+    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 9, `database version ${version}`)
+    // The model-key migration (model endpoints): its two columns go, and model names lose the 'ollama/' it put in front,
+    // or running it again would prefix them twice.
+    db.exec('ALTER TABLE model_profiles DROP COLUMN detected; ALTER TABLE usage_events DROP COLUMN billing')
+    for (const table of ['conversations', 'messages', 'usage_events', 'traces', 'model_profiles'])
+      db.exec(`UPDATE ${table} SET model = substr(model, 8) WHERE model LIKE 'ollama/%'`)
     db.exec('ALTER TABLE project_files DROP COLUMN folder')
     db.exec('ALTER TABLE conversations DROP COLUMN plan; ALTER TABLE conversations DROP COLUMN stage')
     db.exec('ALTER TABLE conversations DROP COLUMN compaction')
@@ -2180,7 +2185,7 @@ process.on('SIGTERM', () => app.quit())
       }))
       check(
         "the API key and the server's values are asked for again",
-        !after.settings.connection.hasApiKey && after.servers[0]?.missingEnv.join() === 'TOKEN',
+        !after.settings.ollamaAccount.hasKey && after.servers[0]?.missingEnv.join() === 'TOKEN',
         JSON.stringify(after.servers[0]?.missingEnv)
       )
       await win.screenshot({ path: join(SHOTS, 'from-kiln.png') })
