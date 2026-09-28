@@ -1,0 +1,21 @@
+# unverified: written from docs
+{
+  "default_generation_settings": { "n_ctx": 32768, "params": { "temperature": 0.8 } },
+  "total_slots": 1,
+  "model_path": "/models/Qwen3-8B-Q4_K_M.gguf",
+  "chat_template": "{%- if tools %}…{%- endif %}",
+  "chat_template_caps": {
+    "supports_string_content": true,
+    "supports_typed_content": false,
+    "supports_tools": true,
+    "supports_tool_calls": true,
+    "supports_parallel_tool_calls": true,
+    "supports_system_role": true,
+    "supports_preserve_reasoning": false,
+    "supports_reasoning_effort": false,
+    "supports_object_arguments": false
+  },
+  "modalities": { "vision": false },
+  "build_info": "b6600-abc1234",
+  "is_sleeping": false
+}

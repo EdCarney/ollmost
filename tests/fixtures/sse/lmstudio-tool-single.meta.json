@@ -1,0 +1,852 @@
+{
+  "url": "http://localhost:1234/v1/chat/completions",
+  "request": {
+    "model": "google/gemma-4-e4b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What's the weather in Paris right now? Use the get_weather tool."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "The current weather in a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "The city, e.g. Paris"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      }
+    ],
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "status": 200,
+  "contentType": "text/event-stream",
+  "firstByteMs": 535,
+  "totalMs": 9575,
+  "chunks": [
+    {
+      "atMs": 535,
+      "bytes": 288
+    },
+    {
+      "atMs": 573,
+      "bytes": 268
+    },
+    {
+      "atMs": 573,
+      "bytes": 268
+    },
+    {
+      "atMs": 573,
+      "bytes": 269
+    },
+    {
+      "atMs": 573,
+      "bytes": 269
+    },
+    {
+      "atMs": 651,
+      "bytes": 274
+    },
+    {
+      "atMs": 691,
+      "bytes": 271
+    },
+    {
+      "atMs": 768,
+      "bytes": 275
+    },
+    {
+      "atMs": 768,
+      "bytes": 270
+    },
+    {
+      "atMs": 848,
+      "bytes": 271
+    },
+    {
+      "atMs": 886,
+      "bytes": 272
+    },
+    {
+      "atMs": 1000,
+      "bytes": 270
+    },
+    {
+      "atMs": 1038,
+      "bytes": 274
+    },
+    {
+      "atMs": 1038,
+      "bytes": 268
+    },
+    {
+      "atMs": 1038,
+      "bytes": 270
+    },
+    {
+      "atMs": 1076,
+      "bytes": 271
+    },
+    {
+      "atMs": 1113,
+      "bytes": 268
+    },
+    {
+      "atMs": 1113,
+      "bytes": 268
+    },
+    {
+      "atMs": 1113,
+      "bytes": 271
+    },
+    {
+      "atMs": 1188,
+      "bytes": 275
+    },
+    {
+      "atMs": 1226,
+      "bytes": 270
+    },
+    {
+      "atMs": 1300,
+      "bytes": 273
+    },
+    {
+      "atMs": 1300,
+      "bytes": 273
+    },
+    {
+      "atMs": 1300,
+      "bytes": 271
+    },
+    {
+      "atMs": 1300,
+      "bytes": 270
+    },
+    {
+      "atMs": 1338,
+      "bytes": 271
+    },
+    {
+      "atMs": 1413,
+      "bytes": 280
+    },
+    {
+      "atMs": 1566,
+      "bytes": 279
+    },
+    {
+      "atMs": 1604,
+      "bytes": 270
+    },
+    {
+      "atMs": 1604,
+      "bytes": 271
+    },
+    {
+      "atMs": 1680,
+      "bytes": 271
+    },
+    {
+      "atMs": 1680,
+      "bytes": 269
+    },
+    {
+      "atMs": 1754,
+      "bytes": 270
+    },
+    {
+      "atMs": 1793,
+      "bytes": 268
+    },
+    {
+      "atMs": 1944,
+      "bytes": 274
+    },
+    {
+      "atMs": 1944,
+      "bytes": 268
+    },
+    {
+      "atMs": 1944,
+      "bytes": 272
+    },
+    {
+      "atMs": 1983,
+      "bytes": 268
+    },
+    {
+      "atMs": 1983,
+      "bytes": 271
+    },
+    {
+      "atMs": 1983,
+      "bytes": 268
+    },
+    {
+      "atMs": 1983,
+      "bytes": 268
+    },
+    {
+      "atMs": 1983,
+      "bytes": 269
+    },
+    {
+      "atMs": 1983,
+      "bytes": 269
+    },
+    {
+      "atMs": 2059,
+      "bytes": 275
+    },
+    {
+      "atMs": 2174,
+      "bytes": 277
+    },
+    {
+      "atMs": 2211,
+      "bytes": 273
+    },
+    {
+      "atMs": 2250,
+      "bytes": 270
+    },
+    {
+      "atMs": 2250,
+      "bytes": 269
+    },
+    {
+      "atMs": 2250,
+      "bytes": 272
+    },
+    {
+      "atMs": 2325,
+      "bytes": 271
+    },
+    {
+      "atMs": 2401,
+      "bytes": 272
+    },
+    {
+      "atMs": 2517,
+      "bytes": 277
+    },
+    {
+      "atMs": 2517,
+      "bytes": 268
+    },
+    {
+      "atMs": 2594,
+      "bytes": 269
+    },
+    {
+      "atMs": 2671,
+      "bytes": 270
+    },
+    {
+      "atMs": 2671,
+      "bytes": 268
+    },
+    {
+      "atMs": 2746,
+      "bytes": 274
+    },
+    {
+      "atMs": 2786,
+      "bytes": 269
+    },
+    {
+      "atMs": 2786,
+      "bytes": 271
+    },
+    {
+      "atMs": 2786,
+      "bytes": 268
+    },
+    {
+      "atMs": 2826,
+      "bytes": 268
+    },
+    {
+      "atMs": 2826,
+      "bytes": 269
+    },
+    {
+      "atMs": 2826,
+      "bytes": 269
+    },
+    {
+      "atMs": 2826,
+      "bytes": 269
+    },
+    {
+      "atMs": 2865,
+      "bytes": 272
+    },
+    {
+      "atMs": 2941,
+      "bytes": 272
+    },
+    {
+      "atMs": 3061,
+      "bytes": 277
+    },
+    {
+      "atMs": 3061,
+      "bytes": 270
+    },
+    {
+      "atMs": 3101,
+      "bytes": 269
+    },
+    {
+      "atMs": 3177,
+      "bytes": 271
+    },
+    {
+      "atMs": 3177,
+      "bytes": 268
+    },
+    {
+      "atMs": 3253,
+      "bytes": 270
+    },
+    {
+      "atMs": 3367,
+      "bytes": 275
+    },
+    {
+      "atMs": 3367,
+      "bytes": 268
+    },
+    {
+      "atMs": 3367,
+      "bytes": 269
+    },
+    {
+      "atMs": 3443,
+      "bytes": 270
+    },
+    {
+      "atMs": 3443,
+      "bytes": 268
+    },
+    {
+      "atMs": 3481,
+      "bytes": 274
+    },
+    {
+      "atMs": 3520,
+      "bytes": 268
+    },
+    {
+      "atMs": 3557,
+      "bytes": 269
+    },
+    {
+      "atMs": 3597,
+      "bytes": 271
+    },
+    {
+      "atMs": 3634,
+      "bytes": 268
+    },
+    {
+      "atMs": 3634,
+      "bytes": 270
+    },
+    {
+      "atMs": 3672,
+      "bytes": 274
+    },
+    {
+      "atMs": 3672,
+      "bytes": 268
+    },
+    {
+      "atMs": 3672,
+      "bytes": 270
+    },
+    {
+      "atMs": 3709,
+      "bytes": 270
+    },
+    {
+      "atMs": 3786,
+      "bytes": 275
+    },
+    {
+      "atMs": 3899,
+      "bytes": 275
+    },
+    {
+      "atMs": 3976,
+      "bytes": 270
+    },
+    {
+      "atMs": 4016,
+      "bytes": 269
+    },
+    {
+      "atMs": 4016,
+      "bytes": 272
+    },
+    {
+      "atMs": 4016,
+      "bytes": 270
+    },
+    {
+      "atMs": 4016,
+      "bytes": 269
+    },
+    {
+      "atMs": 4092,
+      "bytes": 271
+    },
+    {
+      "atMs": 4130,
+      "bytes": 268
+    },
+    {
+      "atMs": 4130,
+      "bytes": 270
+    },
+    {
+      "atMs": 4243,
+      "bytes": 277
+    },
+    {
+      "atMs": 4243,
+      "bytes": 268
+    },
+    {
+      "atMs": 4318,
+      "bytes": 269
+    },
+    {
+      "atMs": 4319,
+      "bytes": 271
+    },
+    {
+      "atMs": 4319,
+      "bytes": 268
+    },
+    {
+      "atMs": 4356,
+      "bytes": 269
+    },
+    {
+      "atMs": 4548,
+      "bytes": 275
+    },
+    {
+      "atMs": 4548,
+      "bytes": 268
+    },
+    {
+      "atMs": 4626,
+      "bytes": 274
+    },
+    {
+      "atMs": 4626,
+      "bytes": 269
+    },
+    {
+      "atMs": 4626,
+      "bytes": 271
+    },
+    {
+      "atMs": 4664,
+      "bytes": 268
+    },
+    {
+      "atMs": 4664,
+      "bytes": 268
+    },
+    {
+      "atMs": 4701,
+      "bytes": 269
+    },
+    {
+      "atMs": 4701,
+      "bytes": 269
+    },
+    {
+      "atMs": 4739,
+      "bytes": 270
+    },
+    {
+      "atMs": 4739,
+      "bytes": 275
+    },
+    {
+      "atMs": 4776,
+      "bytes": 270
+    },
+    {
+      "atMs": 4853,
+      "bytes": 272
+    },
+    {
+      "atMs": 5004,
+      "bytes": 278
+    },
+    {
+      "atMs": 5004,
+      "bytes": 270
+    },
+    {
+      "atMs": 5043,
+      "bytes": 269
+    },
+    {
+      "atMs": 5043,
+      "bytes": 271
+    },
+    {
+      "atMs": 5043,
+      "bytes": 268
+    },
+    {
+      "atMs": 5043,
+      "bytes": 270
+    },
+    {
+      "atMs": 5080,
+      "bytes": 270
+    },
+    {
+      "atMs": 5118,
+      "bytes": 272
+    },
+    {
+      "atMs": 5232,
+      "bytes": 277
+    },
+    {
+      "atMs": 5232,
+      "bytes": 271
+    },
+    {
+      "atMs": 5423,
+      "bytes": 276
+    },
+    {
+      "atMs": 5423,
+      "bytes": 268
+    },
+    {
+      "atMs": 5461,
+      "bytes": 270
+    },
+    {
+      "atMs": 5501,
+      "bytes": 272
+    },
+    {
+      "atMs": 5501,
+      "bytes": 270
+    },
+    {
+      "atMs": 5501,
+      "bytes": 269
+    },
+    {
+      "atMs": 5576,
+      "bytes": 271
+    },
+    {
+      "atMs": 5576,
+      "bytes": 268
+    },
+    {
+      "atMs": 5615,
+      "bytes": 270
+    },
+    {
+      "atMs": 5653,
+      "bytes": 271
+    },
+    {
+      "atMs": 5729,
+      "bytes": 272
+    },
+    {
+      "atMs": 5729,
+      "bytes": 270
+    },
+    {
+      "atMs": 5729,
+      "bytes": 271
+    },
+    {
+      "atMs": 5805,
+      "bytes": 269
+    },
+    {
+      "atMs": 5921,
+      "bytes": 271
+    },
+    {
+      "atMs": 5921,
+      "bytes": 268
+    },
+    {
+      "atMs": 5997,
+      "bytes": 277
+    },
+    {
+      "atMs": 5997,
+      "bytes": 268
+    },
+    {
+      "atMs": 6036,
+      "bytes": 271
+    },
+    {
+      "atMs": 6036,
+      "bytes": 268
+    },
+    {
+      "atMs": 6036,
+      "bytes": 268
+    },
+    {
+      "atMs": 6074,
+      "bytes": 269
+    },
+    {
+      "atMs": 6074,
+      "bytes": 269
+    },
+    {
+      "atMs": 6150,
+      "bytes": 276
+    },
+    {
+      "atMs": 6225,
+      "bytes": 271
+    },
+    {
+      "atMs": 6302,
+      "bytes": 272
+    },
+    {
+      "atMs": 6339,
+      "bytes": 272
+    },
+    {
+      "atMs": 6340,
+      "bytes": 270
+    },
+    {
+      "atMs": 6378,
+      "bytes": 269
+    },
+    {
+      "atMs": 6378,
+      "bytes": 271
+    },
+    {
+      "atMs": 6416,
+      "bytes": 268
+    },
+    {
+      "atMs": 6494,
+      "bytes": 270
+    },
+    {
+      "atMs": 6572,
+      "bytes": 275
+    },
+    {
+      "atMs": 6686,
+      "bytes": 272
+    },
+    {
+      "atMs": 6686,
+      "bytes": 268
+    },
+    {
+      "atMs": 6686,
+      "bytes": 269
+    },
+    {
+      "atMs": 6763,
+      "bytes": 270
+    },
+    {
+      "atMs": 6763,
+      "bytes": 268
+    },
+    {
+      "atMs": 6802,
+      "bytes": 274
+    },
+    {
+      "atMs": 6802,
+      "bytes": 268
+    },
+    {
+      "atMs": 6802,
+      "bytes": 269
+    },
+    {
+      "atMs": 6881,
+      "bytes": 271
+    },
+    {
+      "atMs": 6919,
+      "bytes": 268
+    },
+    {
+      "atMs": 6958,
+      "bytes": 270
+    },
+    {
+      "atMs": 7075,
+      "bytes": 276
+    },
+    {
+      "atMs": 7075,
+      "bytes": 268
+    },
+    {
+      "atMs": 7151,
+      "bytes": 270
+    },
+    {
+      "atMs": 7189,
+      "bytes": 270
+    },
+    {
+      "atMs": 7303,
+      "bytes": 271
+    },
+    {
+      "atMs": 7341,
+      "bytes": 270
+    },
+    {
+      "atMs": 7379,
+      "bytes": 270
+    },
+    {
+      "atMs": 7419,
+      "bytes": 272
+    },
+    {
+      "atMs": 7457,
+      "bytes": 269
+    },
+    {
+      "atMs": 7457,
+      "bytes": 269
+    },
+    {
+      "atMs": 7457,
+      "bytes": 268
+    },
+    {
+      "atMs": 7457,
+      "bytes": 271
+    },
+    {
+      "atMs": 7457,
+      "bytes": 268
+    },
+    {
+      "atMs": 7496,
+      "bytes": 268
+    },
+    {
+      "atMs": 7496,
+      "bytes": 269
+    },
+    {
+      "atMs": 7496,
+      "bytes": 269
+    },
+    {
+      "atMs": 7496,
+      "bytes": 272
+    },
+    {
+      "atMs": 7572,
+      "bytes": 274
+    },
+    {
+      "atMs": 7650,
+      "bytes": 278
+    },
+    {
+      "atMs": 7650,
+      "bytes": 270
+    },
+    {
+      "atMs": 7728,
+      "bytes": 276
+    },
+    {
+      "atMs": 7766,
+      "bytes": 271
+    },
+    {
+      "atMs": 7766,
+      "bytes": 272
+    },
+    {
+      "atMs": 7843,
+      "bytes": 272
+    },
+    {
+      "atMs": 7843,
+      "bytes": 272
+    },
+    {
+      "atMs": 7843,
+      "bytes": 274
+    },
+    {
+      "atMs": 7843,
+      "bytes": 268
+    },
+    {
+      "atMs": 9455,
+      "bytes": 355
+    },
+    {
+      "atMs": 9532,
+      "bytes": 337
+    },
+    {
+      "atMs": 9575,
+      "bytes": 253
+    },
+    {
+      "atMs": 9575,
+      "bytes": 311
+    },
+    {
+      "atMs": 9575,
+      "bytes": 14
+    }
+  ],
+  "error": null
+}

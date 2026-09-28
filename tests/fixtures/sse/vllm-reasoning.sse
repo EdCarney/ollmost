@@ -1,0 +1,15 @@
+# unverified: written from docs
+data: {"id":"chatcmpl-vllm1","object":"chat.completion.chunk","created":1790500000,"model":"Qwen/Qwen3-8B","choices":[{"index":0,"delta":{"role":"assistant","content":""},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-vllm1","object":"chat.completion.chunk","created":1790500000,"model":"Qwen/Qwen3-8B","choices":[{"index":0,"delta":{"reasoning":"Capital of France."},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-vllm1","object":"chat.completion.chunk","created":1790500000,"model":"Qwen/Qwen3-8B","choices":[{"index":0,"delta":{"reasoning":" Easy."},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-vllm1","object":"chat.completion.chunk","created":1790500000,"model":"Qwen/Qwen3-8B","choices":[{"index":0,"delta":{"content":"Paris."},"logprobs":null,"finish_reason":null}]}
+
+data: {"id":"chatcmpl-vllm1","object":"chat.completion.chunk","created":1790500000,"model":"Qwen/Qwen3-8B","choices":[{"index":0,"delta":{"content":""},"logprobs":null,"finish_reason":"stop","stop_reason":null}]}
+
+data: {"id":"chatcmpl-vllm1","object":"chat.completion.chunk","created":1790500000,"model":"Qwen/Qwen3-8B","choices":[],"usage":{"prompt_tokens":12,"total_tokens":24,"completion_tokens":12}}
+
+data: [DONE]
+

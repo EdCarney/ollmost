@@ -1,0 +1,16 @@
+# unverified: written from docs
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "Qwen/Qwen3-8B",
+      "object": "model",
+      "created": 1790500000,
+      "owned_by": "vllm",
+      "root": "Qwen/Qwen3-8B",
+      "parent": null,
+      "max_model_len": 32768,
+      "permission": [{ "id": "modelperm-1", "object": "model_permission", "allow_sampling": true, "allow_view": true }]
+    }
+  ]
+}

@@ -1,0 +1,67 @@
+{
+  "url": "http://localhost:1234/v1/chat/completions",
+  "request": {
+    "model": "google/gemma-4-e4b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello in five words."
+      }
+    ],
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "status": 200,
+  "contentType": "text/event-stream",
+  "firstByteMs": 11462,
+  "totalMs": 11539,
+  "chunks": [
+    {
+      "atMs": 11462,
+      "bytes": 280
+    },
+    {
+      "atMs": 11538,
+      "bytes": 262
+    },
+    {
+      "atMs": 11538,
+      "bytes": 257
+    },
+    {
+      "atMs": 11538,
+      "bytes": 260
+    },
+    {
+      "atMs": 11538,
+      "bytes": 260
+    },
+    {
+      "atMs": 11538,
+      "bytes": 260
+    },
+    {
+      "atMs": 11538,
+      "bytes": 257
+    },
+    {
+      "atMs": 11539,
+      "bytes": 256
+    },
+    {
+      "atMs": 11539,
+      "bytes": 246
+    },
+    {
+      "atMs": 11539,
+      "bytes": 305
+    },
+    {
+      "atMs": 11539,
+      "bytes": 14
+    }
+  ],
+  "error": null
+}

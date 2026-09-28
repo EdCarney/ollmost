@@ -1,0 +1,13 @@
+# unverified: written from docs
+{
+  "object": "list",
+  "data": [
+    {
+      "id": "Qwen3-8B-Q4_K_M.gguf",
+      "object": "model",
+      "created": 1790500000,
+      "owned_by": "llamacpp",
+      "meta": { "vocab_type": 2, "n_vocab": 151936, "n_ctx_train": 40960, "n_embd": 4096, "n_params": 8190735360, "size": 5027783488 }
+    }
+  ]
+}
