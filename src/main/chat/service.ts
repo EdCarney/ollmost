@@ -97,8 +97,11 @@ function assertIdle(conversationId: string): void {
   if (compacting.has(conversationId)) throw new Error('Ollmost is still compacting this chat.')
 }
 
+// send, regenerate and edit refuse a model whose endpoint was removed or turned off before they change the chat, so
+// Retry and Edit don't delete what they would replace. An offline endpoint still resolves; its reply fails as it streams.
 export function send(req: SendRequest, reply: ReplyOptions = {}): SendResult {
   if (!req.content.trim() && !req.attachmentIds.length) throw new Error('Message is empty')
+  resolve(req.model)
   let conversation: Conversation | null
   if (req.conversationId) {
     conversation = getConversation(req.conversationId)
@@ -136,6 +139,7 @@ export async function regenerate(
   const messages = listMessages(conversationId)
   const lastUserIndex = messages.findLastIndex((m) => m.role === 'user')
   if (lastUserIndex < 0) throw new Error('Nothing to retry')
+  resolve(opts.model)
   await dropAfter(conversationId, messages, lastUserIndex)
   uncompactFrom(conversationId, messages[lastUserIndex])
   const conversation = updateConversation(conversationId, { model: opts.model, think: opts.think, touch: true })
@@ -151,6 +155,7 @@ export async function edit(
   const original = getMessage(messageId)
   if (!original || original.role !== 'user') throw new Error('Only your own messages can be edited')
   assertIdle(original.conversationId)
+  resolve(opts.model)
   const messages = listMessages(original.conversationId)
   await dropAfter(
     original.conversationId,

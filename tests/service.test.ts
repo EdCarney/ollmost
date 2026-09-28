@@ -49,7 +49,7 @@ const {
 } = await import('../src/main/db/conversations')
 const { registerToolProvider } = await import('../src/main/chat/tools')
 const { runRounds } = await import('../src/main/chat/rounds')
-const { invalidateProviders, modelInfo, resolve } = await import('../src/main/providers/registry')
+const { EndpointGoneError, invalidateProviders, modelInfo, resolve } = await import('../src/main/providers/registry')
 const { replayRequest } = await import('../src/main/debug/replay')
 const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
 const approvals = await import('../src/main/chat/approvals')
@@ -794,6 +794,65 @@ describe('the title model', () => {
       start(`title me without ${titleModel}`)
       expect((await titleOf(`title me without ${titleModel}`)).model).toBe('llama3.2')
     }
+  })
+})
+
+describe('a model whose endpoint is gone or turned off', () => {
+  afterEach(() => {
+    setEndpoints(getSettings().endpoints.filter((e) => e.id !== 'off'))
+    invalidateProviders()
+  })
+
+  /** A chat with one finished exchange on ollama/llama3.2, and an endpoint 'off' that's turned off. */
+  async function chatBesideOffEndpoint(content: string): Promise<string> {
+    chat = reply('an answer')
+    const r = start(content)
+    await doneEvent(r.conversation.id)
+    setEndpoints([
+      ...getSettings().endpoints,
+      { id: 'off', name: 'Off box', kind: 'ollama', flavor: 'ollama', baseUrl: 'http://10.0.0.9:11434', enabled: false }
+    ])
+    invalidateProviders()
+    return r.conversation.id
+  }
+
+  const snapshot = async (conversationId: string) => {
+    const { listMessages } = await import('../src/main/db/conversations')
+    return listMessages(conversationId).map((m) => ({ id: m.id, content: m.content }))
+  }
+
+  /** `act` is refused with `error`, and the chat's messages and model are as they were, with no chat request made. */
+  async function refusedUnchanged(conversationId: string, act: () => unknown, error: string | typeof EndpointGoneError) {
+    const before = await snapshot(conversationId)
+    const model = getConversation(conversationId)?.model
+    // A request from an earlier test can land late, so only the count this call could change is compared.
+    const calls = chatCalls.length
+    await expect((async () => act())()).rejects.toThrow(error)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(await snapshot(conversationId)).toEqual(before)
+    expect(getConversation(conversationId)?.model).toBe(model)
+    expect(chatCalls.length).toBe(calls)
+  }
+
+  it('refuses a Retry and keeps the answer it would replace', async () => {
+    const id = await chatBesideOffEndpoint('retry me on a turned-off endpoint')
+    await refusedUnchanged(id, () => service.regenerate(id, { model: 'off/qwen3:8b', think: null }), 'Off box is turned off')
+  })
+
+  it('refuses an Edit and keeps everything after the message', async () => {
+    const id = await chatBesideOffEndpoint('edit me on a turned-off endpoint')
+    const firstUser = (await snapshot(id))[0]
+    await refusedUnchanged(id, () => service.edit(firstUser.id, 'changed', { model: 'off/qwen3:8b', think: null }), 'Off box is turned off')
+  })
+
+  it('refuses a send, adding no message', async () => {
+    const id = await chatBesideOffEndpoint('send after me on a turned-off endpoint')
+    await refusedUnchanged(id, () => service.send({ ...sendBody(id), content: 'Continue', model: 'off/qwen3:8b' }), 'Off box is turned off')
+  })
+
+  it('refuses a Retry on a removed endpoint', async () => {
+    const id = await chatBesideOffEndpoint('retry me on a removed endpoint')
+    await refusedUnchanged(id, () => service.regenerate(id, { model: 'gone-box/qwen3:8b', think: null }), EndpointGoneError)
   })
 })
 
