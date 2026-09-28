@@ -13,10 +13,10 @@ export async function* sseData(body: ReadableStream<Uint8Array>): AsyncGenerator
   // One line of the stream; returns the event's payload when the line ends it.
   const take = (line: string): string | null => {
     if (line === '') {
-      if (!data.length) return null
+      // An event with no data, or only an empty `data:`, dispatches nothing, as the SSE spec says.
       const payload = data.join('\n')
       data = []
-      return payload
+      return payload === '' ? null : payload
     }
     if (line.startsWith(':')) return null
     const colon = line.indexOf(':')

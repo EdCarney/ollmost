@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fixtureText, type MockOllama, startMockOllama } from './ollamaMock'
 import { probeEndpoint } from '../src/main/providers/probe'
 
@@ -114,6 +114,20 @@ describe('probeEndpoint', () => {
 
   it('says when nothing answers at all', async () => {
     await expect(probeEndpoint('http://127.0.0.1:9')).rejects.toThrow("Can't reach 127.0.0.1:9. Is the server started?")
+  })
+
+  // The probe's 5 s limit, cut to 100 ms here.
+  it('says when a server takes the connection but never answers', async () => {
+    const timeout = AbortSignal.timeout.bind(AbortSignal)
+    const short = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => timeout(100))
+    const handler = server.handler
+    server.handler = () => undefined
+    try {
+      await expect(probeEndpoint(server.url)).rejects.toThrow(`${server.url.replace('http://', '')} didn’t answer within 5 seconds.`)
+    } finally {
+      server.handler = handler
+      short.mockRestore()
+    }
   })
 
   it('keeps an API base typed with a path of its own when /models answers there, else looks under /v1', async () => {

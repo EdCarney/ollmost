@@ -51,6 +51,11 @@ describe('sseData', () => {
     expect(await drain(body(['data: {"a":1}\r\n\r\ndata: [DONE]\r\n\r\n']))).toEqual({ data: ['{"a":1}'], sawDone: true })
   })
 
+  it('dispatches nothing for an event whose data is empty', async () => {
+    expect(await drain(body(['data:\n\ndata: {"a":1}\n\ndata: \n\ndata: [DONE]\n\n']))).toEqual({ data: ['{"a":1}'], sawDone: true })
+    expect(await drain(body(['data: {"a":1}\n\ndata:']))).toEqual({ data: ['{"a":1}'], sawDone: false })
+  })
+
   it('joins an event spread over several data lines with newlines', async () => {
     expect((await drain(body(['data: {"a":\ndata: 1}\n\n']))).data).toEqual(['{"a":\n1}'])
   })

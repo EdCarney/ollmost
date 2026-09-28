@@ -84,8 +84,10 @@ async function probeJson(url: string, apiKey: string | undefined, address: strin
   let res: Response
   try {
     res = await fetch(url, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}, signal: AbortSignal.timeout(PROBE_MS) })
-  } catch {
-    throw new Error(`Can't reach ${address}. Is the server started?`)
+  } catch (err) {
+    // A server that takes the connection but never answers is there, just stuck.
+    if ((err as Error).name === 'TimeoutError') throw new Error(`${address} didn’t answer within 5 seconds.`, { cause: err })
+    throw new Error(`Can't reach ${address}. Is the server started?`, { cause: err })
   }
   if (res.status === 401 || res.status === 403)
     throw new Error(apiKey ? `The server at ${address} rejected the API key.` : `The server at ${address} needs an API key.`)
