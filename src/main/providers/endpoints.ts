@@ -118,10 +118,14 @@ export async function updateEndpoint(id: string, patch: EndpointPatch): Promise<
     if (probed) {
       next.baseUrl = probed.baseUrl
       next.flavor = probed.flavor
+      // What the old server refused says nothing about the new one: it's asked for usage again.
+      delete next.streamOptions
     } else next.baseUrl = normalizeBaseUrl(typed)
   }
   if (patch.enabled !== undefined) next.enabled = patch.enabled === true
-  if (patch.flavor !== undefined && next.kind === 'openai' && FLAVORS.includes(patch.flavor)) next.flavor = patch.flavor
+  // As addEndpoint, an OpenAI-compatible endpoint is never flavoured Ollama; beside a new address, the probe's flavour stands.
+  if (patch.flavor !== undefined && next.kind === 'openai' && !probed && FLAVORS.includes(patch.flavor) && patch.flavor !== 'ollama')
+    next.flavor = patch.flavor
   if (patch.showCloudCatalog !== undefined && next.kind === 'ollama') next.showCloudCatalog = patch.showCloudCatalog === true
   if (patch.numCtx !== undefined && next.kind === 'ollama') next.numCtx = tokens(patch.numCtx, 'The context window')
   if (patch.defaultContext !== undefined && next.kind === 'openai') next.defaultContext = tokens(patch.defaultContext, 'The context size')

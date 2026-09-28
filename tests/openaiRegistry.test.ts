@@ -97,6 +97,39 @@ describe('an OpenAI-compatible endpoint', () => {
     }
   })
 
+  it('asks a server at an edited address for stream_options again, whatever the old one refused', async () => {
+    const moved = await startMockOllama()
+    moved.handler = (r, res) =>
+      r.url === '/v1/models' ? void res.writeHead(200).end(JSON.stringify({ data: [{ id: 'm' }] })) : void res.writeHead(404).end()
+    const box = addEndpoint({ name: 'Old box', baseUrl: 'http://127.0.0.1:10/v1', kind: 'openai', flavor: 'generic' })
+    try {
+      setEndpointStreamOptions(box.id, false)
+      await updateEndpoint(box.id, { baseUrl: moved.url })
+      expect(getSettings().endpoints.find((e) => e.id === box.id)?.streamOptions).toBeUndefined()
+      expect(registry.resolve(`${box.id}/m`).provider.wire(request, true).body).toHaveProperty('stream_options')
+    } finally {
+      removeEndpoint(box.id)
+      await moved.close()
+    }
+  })
+
+  // The renderer never sends a flavour, but whatever it sends is checked.
+  it('keeps the flavour its probe found over one sent beside the address, and never takes Ollama’s', async () => {
+    const moved = await startMockOllama()
+    moved.handler = (r, res) =>
+      r.url === '/v1/models' ? void res.writeHead(200).end(JSON.stringify({ data: [{ id: 'm' }] })) : void res.writeHead(404).end()
+    const box = addEndpoint({ name: 'Flavour box', baseUrl: 'http://127.0.0.1:11/v1', kind: 'openai', flavor: 'vllm' })
+    try {
+      expect(await updateEndpoint(box.id, { baseUrl: moved.url, flavor: 'llamacpp' })).toMatchObject({ flavor: 'generic' })
+      expect(await updateEndpoint(box.id, { flavor: 'ollama' })).toMatchObject({ kind: 'openai', flavor: 'generic' })
+      // A flavour sent on its own is still taken.
+      expect(await updateEndpoint(box.id, { flavor: 'vllm' })).toMatchObject({ flavor: 'vllm' })
+    } finally {
+      removeEndpoint(box.id)
+      await moved.close()
+    }
+  })
+
   it('refuses an edited address where Ollama answers, and keeps the endpoint as it was', async () => {
     const ollama = await startMockOllama()
     ollama.handler = (r, res) => {
