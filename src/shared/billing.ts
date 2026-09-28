@@ -22,7 +22,10 @@ export function chatCostLabel(rows: Array<{ billing: ModelBilling; costUsd: numb
   return formatCost(priced.reduce((n, r) => n + (r.costUsd ?? 0), 0))
 }
 
-/** A reply saved before billing was recorded: $0 meant local then, as the database backfill reads it. */
+/**
+ * A reply saved before billing was recorded: 0 reads as local, anything else as priced. It sees only the cost, not the
+ * model, so a cloud reply saved at $0 reads as local here, where the database backfill (which sees the name) calls it priced.
+ */
 export function legacyBilling(costUsd: number | null | undefined): ModelBilling {
   return costUsd === 0 ? 'local' : 'priced'
 }

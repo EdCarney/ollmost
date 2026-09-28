@@ -342,6 +342,29 @@ describe('usage totals across endpoints', () => {
     expect(conversationUsage(c.id, endpoints).costUsd).toBe(0)
   })
 
+  it('gives a model billed two ways a row for each, which the usage tables key on', () => {
+    const c = chat()
+    row(c.id, 'ollama/gpt-oss:120b-cloud', 'priced', 0.25, 150)
+    row(c.id, 'ollama/gpt-oss:120b-cloud', 'untracked', 0, 50)
+    const u = conversationUsage(c.id, endpoints)
+    expect(u.byModel.map((m) => [m.model, m.billing, m.costUsd, m.requests])).toEqual([
+      ['ollama/gpt-oss:120b-cloud', 'priced', 0.25, 1],
+      ['ollama/gpt-oss:120b-cloud', 'untracked', 0, 1]
+    ])
+  })
+
+  it('describes a removed endpoint’s row as a removed endpoint’s, under its whole key', () => {
+    const c = chat()
+    row(c.id, 'old-box/llama3:8b', 'untracked', 0)
+    expect(conversationUsage(c.id, endpoints).byModel).toMatchObject([
+      {
+        model: 'old-box/llama3:8b',
+        name: 'old-box/llama3:8b',
+        endpoint: { id: '', name: 'Removed endpoint', kind: 'openai', flavor: 'generic' }
+      }
+    ])
+  })
+
   it('follows the same rule per day, over a period', () => {
     // Noon local time, so the row lands on 2030-01-02 in every time zone.
     const at = new Date(2030, 0, 2, 12).getTime()

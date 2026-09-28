@@ -69,6 +69,20 @@ describe('a usage row’s model and endpoint', () => {
     })
   })
 
+  it('reads a bare leftover name with slashes as Ollama’s, whole: its "hf.co" is not an endpoint id', () => {
+    expect(describeUsageModel('hf.co/bartowski/Qwen3-8B-GGUF:Q4_K_M', endpoints)).toEqual({
+      name: 'hf.co/bartowski/Qwen3-8B-GGUF:Q4_K_M',
+      endpoint: { id: 'ollama', name: 'Ollama', kind: 'ollama', flavor: 'ollama' }
+    })
+  })
+
+  it('reads a key as a removed endpoint’s when Ollama itself is gone, as registry.resolve does', () => {
+    const lmStudioOnly = endpoints.filter((e) => e.id !== 'ollama')
+    const removed = { id: '', name: 'Removed endpoint', kind: 'openai', flavor: 'generic' }
+    expect(describeUsageModel('gpt-oss:20b', lmStudioOnly)).toEqual({ name: 'gpt-oss:20b', endpoint: removed })
+    expect(describeUsageModel('ollama/gpt-oss:20b', lmStudioOnly)).toEqual({ name: 'ollama/gpt-oss:20b', endpoint: removed })
+  })
+
   it('reads a leftover bare name as Ollama’s, and a key whose endpoint is gone as a removed endpoint’s', () => {
     expect(describeUsageModel('gpt-oss:20b', endpoints).endpoint.name).toBe('Ollama')
     expect(describeUsageModel('old-box/llama3:8b', endpoints)).toEqual({
