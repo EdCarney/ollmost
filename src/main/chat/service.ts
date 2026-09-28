@@ -35,7 +35,7 @@ import {
 import { getProject, projectKnowledge, touchProject } from '../db/projects'
 import { imageForModel, removeFiles } from '../files/ingest'
 import { type ChatBody, chatOnce, endpointFor } from '../providers/ollama/wire'
-import { getModelInfo } from '../providers/ollama/models'
+import { modelInfo } from '../providers/registry'
 import { webAvailable } from '../ollama/web'
 import { startTrace, type Trace } from '../debug/traces'
 import { getSettings } from '../settings'
@@ -291,7 +291,7 @@ async function generate(
   try {
     const conversation = getConversation(conversationId)!
     const settings = getSettings()
-    const model = await getModelInfo(modelName)
+    const model = await modelInfo(modelName)
     const profile = resolveThinkProfile(modelName, model.capabilities, model.overrides.think)
     const vision = model.capabilities.includes('vision')
     const toolsCapable = model.capabilities.includes('tools')
@@ -668,7 +668,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
   if (!since.length) throw new Error(earlier ? 'Nothing new to compact since the last summary.' : 'Nothing to compact yet.')
   compacting.add(conversationId)
   try {
-    const info = await getModelInfo(opts.model)
+    const info = await modelInfo(opts.model)
     const profile = resolveThinkProfile(opts.model, info.capabilities, info.overrides.think)
     const settings = getSettings()
     const focus = opts.focus.trim()
@@ -789,7 +789,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
   let titleTrace: Trace | null = null
   try {
     const modelName = getSettings().titleModel || chatModel
-    const info = await getModelInfo(modelName)
+    const info = await modelInfo(modelName)
     const profile = resolveThinkProfile(modelName, info.capabilities, info.overrides.think)
     const titleBody: ChatBody = {
       model: modelName,

@@ -6,7 +6,7 @@ import { resolveThinkProfile, toOllamaThink } from '@shared/thinking'
 import { childId } from '@shared/toolEvents'
 import type { MessageStats, Settings, ToolEvent } from '@shared/types'
 import type { ChatBody } from '../providers/ollama/wire'
-import { getModelInfo } from '../providers/ollama/models'
+import { modelInfo } from '../providers/registry'
 import type { ToolDef } from '../providers/types'
 import { DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
 import { assemble, promptBudget } from './assemble'
@@ -102,7 +102,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   if (!reply || ctx.callIndex === undefined || !signal) return fail('delegate is not available here')
 
   const settings = getSettings()
-  const model = await getModelInfo(reply.model)
+  const model = await modelInfo(reply.model)
   const profile = resolveThinkProfile(reply.model, model.capabilities, model.overrides.think)
   const numCtx = effectiveContext(model, settings.localNumCtx)
   // The child's context is the parent's, less what only the parent may do (its grants are worked out again).

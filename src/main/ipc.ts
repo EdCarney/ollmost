@@ -43,7 +43,7 @@ import {
 } from './db/projects'
 import { ingestAll, removeFiles } from './files/ingest'
 import { appPages, isAppFrame } from './ipcSender'
-import { getModelInfo, listModels, setModelOverrides } from './providers/ollama/models'
+import { setModelOverrides } from './providers/ollama/models'
 import { paths } from './paths'
 import { quarantine } from './quarantine'
 import { errorMessage } from './util'
@@ -94,6 +94,7 @@ import {
   toolFingerprint
 } from './mcp/manager'
 import { connectionMode, endpointFor } from './providers/ollama/wire'
+import { listAllModels, modelInfo } from './providers/registry'
 import { getPriceTable, refreshPrices } from './usage/pricing'
 import {
   deleteSkill,
@@ -201,8 +202,8 @@ const impl: Impl = {
   },
 
   models: {
-    list: (refresh) => listModels(refresh),
-    info: (name) => getModelInfo(name),
+    list: (refresh) => listAllModels(refresh),
+    info: (name) => modelInfo(name),
     setOverrides: (name, overrides) => setModelOverrides(name, overrides)
   },
 
