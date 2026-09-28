@@ -1,7 +1,7 @@
 import { creditPool, describeWindows, detectReset, effectiveSpend, parseUsageResponse } from '@shared/usage'
 import type { AccountUsage } from '@shared/types'
 import { readSetting, writeSetting } from '../db/kv'
-import { OLLAMA_CLOUD } from '../ollama/client'
+import { OLLAMA_CLOUD } from '../providers/ollama/wire'
 import { getApiKey, getSettings, updateSettings } from '../settings'
 import { errorMessage } from '../util'
 

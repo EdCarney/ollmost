@@ -1,9 +1,14 @@
-import { getApiKey, getSettings } from '../settings'
+// Ollama's HTTP API: /api/chat as NDJSON, /api/tags and /api/show. Only the adapter (adapter.ts) and the model list
+// (models.ts) call it; everything else speaks the neutral types in ../types.ts.
+import { getApiKey, getSettings } from '../../settings'
+import type { ToolDef } from '../types'
 
 export const OLLAMA_CLOUD = 'https://ollama.com'
 
-export interface ToolCall {
-  function: { name: string; arguments: Record<string, unknown> | string }
+/** A tool call as Ollama sends it. Newer versions give each call an `id` and say which came first (`index`). */
+export interface OllamaToolCall {
+  id?: string
+  function: { index?: number; name: string; arguments: Record<string, unknown> | string }
 }
 
 export interface OllamaMessage {
@@ -11,30 +16,28 @@ export interface OllamaMessage {
   content: string
   thinking?: string
   images?: string[]
-  tool_calls?: ToolCall[]
+  tool_calls?: OllamaToolCall[]
   tool_name?: string
-}
-
-export interface OllamaTool {
-  type: 'function'
-  function: { name: string; description: string; parameters: Record<string, unknown> }
 }
 
 export interface ChatBody {
   model: string
   messages: OllamaMessage[]
   think?: boolean | 'low' | 'medium' | 'high'
-  tools?: OllamaTool[]
+  tools?: ToolDef[]
   options?: Record<string, unknown>
   keep_alive?: string
 }
 
 export interface ChatChunk {
-  message?: { role: string; content?: string; thinking?: string; tool_calls?: ToolCall[] }
+  message?: { role: string; content?: string; thinking?: string; tool_calls?: OllamaToolCall[] }
   done: boolean
   done_reason?: string
   prompt_eval_count?: number
   eval_count?: number
+  /** Nanoseconds, like every Ollama duration. */
+  load_duration?: number
+  prompt_eval_duration?: number
   eval_duration?: number
   total_duration?: number
   error?: string

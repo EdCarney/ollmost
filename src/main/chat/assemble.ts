@@ -1,6 +1,6 @@
 import { parseMessage } from '@shared/artifactParser'
 import type { Skill } from '@shared/types'
-import type { OllamaMessage } from '../ollama/client'
+import type { OllamaMessage } from '../providers/ollama/wire'
 import { estimateTokens } from '../util'
 import {
   artifactsPrompt,

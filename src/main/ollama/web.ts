@@ -1,5 +1,5 @@
 import { getApiKey } from '../settings'
-import { OLLAMA_CLOUD, OllamaError } from './client'
+import { OLLAMA_CLOUD, OllamaError } from '../providers/ollama/wire'
 
 // Tests point this at a mock server.
 const WEB_BASE = process.env.OLLMOST_WEB_URL ?? OLLAMA_CLOUD

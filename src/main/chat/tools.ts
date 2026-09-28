@@ -1,5 +1,5 @@
 import type { ThinkSetting, ToolEvent } from '@shared/types'
-import type { OllamaTool, ToolCall } from '../ollama/client'
+import type { ToolCall, ToolDef } from '../providers/types'
 import { errorMessage } from '../util'
 import type { AssembleInput, PastToolCall } from './assemble'
 import { capText, TOOL_RESULT_CHARS } from './results'
@@ -87,7 +87,7 @@ export interface ResolvedCall {
 export interface ToolProvider {
   id: string
   /** The tools offered with this request; none when the provider is off. */
-  tools(ctx: ToolContext): OllamaTool[]
+  tools(ctx: ToolContext): ToolDef[]
   /** What these tools let the model do while they're offered. */
   grants?: ToolGrant[]
   /** A sentence for the unknown-tool reply that points the model at these tools. */
@@ -150,8 +150,8 @@ const providers = (): ToolProvider[] => [...BUILT_IN, ...registered]
 const active = (ctx: ToolContext) => providers().filter((p) => p.tools(ctx).length > 0)
 
 /** Every tool offered with this request, each name once (the first provider to offer a name keeps it). */
-export function toolsFor(ctx: ToolContext): OllamaTool[] | undefined {
-  const byName = new Map<string, OllamaTool>()
+export function toolsFor(ctx: ToolContext): ToolDef[] | undefined {
+  const byName = new Map<string, ToolDef>()
   for (const tool of providers().flatMap((p) => p.tools(ctx))) if (!byName.has(tool.function.name)) byName.set(tool.function.name, tool)
   return byName.size ? [...byName.values()] : undefined
 }

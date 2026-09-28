@@ -1,11 +1,11 @@
 import { webFetchAllowKey } from '@shared/toolAllow'
-import type { OllamaTool } from '../ollama/client'
+import type { ToolDef } from '../providers/types'
 import { webEndpoint, webFetch, webSearch } from '../ollama/web'
 import { resolveWebCall, type WebToolCall } from './aliases'
 import { capText, TOOL_RESULT_CHARS } from './results'
 import type { ToolProvider, ToolResult } from './tools'
 
-export const WEB_TOOLS: OllamaTool[] = [
+export const WEB_TOOLS: ToolDef[] = [
   {
     type: 'function',
     function: {

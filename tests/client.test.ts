@@ -7,7 +7,7 @@ vi.mock('../src/main/settings', () => ({
   getApiKey: () => null
 }))
 
-const { chatOnce, chatStream, OllamaError, STREAM_TIMEOUTS, streamTimeoutsFor } = await import('../src/main/ollama/client')
+const { chatOnce, chatStream, OllamaError, STREAM_TIMEOUTS, streamTimeoutsFor } = await import('../src/main/providers/ollama/wire')
 
 let ollama: MockOllama
 beforeAll(async () => {

@@ -1,9 +1,9 @@
 import type { ModelInfo, ModelListResult, ModelOverrides } from '@shared/types'
-import { type CachedModelInfo, readModelProfile, writeModelInfo, writeModelOverrides } from '../db/kv'
-import { getSettings } from '../settings'
-import { errorMessage } from '../util'
-import { modelPrice } from '../usage/pricing'
-import { connectionMode, isCloudName, listTags, showModel } from './client'
+import { type CachedModelInfo, readModelProfile, writeModelInfo, writeModelOverrides } from '../../db/kv'
+import { getSettings } from '../../settings'
+import { errorMessage } from '../../util'
+import { modelPrice } from '../../usage/pricing'
+import { connectionMode, isCloudName, listTags, showModel } from './wire'
 
 const INFO_TTL = 24 * 60 * 60 * 1000
 const CATALOG_TTL = 60 * 60 * 1000

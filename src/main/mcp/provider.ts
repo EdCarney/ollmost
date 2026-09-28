@@ -1,7 +1,7 @@
 import type { CallToolResult, Tool } from '@modelcontextprotocol/sdk/types.js'
 import { mcpAllowKey } from '@shared/toolAllow'
 import type { McpServer } from '@shared/types'
-import type { OllamaTool } from '../ollama/client'
+import type { ToolDef } from '../providers/types'
 import type { ToolProvider, ToolResult } from '../chat/tools'
 import { recordTrust, toolPolicy } from './config'
 import { callTool, fingerprintOf, readyTools } from './manager'
@@ -78,7 +78,7 @@ function brief(args: Record<string, unknown>): string {
 interface Offered {
   server: McpServer
   tool: Tool
-  definition: OllamaTool
+  definition: ToolDef
 }
 
 /** The tools of every running server, by the name they're offered under. */

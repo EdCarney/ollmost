@@ -5,8 +5,9 @@ import { contextOptions, effectiveContext } from '@shared/context'
 import { resolveThinkProfile, toOllamaThink } from '@shared/thinking'
 import { childId } from '@shared/toolEvents'
 import type { MessageStats, Settings, ToolEvent } from '@shared/types'
-import type { ChatBody, OllamaTool } from '../ollama/client'
-import { getModelInfo } from '../ollama/models'
+import type { ChatBody } from '../providers/ollama/wire'
+import { getModelInfo } from '../providers/ollama/models'
+import type { ToolDef } from '../providers/types'
 import { DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
 import { assemble, promptBudget } from './assemble'
 import { TOOL_RESULT_CHARS } from './results'
@@ -21,7 +22,7 @@ const CUT_MARK = '\n\n[… the sub-agent’s reply was cut here]'
 /** The most sub-agents one reply may run at the same time, whatever the setting says. */
 const MAX_AT_ONCE = 5
 
-const DELEGATE_TOOL: OllamaTool = {
+const DELEGATE_TOOL: ToolDef = {
   type: 'function',
   function: {
     name: 'delegate',

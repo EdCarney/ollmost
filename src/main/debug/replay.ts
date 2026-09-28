@@ -1,7 +1,7 @@
 import { stripImagePlaceholders } from '@shared/debug'
 import type { TraceDetail } from '@shared/types'
 import { insertUsageEvent } from '../db/usage'
-import { type ChatBody, chatOnce, endpointFor } from '../ollama/client'
+import { type ChatBody, chatOnce, endpointFor } from '../providers/ollama/wire'
 import { requestCost } from '../usage/pricing'
 import { errorMessage } from '../util'
 import { startTrace } from './traces'

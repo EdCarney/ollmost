@@ -48,7 +48,7 @@ const {
 } = await import('../src/main/db/conversations')
 const { registerToolProvider } = await import('../src/main/chat/tools')
 const { runRounds } = await import('../src/main/chat/rounds')
-const { getModelInfo } = await import('../src/main/ollama/models')
+const { getModelInfo } = await import('../src/main/providers/ollama/models')
 const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
 const approvals = await import('../src/main/chat/approvals')
 const mcpConfig = await import('../src/main/mcp/config')
