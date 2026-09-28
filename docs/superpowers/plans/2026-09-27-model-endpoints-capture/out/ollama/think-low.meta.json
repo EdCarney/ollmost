@@ -1,0 +1,61 @@
+{
+  "url": "http://localhost:11434/api/chat",
+  "request": {
+    "model": "gpt-oss:20b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is 17 × 23? Think it through, then reply with just the number."
+      }
+    ],
+    "think": "low",
+    "stream": true
+  },
+  "status": 200,
+  "contentType": "application/x-ndjson",
+  "firstByteMs": 318,
+  "totalMs": 776,
+  "chunks": [
+    {
+      "atMs": 318,
+      "bytes": 144
+    },
+    {
+      "atMs": 349,
+      "bytes": 139
+    },
+    {
+      "atMs": 382,
+      "bytes": 140
+    },
+    {
+      "atMs": 412,
+      "bytes": 139
+    },
+    {
+      "atMs": 443,
+      "bytes": 140
+    },
+    {
+      "atMs": 473,
+      "bytes": 139
+    },
+    {
+      "atMs": 503,
+      "bytes": 141
+    },
+    {
+      "atMs": 533,
+      "bytes": 139
+    },
+    {
+      "atMs": 745,
+      "bytes": 127
+    },
+    {
+      "atMs": 776,
+      "bytes": 321
+    }
+  ],
+  "error": null
+}

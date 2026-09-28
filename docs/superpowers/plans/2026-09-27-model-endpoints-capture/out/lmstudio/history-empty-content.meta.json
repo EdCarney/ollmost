@@ -1,0 +1,131 @@
+{
+  "url": "http://localhost:1234/v1/chat/completions",
+  "request": {
+    "model": "google/gemma-4-e4b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What's the weather in Paris right now? Use the get_weather tool."
+      },
+      {
+        "role": "assistant",
+        "content": "",
+        "tool_calls": [
+          {
+            "id": "c00000000",
+            "type": "function",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            }
+          }
+        ]
+      },
+      {
+        "role": "tool",
+        "tool_call_id": "c00000000",
+        "content": "{\"city\":\"Paris\",\"forecast\":\"sunny\",\"celsius\":21}"
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "The current weather in a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "The city, e.g. Paris"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      }
+    ],
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "status": 200,
+  "contentType": "text/event-stream",
+  "firstByteMs": 278,
+  "totalMs": 698,
+  "chunks": [
+    {
+      "atMs": 278,
+      "bytes": 279
+    },
+    {
+      "atMs": 354,
+      "bytes": 265
+    },
+    {
+      "atMs": 354,
+      "bytes": 260
+    },
+    {
+      "atMs": 393,
+      "bytes": 263
+    },
+    {
+      "atMs": 431,
+      "bytes": 260
+    },
+    {
+      "atMs": 698,
+      "bytes": 267
+    },
+    {
+      "atMs": 698,
+      "bytes": 263
+    },
+    {
+      "atMs": 698,
+      "bytes": 261
+    },
+    {
+      "atMs": 698,
+      "bytes": 258
+    },
+    {
+      "atMs": 698,
+      "bytes": 258
+    },
+    {
+      "atMs": 698,
+      "bytes": 258
+    },
+    {
+      "atMs": 698,
+      "bytes": 259
+    },
+    {
+      "atMs": 698,
+      "bytes": 258
+    },
+    {
+      "atMs": 698,
+      "bytes": 258
+    },
+    {
+      "atMs": 698,
+      "bytes": 247
+    },
+    {
+      "atMs": 698,
+      "bytes": 309
+    },
+    {
+      "atMs": 698,
+      "bytes": 14
+    }
+  ],
+  "error": null
+}

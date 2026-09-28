@@ -1,0 +1,15 @@
+{
+  "url": "http://localhost:11434/api/version",
+  "request": null,
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 30,
+  "totalMs": 30,
+  "chunks": [
+    {
+      "atMs": 30,
+      "bytes": 20
+    }
+  ],
+  "error": null
+}

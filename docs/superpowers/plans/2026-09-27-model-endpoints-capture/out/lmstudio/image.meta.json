@@ -1,0 +1,758 @@
+{
+  "url": "http://localhost:1234/v1/chat/completions",
+  "request": {
+    "model": "google/gemma-4-e4b",
+    "messages": [
+      {
+        "role": "user",
+        "content": [
+          {
+            "type": "text",
+            "text": "What colour is this square? One word."
+          },
+          {
+            "type": "image_url",
+            "image_url": {
+              "url": "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAAeUlEQVR4nO3PQQkAMAzAwCqpf1ETMxF7HINABFzm7H7dcEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFDWhBA1rQgBY0oAUNaEEDWtCAFjSgBQ1oQQNa0IAWNKAFj13PLIEAOXyUUwAAAABJRU5ErkJggg=="
+            }
+          }
+        ]
+      }
+    ],
+    "stream": true,
+    "stream_options": {
+      "include_usage": true
+    }
+  },
+  "status": 200,
+  "contentType": "text/event-stream",
+  "firstByteMs": 1877,
+  "totalMs": 8666,
+  "chunks": [
+    {
+      "atMs": 1877,
+      "bytes": 288
+    },
+    {
+      "atMs": 2070,
+      "bytes": 275
+    },
+    {
+      "atMs": 2155,
+      "bytes": 275
+    },
+    {
+      "atMs": 2155,
+      "bytes": 268
+    },
+    {
+      "atMs": 2155,
+      "bytes": 271
+    },
+    {
+      "atMs": 2197,
+      "bytes": 268
+    },
+    {
+      "atMs": 2197,
+      "bytes": 268
+    },
+    {
+      "atMs": 2197,
+      "bytes": 269
+    },
+    {
+      "atMs": 2197,
+      "bytes": 269
+    },
+    {
+      "atMs": 2283,
+      "bytes": 274
+    },
+    {
+      "atMs": 2322,
+      "bytes": 271
+    },
+    {
+      "atMs": 2400,
+      "bytes": 275
+    },
+    {
+      "atMs": 2400,
+      "bytes": 270
+    },
+    {
+      "atMs": 2400,
+      "bytes": 271
+    },
+    {
+      "atMs": 2478,
+      "bytes": 272
+    },
+    {
+      "atMs": 2478,
+      "bytes": 271
+    },
+    {
+      "atMs": 2596,
+      "bytes": 276
+    },
+    {
+      "atMs": 2634,
+      "bytes": 270
+    },
+    {
+      "atMs": 2673,
+      "bytes": 273
+    },
+    {
+      "atMs": 2673,
+      "bytes": 269
+    },
+    {
+      "atMs": 2673,
+      "bytes": 268
+    },
+    {
+      "atMs": 2750,
+      "bytes": 273
+    },
+    {
+      "atMs": 2791,
+      "bytes": 273
+    },
+    {
+      "atMs": 2909,
+      "bytes": 274
+    },
+    {
+      "atMs": 2909,
+      "bytes": 268
+    },
+    {
+      "atMs": 2951,
+      "bytes": 271
+    },
+    {
+      "atMs": 2992,
+      "bytes": 273
+    },
+    {
+      "atMs": 3031,
+      "bytes": 268
+    },
+    {
+      "atMs": 3031,
+      "bytes": 270
+    },
+    {
+      "atMs": 3070,
+      "bytes": 271
+    },
+    {
+      "atMs": 3150,
+      "bytes": 274
+    },
+    {
+      "atMs": 3150,
+      "bytes": 270
+    },
+    {
+      "atMs": 3188,
+      "bytes": 272
+    },
+    {
+      "atMs": 3379,
+      "bytes": 274
+    },
+    {
+      "atMs": 3416,
+      "bytes": 268
+    },
+    {
+      "atMs": 3456,
+      "bytes": 271
+    },
+    {
+      "atMs": 3493,
+      "bytes": 272
+    },
+    {
+      "atMs": 3493,
+      "bytes": 270
+    },
+    {
+      "atMs": 3493,
+      "bytes": 269
+    },
+    {
+      "atMs": 3532,
+      "bytes": 268
+    },
+    {
+      "atMs": 3532,
+      "bytes": 268
+    },
+    {
+      "atMs": 3532,
+      "bytes": 269
+    },
+    {
+      "atMs": 3532,
+      "bytes": 269
+    },
+    {
+      "atMs": 3608,
+      "bytes": 274
+    },
+    {
+      "atMs": 3646,
+      "bytes": 271
+    },
+    {
+      "atMs": 3685,
+      "bytes": 273
+    },
+    {
+      "atMs": 3685,
+      "bytes": 270
+    },
+    {
+      "atMs": 3723,
+      "bytes": 271
+    },
+    {
+      "atMs": 3762,
+      "bytes": 273
+    },
+    {
+      "atMs": 3879,
+      "bytes": 276
+    },
+    {
+      "atMs": 3879,
+      "bytes": 269
+    },
+    {
+      "atMs": 3956,
+      "bytes": 275
+    },
+    {
+      "atMs": 3997,
+      "bytes": 268
+    },
+    {
+      "atMs": 4157,
+      "bytes": 272
+    },
+    {
+      "atMs": 4196,
+      "bytes": 271
+    },
+    {
+      "atMs": 4196,
+      "bytes": 273
+    },
+    {
+      "atMs": 4235,
+      "bytes": 268
+    },
+    {
+      "atMs": 4235,
+      "bytes": 269
+    },
+    {
+      "atMs": 4235,
+      "bytes": 268
+    },
+    {
+      "atMs": 4235,
+      "bytes": 268
+    },
+    {
+      "atMs": 4274,
+      "bytes": 269
+    },
+    {
+      "atMs": 4274,
+      "bytes": 269
+    },
+    {
+      "atMs": 4354,
+      "bytes": 276
+    },
+    {
+      "atMs": 4393,
+      "bytes": 271
+    },
+    {
+      "atMs": 4507,
+      "bytes": 274
+    },
+    {
+      "atMs": 4507,
+      "bytes": 269
+    },
+    {
+      "atMs": 4545,
+      "bytes": 272
+    },
+    {
+      "atMs": 4584,
+      "bytes": 272
+    },
+    {
+      "atMs": 4622,
+      "bytes": 269
+    },
+    {
+      "atMs": 4622,
+      "bytes": 269
+    },
+    {
+      "atMs": 4775,
+      "bytes": 271
+    },
+    {
+      "atMs": 4890,
+      "bytes": 273
+    },
+    {
+      "atMs": 4890,
+      "bytes": 270
+    },
+    {
+      "atMs": 4929,
+      "bytes": 271
+    },
+    {
+      "atMs": 4929,
+      "bytes": 268
+    },
+    {
+      "atMs": 4929,
+      "bytes": 269
+    },
+    {
+      "atMs": 4929,
+      "bytes": 268
+    },
+    {
+      "atMs": 4929,
+      "bytes": 268
+    },
+    {
+      "atMs": 4929,
+      "bytes": 269
+    },
+    {
+      "atMs": 4929,
+      "bytes": 269
+    },
+    {
+      "atMs": 5006,
+      "bytes": 272
+    },
+    {
+      "atMs": 5083,
+      "bytes": 279
+    },
+    {
+      "atMs": 5123,
+      "bytes": 270
+    },
+    {
+      "atMs": 5161,
+      "bytes": 271
+    },
+    {
+      "atMs": 5200,
+      "bytes": 274
+    },
+    {
+      "atMs": 5391,
+      "bytes": 272
+    },
+    {
+      "atMs": 5429,
+      "bytes": 270
+    },
+    {
+      "atMs": 5467,
+      "bytes": 271
+    },
+    {
+      "atMs": 5504,
+      "bytes": 272
+    },
+    {
+      "atMs": 5542,
+      "bytes": 268
+    },
+    {
+      "atMs": 5542,
+      "bytes": 269
+    },
+    {
+      "atMs": 5542,
+      "bytes": 268
+    },
+    {
+      "atMs": 5542,
+      "bytes": 268
+    },
+    {
+      "atMs": 5581,
+      "bytes": 269
+    },
+    {
+      "atMs": 5581,
+      "bytes": 269
+    },
+    {
+      "atMs": 5581,
+      "bytes": 271
+    },
+    {
+      "atMs": 5657,
+      "bytes": 272
+    },
+    {
+      "atMs": 5696,
+      "bytes": 271
+    },
+    {
+      "atMs": 5851,
+      "bytes": 276
+    },
+    {
+      "atMs": 5889,
+      "bytes": 270
+    },
+    {
+      "atMs": 5889,
+      "bytes": 270
+    },
+    {
+      "atMs": 5889,
+      "bytes": 270
+    },
+    {
+      "atMs": 5889,
+      "bytes": 270
+    },
+    {
+      "atMs": 5965,
+      "bytes": 269
+    },
+    {
+      "atMs": 5965,
+      "bytes": 271
+    },
+    {
+      "atMs": 5965,
+      "bytes": 268
+    },
+    {
+      "atMs": 6083,
+      "bytes": 277
+    },
+    {
+      "atMs": 6083,
+      "bytes": 268
+    },
+    {
+      "atMs": 6121,
+      "bytes": 274
+    },
+    {
+      "atMs": 6160,
+      "bytes": 270
+    },
+    {
+      "atMs": 6160,
+      "bytes": 270
+    },
+    {
+      "atMs": 6314,
+      "bytes": 274
+    },
+    {
+      "atMs": 6352,
+      "bytes": 271
+    },
+    {
+      "atMs": 6428,
+      "bytes": 274
+    },
+    {
+      "atMs": 6429,
+      "bytes": 269
+    },
+    {
+      "atMs": 6467,
+      "bytes": 271
+    },
+    {
+      "atMs": 6467,
+      "bytes": 268
+    },
+    {
+      "atMs": 6467,
+      "bytes": 271
+    },
+    {
+      "atMs": 6506,
+      "bytes": 268
+    },
+    {
+      "atMs": 6506,
+      "bytes": 271
+    },
+    {
+      "atMs": 6543,
+      "bytes": 272
+    },
+    {
+      "atMs": 6582,
+      "bytes": 274
+    },
+    {
+      "atMs": 6620,
+      "bytes": 272
+    },
+    {
+      "atMs": 6696,
+      "bytes": 276
+    },
+    {
+      "atMs": 6696,
+      "bytes": 272
+    },
+    {
+      "atMs": 6734,
+      "bytes": 271
+    },
+    {
+      "atMs": 6772,
+      "bytes": 271
+    },
+    {
+      "atMs": 6888,
+      "bytes": 278
+    },
+    {
+      "atMs": 6927,
+      "bytes": 270
+    },
+    {
+      "atMs": 6927,
+      "bytes": 271
+    },
+    {
+      "atMs": 6967,
+      "bytes": 271
+    },
+    {
+      "atMs": 6967,
+      "bytes": 270
+    },
+    {
+      "atMs": 6967,
+      "bytes": 271
+    },
+    {
+      "atMs": 7044,
+      "bytes": 273
+    },
+    {
+      "atMs": 7121,
+      "bytes": 279
+    },
+    {
+      "atMs": 7121,
+      "bytes": 268
+    },
+    {
+      "atMs": 7239,
+      "bytes": 273
+    },
+    {
+      "atMs": 7278,
+      "bytes": 275
+    },
+    {
+      "atMs": 7316,
+      "bytes": 271
+    },
+    {
+      "atMs": 7316,
+      "bytes": 273
+    },
+    {
+      "atMs": 7354,
+      "bytes": 271
+    },
+    {
+      "atMs": 7354,
+      "bytes": 269
+    },
+    {
+      "atMs": 7432,
+      "bytes": 274
+    },
+    {
+      "atMs": 7470,
+      "bytes": 274
+    },
+    {
+      "atMs": 7509,
+      "bytes": 273
+    },
+    {
+      "atMs": 7548,
+      "bytes": 270
+    },
+    {
+      "atMs": 7587,
+      "bytes": 272
+    },
+    {
+      "atMs": 7626,
+      "bytes": 274
+    },
+    {
+      "atMs": 7664,
+      "bytes": 270
+    },
+    {
+      "atMs": 7664,
+      "bytes": 270
+    },
+    {
+      "atMs": 7779,
+      "bytes": 277
+    },
+    {
+      "atMs": 7779,
+      "bytes": 270
+    },
+    {
+      "atMs": 7817,
+      "bytes": 272
+    },
+    {
+      "atMs": 7855,
+      "bytes": 270
+    },
+    {
+      "atMs": 7855,
+      "bytes": 269
+    },
+    {
+      "atMs": 7933,
+      "bytes": 274
+    },
+    {
+      "atMs": 7933,
+      "bytes": 273
+    },
+    {
+      "atMs": 8011,
+      "bytes": 271
+    },
+    {
+      "atMs": 8051,
+      "bytes": 273
+    },
+    {
+      "atMs": 8089,
+      "bytes": 274
+    },
+    {
+      "atMs": 8089,
+      "bytes": 270
+    },
+    {
+      "atMs": 8089,
+      "bytes": 271
+    },
+    {
+      "atMs": 8205,
+      "bytes": 274
+    },
+    {
+      "atMs": 8396,
+      "bytes": 279
+    },
+    {
+      "atMs": 8396,
+      "bytes": 269
+    },
+    {
+      "atMs": 8396,
+      "bytes": 271
+    },
+    {
+      "atMs": 8396,
+      "bytes": 268
+    },
+    {
+      "atMs": 8434,
+      "bytes": 268
+    },
+    {
+      "atMs": 8434,
+      "bytes": 269
+    },
+    {
+      "atMs": 8434,
+      "bytes": 269
+    },
+    {
+      "atMs": 8434,
+      "bytes": 272
+    },
+    {
+      "atMs": 8512,
+      "bytes": 274
+    },
+    {
+      "atMs": 8589,
+      "bytes": 278
+    },
+    {
+      "atMs": 8589,
+      "bytes": 270
+    },
+    {
+      "atMs": 8589,
+      "bytes": 271
+    },
+    {
+      "atMs": 8589,
+      "bytes": 268
+    },
+    {
+      "atMs": 8666,
+      "bytes": 260
+    },
+    {
+      "atMs": 8666,
+      "bytes": 257
+    },
+    {
+      "atMs": 8666,
+      "bytes": 247
+    },
+    {
+      "atMs": 8666,
+      "bytes": 311
+    },
+    {
+      "atMs": 8666,
+      "bytes": 14
+    }
+  ],
+  "error": null
+}

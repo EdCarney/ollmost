@@ -1,0 +1,15 @@
+{
+  "url": "http://localhost:11434/api/tags",
+  "request": null,
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 21,
+  "totalMs": 21,
+  "chunks": [
+    {
+      "atMs": 21,
+      "bytes": 2180
+    }
+  ],
+  "error": null
+}

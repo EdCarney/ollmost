@@ -1,0 +1,38 @@
+{
+  "id": "chatcmpl-kablz8ata3f4u1tacqmnh",
+  "object": "chat.completion",
+  "created": 1790614513,
+  "model": "google/gemma-4-e4b",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "content": "",
+        "reasoning_content": "\nThe user is asking for the current weather in Paris and explicitly instructs to use the `get_weather` tool.\nThe available tool is `get_weather`.\nIt takes one argument: `city` (a string).\nThe user specified the city as \"Paris\".\n\nI need to call `get_weather` with `city=\"Paris\"`.",
+        "tool_calls": [
+          {
+            "type": "function",
+            "id": "146102770",
+            "function": {
+              "name": "get_weather",
+              "arguments": "{\"city\":\"Paris\"}"
+            }
+          }
+        ]
+      },
+      "logprobs": null,
+      "finish_reason": "tool_calls"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 90,
+    "completion_tokens": 92,
+    "total_tokens": 182,
+    "completion_tokens_details": {
+      "reasoning_tokens": 74
+    }
+  },
+  "stats": {},
+  "system_fingerprint": "google/gemma-4-e4b"
+}

@@ -1,0 +1,97 @@
+{
+  "url": "http://localhost:11434/api/chat",
+  "request": {
+    "model": "gpt-oss:20b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What's the weather in Paris right now? Use the get_weather tool."
+      }
+    ],
+    "tools": [
+      {
+        "type": "function",
+        "function": {
+          "name": "get_weather",
+          "description": "The current weather in a city.",
+          "parameters": {
+            "type": "object",
+            "properties": {
+              "city": {
+                "type": "string",
+                "description": "The city, e.g. Paris"
+              }
+            },
+            "required": [
+              "city"
+            ]
+          }
+        }
+      }
+    ],
+    "stream": true
+  },
+  "status": 200,
+  "contentType": "application/x-ndjson",
+  "firstByteMs": 364,
+  "totalMs": 1361,
+  "chunks": [
+    {
+      "atMs": 364,
+      "bytes": 142
+    },
+    {
+      "atMs": 394,
+      "bytes": 144
+    },
+    {
+      "atMs": 424,
+      "bytes": 146
+    },
+    {
+      "atMs": 454,
+      "bytes": 146
+    },
+    {
+      "atMs": 485,
+      "bytes": 140
+    },
+    {
+      "atMs": 515,
+      "bytes": 144
+    },
+    {
+      "atMs": 545,
+      "bytes": 139
+    },
+    {
+      "atMs": 576,
+      "bytes": 143
+    },
+    {
+      "atMs": 606,
+      "bytes": 142
+    },
+    {
+      "atMs": 636,
+      "bytes": 142
+    },
+    {
+      "atMs": 666,
+      "bytes": 146
+    },
+    {
+      "atMs": 696,
+      "bytes": 147
+    },
+    {
+      "atMs": 726,
+      "bytes": 139
+    },
+    {
+      "atMs": 1361,
+      "bytes": 436
+    }
+  ],
+  "error": null
+}

@@ -1,0 +1,313 @@
+{
+  "url": "http://localhost:11434/api/chat",
+  "request": {
+    "model": "gpt-oss:20b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "What is 17 × 23? Think it through, then reply with just the number."
+      }
+    ],
+    "think": false,
+    "stream": true
+  },
+  "status": 200,
+  "contentType": "application/x-ndjson",
+  "firstByteMs": 316,
+  "totalMs": 2693,
+  "chunks": [
+    {
+      "atMs": 316,
+      "bytes": 141
+    },
+    {
+      "atMs": 346,
+      "bytes": 143
+    },
+    {
+      "atMs": 377,
+      "bytes": 143
+    },
+    {
+      "atMs": 408,
+      "bytes": 139
+    },
+    {
+      "atMs": 438,
+      "bytes": 141
+    },
+    {
+      "atMs": 469,
+      "bytes": 142
+    },
+    {
+      "atMs": 499,
+      "bytes": 141
+    },
+    {
+      "atMs": 530,
+      "bytes": 139
+    },
+    {
+      "atMs": 561,
+      "bytes": 140
+    },
+    {
+      "atMs": 592,
+      "bytes": 141
+    },
+    {
+      "atMs": 622,
+      "bytes": 139
+    },
+    {
+      "atMs": 653,
+      "bytes": 140
+    },
+    {
+      "atMs": 683,
+      "bytes": 139
+    },
+    {
+      "atMs": 714,
+      "bytes": 144
+    },
+    {
+      "atMs": 744,
+      "bytes": 141
+    },
+    {
+      "atMs": 775,
+      "bytes": 146
+    },
+    {
+      "atMs": 805,
+      "bytes": 139
+    },
+    {
+      "atMs": 836,
+      "bytes": 143
+    },
+    {
+      "atMs": 867,
+      "bytes": 144
+    },
+    {
+      "atMs": 897,
+      "bytes": 143
+    },
+    {
+      "atMs": 927,
+      "bytes": 142
+    },
+    {
+      "atMs": 958,
+      "bytes": 142
+    },
+    {
+      "atMs": 989,
+      "bytes": 145
+    },
+    {
+      "atMs": 1020,
+      "bytes": 145
+    },
+    {
+      "atMs": 1050,
+      "bytes": 140
+    },
+    {
+      "atMs": 1081,
+      "bytes": 143
+    },
+    {
+      "atMs": 1111,
+      "bytes": 140
+    },
+    {
+      "atMs": 1141,
+      "bytes": 146
+    },
+    {
+      "atMs": 1172,
+      "bytes": 139
+    },
+    {
+      "atMs": 1202,
+      "bytes": 139
+    },
+    {
+      "atMs": 1233,
+      "bytes": 139
+    },
+    {
+      "atMs": 1263,
+      "bytes": 140
+    },
+    {
+      "atMs": 1294,
+      "bytes": 139
+    },
+    {
+      "atMs": 1324,
+      "bytes": 139
+    },
+    {
+      "atMs": 1354,
+      "bytes": 140
+    },
+    {
+      "atMs": 1384,
+      "bytes": 138
+    },
+    {
+      "atMs": 1415,
+      "bytes": 140
+    },
+    {
+      "atMs": 1445,
+      "bytes": 139
+    },
+    {
+      "atMs": 1475,
+      "bytes": 141
+    },
+    {
+      "atMs": 1506,
+      "bytes": 139
+    },
+    {
+      "atMs": 1536,
+      "bytes": 139
+    },
+    {
+      "atMs": 1567,
+      "bytes": 140
+    },
+    {
+      "atMs": 1598,
+      "bytes": 139
+    },
+    {
+      "atMs": 1628,
+      "bytes": 139
+    },
+    {
+      "atMs": 1659,
+      "bytes": 139
+    },
+    {
+      "atMs": 1690,
+      "bytes": 139
+    },
+    {
+      "atMs": 1720,
+      "bytes": 139
+    },
+    {
+      "atMs": 1750,
+      "bytes": 141
+    },
+    {
+      "atMs": 1781,
+      "bytes": 138
+    },
+    {
+      "atMs": 1811,
+      "bytes": 141
+    },
+    {
+      "atMs": 1841,
+      "bytes": 139
+    },
+    {
+      "atMs": 1872,
+      "bytes": 141
+    },
+    {
+      "atMs": 1902,
+      "bytes": 145
+    },
+    {
+      "atMs": 1932,
+      "bytes": 139
+    },
+    {
+      "atMs": 1963,
+      "bytes": 141
+    },
+    {
+      "atMs": 1993,
+      "bytes": 138
+    },
+    {
+      "atMs": 2023,
+      "bytes": 142
+    },
+    {
+      "atMs": 2054,
+      "bytes": 143
+    },
+    {
+      "atMs": 2084,
+      "bytes": 144
+    },
+    {
+      "atMs": 2114,
+      "bytes": 143
+    },
+    {
+      "atMs": 2145,
+      "bytes": 142
+    },
+    {
+      "atMs": 2175,
+      "bytes": 145
+    },
+    {
+      "atMs": 2206,
+      "bytes": 139
+    },
+    {
+      "atMs": 2237,
+      "bytes": 141
+    },
+    {
+      "atMs": 2267,
+      "bytes": 145
+    },
+    {
+      "atMs": 2298,
+      "bytes": 143
+    },
+    {
+      "atMs": 2328,
+      "bytes": 142
+    },
+    {
+      "atMs": 2358,
+      "bytes": 143
+    },
+    {
+      "atMs": 2389,
+      "bytes": 142
+    },
+    {
+      "atMs": 2419,
+      "bytes": 145
+    },
+    {
+      "atMs": 2450,
+      "bytes": 139
+    },
+    {
+      "atMs": 2662,
+      "bytes": 127
+    },
+    {
+      "atMs": 2693,
+      "bytes": 324
+    }
+  ],
+  "error": null
+}

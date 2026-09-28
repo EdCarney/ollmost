@@ -1,0 +1,17 @@
+{
+  "url": "http://localhost:11434/api/show",
+  "request": {
+    "model": "gpt-oss:20b"
+  },
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 10,
+  "totalMs": 10,
+  "chunks": [
+    {
+      "atMs": 10,
+      "bytes": 40547
+    }
+  ],
+  "error": null
+}

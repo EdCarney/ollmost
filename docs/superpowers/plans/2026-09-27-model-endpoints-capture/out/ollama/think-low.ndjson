@@ -1,0 +1,10 @@
+{"model":"gpt-oss:20b","created_at":"2026-09-28T17:40:38.87052Z","message":{"role":"assistant","content":"","thinking":"Compute"},"done":false}
+{"model":"gpt-oss:20b","created_at":"2026-09-28T17:40:38.901392Z","message":{"role":"assistant","content":"","thinking":" "},"done":false}
+{"model":"gpt-oss:20b","created_at":"2026-09-28T17:40:38.934107Z","message":{"role":"assistant","content":"","thinking":"17"},"done":false}
+{"model":"gpt-oss:20b","created_at":"2026-09-28T17:40:38.964524Z","message":{"role":"assistant","content":"","thinking":"*"},"done":false}
+{"model":"gpt-oss:20b","created_at":"2026-09-28T17:40:38.994881Z","message":{"role":"assistant","content":"","thinking":"23"},"done":false}
+{"model":"gpt-oss:20b","created_at":"2026-09-28T17:40:39.025159Z","message":{"role":"assistant","content":"","thinking":"="},"done":false}
+{"model":"gpt-oss:20b","created_at":"2026-09-28T17:40:39.055459Z","message":{"role":"assistant","content":"","thinking":"391"},"done":false}
+{"model":"gpt-oss:20b","created_at":"2026-09-28T17:40:39.085711Z","message":{"role":"assistant","content":"","thinking":"."},"done":false}
+{"model":"gpt-oss:20b","created_at":"2026-09-28T17:40:39.297709Z","message":{"role":"assistant","content":"391"},"done":false}
+{"model":"gpt-oss:20b","created_at":"2026-09-28T17:40:39.32808Z","message":{"role":"assistant","content":""},"done":true,"done_reason":"stop","total_duration":774690208,"load_duration":3787417,"prompt_eval_count":86,"prompt_eval_cached_count":0,"prompt_eval_duration":217805000,"eval_count":19,"eval_duration":550371000}

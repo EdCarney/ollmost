@@ -1,0 +1,24 @@
+{
+  "url": "http://localhost:11434/api/chat",
+  "request": {
+    "model": "gpt-oss:20b",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Say hello in five words."
+      }
+    ],
+    "stream": false
+  },
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 8571,
+  "totalMs": 8571,
+  "chunks": [
+    {
+      "atMs": 8571,
+      "bytes": 1364
+    }
+  ],
+  "error": null
+}

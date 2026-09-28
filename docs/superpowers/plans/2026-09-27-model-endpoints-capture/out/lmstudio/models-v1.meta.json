@@ -1,0 +1,15 @@
+{
+  "url": "http://localhost:1234/v1/models",
+  "request": null,
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 1,
+  "totalMs": 1,
+  "chunks": [
+    {
+      "atMs": 1,
+      "bytes": 387
+    }
+  ],
+  "error": null
+}

@@ -1,0 +1,17 @@
+{
+  "url": "http://localhost:11434/api/show",
+  "request": {
+    "model": "qwen3:8b"
+  },
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 14,
+  "totalMs": 14,
+  "chunks": [
+    {
+      "atMs": 14,
+      "bytes": 29253
+    }
+  ],
+  "error": null
+}

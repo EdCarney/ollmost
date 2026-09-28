@@ -1,0 +1,24 @@
+{
+  "url": "http://localhost:1234/v1/chat/completions",
+  "request": {
+    "model": "ollmost-no-such-model",
+    "messages": [
+      {
+        "role": "user",
+        "content": "hi"
+      }
+    ],
+    "stream": false
+  },
+  "status": 200,
+  "contentType": "application/json; charset=utf-8",
+  "firstByteMs": 3669,
+  "totalMs": 3669,
+  "chunks": [
+    {
+      "atMs": 3669,
+      "bytes": 694
+    }
+  ],
+  "error": null
+}
