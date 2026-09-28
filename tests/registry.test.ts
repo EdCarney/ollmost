@@ -180,6 +180,30 @@ describe('which key goes where', () => {
       setSecret(endpointSecretName('gpu'), null)
     }
   })
+
+  it('sends the account key to ollama.com only over https, and nothing over plain http', () => {
+    setApiKey('account-key')
+    setSecret(endpointSecretName('plain'), 'plain-key')
+    try {
+      expect(ollamaTarget({ id: 'plain', name: 'Plain', baseUrl: 'http://ollama.com' })).toEqual({
+        base: 'http://ollama.com',
+        name: 'Plain',
+        cloud: true,
+        keyed: false,
+        headers: {}
+      })
+      expect(ollamaTarget({ id: 'secure', name: 'Secure', baseUrl: 'https://ollama.com/' })).toEqual({
+        base: 'https://ollama.com',
+        name: 'Secure',
+        cloud: true,
+        keyed: false,
+        headers: { Authorization: 'Bearer account-key' }
+      })
+    } finally {
+      setApiKey(null)
+      setSecret(endpointSecretName('plain'), null)
+    }
+  })
 })
 
 describe('billing and context windows', () => {

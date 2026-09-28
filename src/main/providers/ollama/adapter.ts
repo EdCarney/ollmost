@@ -35,8 +35,13 @@ import {
 export function ollamaTarget(endpoint: Pick<Endpoint, 'id' | 'name' | 'baseUrl'>): OllamaTarget {
   const base = endpoint.baseUrl.replace(/\/+$/, '')
   const cloud = isOllamaCloudUrl(base)
-  // ollama.com takes the ollama.com account key; any other server is only ever sent its own.
-  const key = getSecret(cloud ? OLLAMA_ACCOUNT_SECRET : endpointSecretName(endpoint.id))
+  // ollama.com takes the ollama.com account key, and only over https: plain http is sent no key at all. Any other
+  // server is only ever sent its own. (`cloud` parsed the URL, so reading its protocol can't throw.)
+  const key = cloud
+    ? new URL(base).protocol === 'https:'
+      ? getSecret(OLLAMA_ACCOUNT_SECRET)
+      : null
+    : getSecret(endpointSecretName(endpoint.id))
   return { base, name: endpoint.name, cloud, keyed: !cloud && key !== null, headers: key ? { Authorization: `Bearer ${key}` } : {} }
 }
 
@@ -173,11 +178,12 @@ export class OllamaProvider implements Provider {
     return toOllamaBody(req, this.where(req.model) !== 'cloud')
   }
 
-  listModels(refresh: boolean): Promise<ModelInfo[]> {
+  // async, so a throw from target() rejects the promise: listAllModels then reports it for this endpoint alone.
+  async listModels(refresh: boolean): Promise<ModelInfo[]> {
     return listOllamaModels(this.endpoint, this.target(), refresh)
   }
 
-  modelInfo(model: string, refresh = false): Promise<ModelInfo> {
+  async modelInfo(model: string, refresh = false): Promise<ModelInfo> {
     return getModelInfo(this.endpoint, this.target(), model, refresh)
   }
 
