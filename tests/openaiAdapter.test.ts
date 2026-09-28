@@ -609,4 +609,43 @@ describe('models', () => {
     })
     expect(await down.modelInfo('old')).toMatchObject({ installed: true, capabilities: ['completion', 'vision'], contextWindow: 4096 })
   })
+
+  it('applies the user’s overrides and what errors taught, and says what Auto would be', async () => {
+    server.handler = list({ n: 0 })
+    fake.rows.set('gen/mistral-small-3.2-24b', {
+      info: null,
+      fetchedAt: 0,
+      overrides: { vision: true, tools: false, contextLength: 32_768, think: 'toggle' },
+      detected: {}
+    })
+    fake.rows.set('gen/qwen3-coder-30b-a3b', {
+      info: null,
+      fetchedAt: 0,
+      overrides: {},
+      detected: { tools: false, contextLength: 16_384, reason: 'Box reported a 16K context' }
+    })
+    const [mistral, coder] = await generic().listModels(false)
+    expect(mistral).toMatchObject({
+      capabilities: ['completion', 'vision', 'thinking'],
+      contextWindow: 32_768,
+      thinkPreset: null,
+      auto: { capabilities: ['completion', 'tools'], contextWindow: 8_192 }
+    })
+    expect(coder).toMatchObject({
+      capabilities: ['completion'],
+      contextWindow: 16_384,
+      auto: { capabilities: ['completion'], contextWindow: 16_384 }
+    })
+  })
+
+  it('carries LM Studio’s thinking preset into the model', async () => {
+    server.handler = (r, res) =>
+      r.url === '/api/v1/models' ? void res.writeHead(200).end(fixtureText('discovery/lmstudio-docs.json')) : void res.writeHead(404).end()
+    const models = await provider().listModels(false)
+    expect(models.map((m) => [m.name, m.thinkPreset])).toEqual([
+      ['qwen/qwen3-8b', 'toggle'],
+      ['google/gemma-3-12b', null],
+      ['openai/gpt-oss-20b', 'levels']
+    ])
+  })
 })

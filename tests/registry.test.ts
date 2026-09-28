@@ -15,7 +15,7 @@ vi.mock('electron', () => ({
 }))
 
 const { openDatabase } = await import('../src/main/db/index')
-const { deleteEndpointProfiles, readModelProfile, writeModelOverrides } = await import('../src/main/db/kv')
+const { deleteEndpointProfiles, readModelProfile, writeModelDetected, writeModelOverrides } = await import('../src/main/db/kv')
 const { setApiKey, setEndpoints } = await import('../src/main/settings')
 const { endpointSecretName, setSecret } = await import('../src/main/providers/secrets')
 const registry = await import('../src/main/providers/registry')
@@ -177,6 +177,28 @@ describe('resolving a key', () => {
     const info = await registry.modelInfo('gpu/qwen3:8b', true)
     expect(info).toMatchObject({ key: 'gpu/qwen3:8b', endpoint: { name: 'GPU box' }, installed: true })
     expect(b.requests.at(-1)).toEqual({ model: 'qwen3:8b' })
+  })
+})
+
+describe('re-detecting a model', () => {
+  it('forgets what errors taught an Ollama model and asks /api/show about it again', async () => {
+    const shown: string[] = []
+    const answer = a.handler
+    a.handler = (req, res) => {
+      if (req.url === '/api/show') shown.push(String(req.json.model))
+      return answer(req, res)
+    }
+    await registry.modelInfo('ollama/llama3.2')
+    writeModelDetected('ollama/llama3.2', { tools: false, reason: 'refused tools' })
+    const before = shown.length
+    // Read again within the day, it comes from the cache: no request.
+    expect((await registry.modelInfo('ollama/llama3.2')).capabilities).not.toContain('tools')
+    expect(shown).toHaveLength(before)
+    const info = await registry.redetectModel('ollama/llama3.2')
+    expect(shown.slice(before)).toEqual(['llama3.2'])
+    expect(info.detected).toEqual({})
+    expect(info.capabilities).toContain('tools')
+    expect(readModelProfile('ollama/llama3.2').detected).toEqual({})
   })
 })
 

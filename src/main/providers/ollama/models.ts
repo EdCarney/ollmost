@@ -3,6 +3,7 @@ import { toModelKey } from '@shared/modelKey'
 import type { Endpoint, ModelInfo, ModelWhere } from '@shared/types'
 import { type CachedModelInfo, readModelProfile, writeModelInfo } from '../../db/kv'
 import { modelPrice } from '../../usage/pricing'
+import { effectiveCapabilities } from '../capabilities'
 import { contextWindowFor } from '../context'
 import { billingOf, whereOf } from '../where'
 import { isCloudName, listCloudCatalog, listTags, type OllamaTarget, showModel } from './wire'
@@ -78,7 +79,11 @@ function toModelInfo(endpoint: Endpoint, name: string, info: CachedModelInfo, in
     contextControl,
     contextWindow: contextWindowFor({ contextControl, contextLength: info.contextLength, overrides, detected }, endpoint),
     installed,
-    capabilities: info.capabilities,
+    capabilities: effectiveCapabilities(info.capabilities, overrides, detected),
+    auto: {
+      capabilities: effectiveCapabilities(info.capabilities, {}, detected),
+      contextWindow: contextWindowFor({ contextControl, contextLength: info.contextLength, overrides: {}, detected }, endpoint)
+    },
     contextLength: info.contextLength,
     family: info.family,
     parameterSize: info.parameterSize,

@@ -361,6 +361,10 @@ export interface ModelInfo {
   parameterSize: string | null
   overrides: ModelOverrides
   detected: ModelDetected
+  /** OpenAI-compatible servers: the thinking profile the server reported (LM Studio), used when the user sets none. */
+  thinkPreset?: ThinkProfile['kind'] | null
+  /** What applies without the user's overrides: Settings shows it as "Auto (…)". */
+  auto?: { capabilities: string[]; contextWindow: number | null }
   /** Published price for a priced model, when known. */
   price: ModelPrice | null
 }

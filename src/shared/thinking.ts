@@ -16,11 +16,18 @@ const FAMILY_RULES: Array<{ match: RegExp; profile: ThinkProfile }> = [
   }
 ]
 
-export function resolveThinkProfile(model: string, capabilities: string[], override?: ThinkProfile['kind']): ThinkProfile {
+export function resolveThinkProfile(
+  model: string,
+  capabilities: string[],
+  override?: ThinkProfile['kind'],
+  preset?: ThinkProfile['kind']
+): ThinkProfile {
   if (!capabilities.includes('thinking')) return { kind: 'none' }
-  if (override === 'none' || override === 'toggle') return { kind: override }
-  if (override === 'always') return { kind: 'always' }
-  if (override === 'levels') return { kind: 'levels', canDisable: true }
+  // The user's choice, else what the server said it offers (LM Studio), else Ollama's family rules.
+  const kind = override ?? preset
+  if (kind === 'none' || kind === 'toggle') return { kind }
+  if (kind === 'always') return { kind: 'always' }
+  if (kind === 'levels') return { kind: 'levels', canDisable: true }
   const rule = FAMILY_RULES.find((r) => r.match.test(model))
   return rule ? rule.profile : { kind: 'toggle' }
 }

@@ -2,6 +2,7 @@ import { toModelKey } from '@shared/modelKey'
 import type { Endpoint, ModelDetected, ModelInfo } from '@shared/types'
 import { type CachedModelInfo, readModelProfile, writeModelDetected, writeModelInfo } from '../../db/kv'
 import { setEndpointStreamOptions } from '../../settings'
+import { effectiveCapabilities } from '../capabilities'
 import { contextWindowFor } from '../context'
 import { endpointSecretName, getSecret } from '../secrets'
 import { createStallTimer, STREAM_TIMEOUTS, type StreamTimeouts } from '../stream'
@@ -378,6 +379,10 @@ export class OpenAIProvider implements Provider {
     const { id, name: endpointName, kind, flavor } = this.endpoint
     // The server fixed the window when it loaded the model: Ollmost never sends one.
     const contextControl = 'server' as const
+    const capabilities = effectiveCapabilities(info.capabilities, overrides, detected)
+    // A thinking profile the user picked brings the control, even where the server reports no thinking.
+    if (overrides.think && overrides.think !== 'none' && !capabilities.includes('thinking')) capabilities.push('thinking')
+    const sizes = { contextControl, contextLength: info.contextLength, detected }
     return {
       key,
       name,
@@ -385,15 +390,20 @@ export class OpenAIProvider implements Provider {
       where,
       billing: billingOf(where),
       contextControl,
-      contextWindow: contextWindowFor({ contextControl, contextLength: info.contextLength, overrides, detected }, this.endpoint),
+      contextWindow: contextWindowFor({ ...sizes, overrides }, this.endpoint),
       installed,
-      capabilities: info.capabilities,
+      capabilities,
       contextLength: info.contextLength,
       family: info.family,
       parameterSize: info.parameterSize,
       overrides,
       detected,
-      price: null
+      price: null,
+      thinkPreset: info.thinkPreset ?? null,
+      auto: {
+        capabilities: effectiveCapabilities(info.capabilities, {}, detected),
+        contextWindow: contextWindowFor({ ...sizes, overrides: {} }, this.endpoint)
+      }
     }
   }
 }

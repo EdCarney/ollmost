@@ -16,7 +16,8 @@ vi.mock('electron', () => ({
 
 const server: MockOllama = await startMockOllama()
 const { openDatabase } = await import('../src/main/db/index')
-const { getSettings, setEndpointStreamOptions } = await import('../src/main/settings')
+const { getSettings, setEndpoints, setEndpointStreamOptions } = await import('../src/main/settings')
+const { writeModelDetected, writeModelOverrides } = await import('../src/main/db/kv')
 const { addEndpoint, removeEndpoint, updateEndpoint } = await import('../src/main/providers/endpoints')
 const registry = await import('../src/main/providers/registry')
 const { OpenAIProvider } = await import('../src/main/providers/openai/adapter')
@@ -114,6 +115,24 @@ describe('an OpenAI-compatible endpoint', () => {
     }
   })
 
+  // Before the tests below turn this endpoint off.
+  it('re-detect forgets what errors taught, and reads the model again', async () => {
+    server.handler = (r, res) =>
+      r.url === '/api/v1/models'
+        ? void res.writeHead(200).end(
+            JSON.stringify({
+              models: [{ type: 'llm', key: 'qwen/qwen3-8b', max_context_length: 32768, capabilities: { trained_for_tool_use: true } }]
+            })
+          )
+        : void res.writeHead(404).end()
+    const key = 'lm-studio/qwen/qwen3-8b'
+    writeModelDetected(key, { tools: false, reason: 'server lacks --jinja' })
+    expect((await registry.modelInfo(key)).capabilities).not.toContain('tools')
+    const info = await registry.redetectModel(key)
+    expect(info.detected).toEqual({})
+    expect(info.capabilities).toContain('tools')
+  })
+
   it('keeps a change made to another endpoint while an edited address was being probed', async () => {
     const slow = await slowOpenAI()
     try {
@@ -157,6 +176,27 @@ describe('an OpenAI-compatible endpoint', () => {
       expect(getSettings().endpoints.map((e) => e.id)).not.toContain(box.id)
     } finally {
       await slow.mock.close()
+    }
+  })
+
+  it('lets the user turn an Ollama model’s tools off and its vision on', async () => {
+    const ollama = await startMockOllama()
+    ollama.handler = (r, res) =>
+      r.url === '/api/show'
+        ? void res
+            .writeHead(200)
+            .end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'llama.context_length': 8192 } }))
+        : void res.writeHead(200).end(JSON.stringify({ models: [{ name: 'llama3.2' }] }))
+    setEndpoints(getSettings().endpoints.map((e) => (e.id === 'ollama' ? { ...e, baseUrl: ollama.url, showCloudCatalog: false } : e)))
+    registry.invalidateProviders()
+    writeModelOverrides('ollama/llama3.2', { tools: false, vision: true })
+    try {
+      expect(await registry.modelInfo('ollama/llama3.2')).toMatchObject({
+        capabilities: ['completion', 'vision'],
+        auto: { capabilities: ['completion', 'tools'] }
+      })
+    } finally {
+      await ollama.close()
     }
   })
 })

@@ -1,5 +1,6 @@
-import { keyPrefix, splitModelKey } from '@shared/modelKey'
+import { keyPrefix, splitModelKey, toModelKey } from '@shared/modelKey'
 import type { Endpoint, ModelInfo, ModelListResult } from '@shared/types'
+import { writeModelDetected } from '../db/kv'
 import { getSettings } from '../settings'
 import { errorMessage } from '../util'
 import { OllamaProvider } from './ollama/adapter'
@@ -57,6 +58,14 @@ export function resolve(key: string): { provider: Provider; endpoint: Endpoint; 
 export function modelInfo(key: string, refresh = false): Promise<ModelInfo> {
   const { provider, model } = resolve(key)
   return provider.modelInfo(model, refresh)
+}
+
+/** Forget what errors taught Ollmost about a model (tools refused, its window), then read it again from its server. */
+export function redetectModel(key: string): Promise<ModelInfo> {
+  const { endpoint, model } = resolve(key)
+  // The canonical key, as every read uses: a bare name from before keys is Ollama's.
+  writeModelDetected(toModelKey(endpoint.id, model), {})
+  return modelInfo(key, true)
 }
 
 /** Every enabled endpoint's models, asked in parallel. One that fails adds to `errors`; the others still list. */

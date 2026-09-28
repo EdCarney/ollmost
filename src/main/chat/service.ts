@@ -300,7 +300,7 @@ async function generate(
     const { provider, model: serverName } = resolve(modelName)
     const model = await modelInfo(modelName)
     stats.billing = model.billing
-    const profile = resolveThinkProfile(model.name, model.capabilities, model.overrides.think)
+    const profile = resolveThinkProfile(model.name, model.capabilities, model.overrides.think, model.thinkPreset ?? undefined)
     const vision = model.capabilities.includes('vision')
     const toolsCapable = model.capabilities.includes('tools')
     const numCtx = model.contextWindow
@@ -685,7 +685,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
   try {
     const { provider, model: serverName } = resolve(opts.model)
     const info = await modelInfo(opts.model)
-    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think)
+    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think, info.thinkPreset ?? undefined)
     const contextWindow = info.contextWindow
     const focus = opts.focus.trim()
     const system = focus ? `${COMPACT_PROMPT}\n\nAbove all, keep what the user asked for: ${focus}` : COMPACT_PROMPT
@@ -822,7 +822,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
     const modelName = titleModelFor(chatModel)
     const { provider, model: serverName } = resolve(modelName)
     const info = await modelInfo(modelName)
-    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think)
+    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think, info.thinkPreset ?? undefined)
     const request: ChatRequest = {
       model: serverName,
       messages: [

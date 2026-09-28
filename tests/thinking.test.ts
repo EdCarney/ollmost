@@ -35,4 +35,14 @@ describe('think profiles', () => {
     expect(resolveThinkProfile('glm-5.3:cloud', T, 'toggle')).toEqual({ kind: 'toggle' })
     expect(resolveThinkProfile('qwen3.5:397b-cloud', T, 'levels')).toEqual({ kind: 'levels', canDisable: true })
   })
+
+  it('uses a server’s preset when the user set none, and the user’s choice over it', () => {
+    expect(resolveThinkProfile('qwen/qwen3-8b', T, undefined, 'toggle')).toEqual({ kind: 'toggle' })
+    expect(resolveThinkProfile('openai/gpt-oss-20b', T, undefined, 'levels')).toEqual({ kind: 'levels', canDisable: true })
+    expect(resolveThinkProfile('glm-4.6', T, undefined, 'always')).toEqual({ kind: 'always' })
+    expect(resolveThinkProfile('qwen/qwen3-8b', T, 'none', 'toggle')).toEqual({ kind: 'none' })
+    expect(resolveThinkProfile('qwen/qwen3-8b', ['completion'], undefined, 'toggle')).toEqual({ kind: 'none' })
+    // No preset: Ollama's family rules, as before.
+    expect(resolveThinkProfile('gpt-oss:20b', T, undefined, undefined)).toEqual({ kind: 'levels', canDisable: false })
+  })
 })
