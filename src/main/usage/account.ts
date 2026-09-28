@@ -1,8 +1,8 @@
-import { isOllamaCloudUrl } from '@shared/endpoints'
 import { creditPool, describeWindows, detectReset, effectiveSpend, parseUsageResponse } from '@shared/usage'
-import type { AccountUsage } from '@shared/types'
+import type { AccountUsage, Endpoint } from '@shared/types'
 import { readSetting, writeSetting } from '../db/kv'
 import { OLLAMA_CLOUD } from '../providers/ollama/wire'
+import { whereOf } from '../providers/where'
 import { getApiKey, getSettings, updateSettings } from '../settings'
 import { errorMessage } from '../util'
 
@@ -12,19 +12,29 @@ const USAGE_URL = process.env.OLLMOST_USAGE_URL ?? `${OLLAMA_CLOUD}/api/usage`
 let cache: AccountUsage | null = null
 let inflight: Promise<AccountUsage> | null = null
 let plan: string | null = null
+/** The address /api/me last failed at: not asked again this session (a server without it would fail on every load). */
+let planFailedAt: string | null = null
 
-/** The signed-in Ollama app knows the plan name (POST /api/me), even without an API key. */
+/** Where to ask for the plan: the first enabled Ollama endpoint on this Mac (the signed-in app), if any. */
+export function planEndpoint(endpoints: readonly Endpoint[]): Endpoint | null {
+  return endpoints.find((e) => e.kind === 'ollama' && e.enabled && whereOf(e.baseUrl) === 'this-mac') ?? null
+}
+
+/** The signed-in daemon knows the plan name (POST /api/me), even without an API key. */
 async function fetchPlan(): Promise<string | null> {
   if (plan) return plan
-  // The first Ollama app among the endpoints: ollama.com itself has no /api/me.
-  const app = getSettings().endpoints.find((e) => e.enabled && e.kind === 'ollama' && !isOllamaCloudUrl(e.baseUrl))
-  if (!app) return null
+  const target = planEndpoint(getSettings().endpoints)
+  if (!target) return null
+  const base = target.baseUrl.replace(/\/+$/, '')
+  if (planFailedAt === base) return null
   try {
-    const res = await fetch(`${app.baseUrl.replace(/\/+$/, '')}/api/me`, { method: 'POST', signal: AbortSignal.timeout(5000) })
-    if (!res.ok) return null
+    const res = await fetch(`${base}/api/me`, { method: 'POST', signal: AbortSignal.timeout(5000) })
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    // A signed-out daemon answers without a plan: asked again next time, since signing in needs no restart.
     plan = ((await res.json()) as { plan?: string }).plan ?? null
     return plan
   } catch {
+    planFailedAt = base
     return null
   }
 }

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
-import type { AccountUsage } from '@shared/types'
+import type { AccountUsage, Settings } from '@shared/types'
+import { type QuotaMode, quotaMode } from '@shared/usage'
 import { api } from '@/lib/api'
 import { useApp } from './app'
 
@@ -26,10 +27,10 @@ export const useUsage = create<UsageState>((set) => ({
 }))
 
 const POLL_MS = 2 * 60_000
-let afterReply: ReturnType<typeof setTimeout> | null = null
 
-/** Keep quota numbers live: poll while visible, and re-check shortly after each reply finishes. */
-export function startUsagePolling(): () => void {
+/** Poll while visible, and re-check shortly after each reply finishes. Returns a function that stops it. */
+function poll(): () => void {
+  let afterReply: ReturnType<typeof setTimeout> | null = null
   void useUsage.getState().load()
   const timer = setInterval(() => {
     if (document.visibilityState === 'visible') void useUsage.getState().load(true)
@@ -43,5 +44,32 @@ export function startUsagePolling(): () => void {
   return () => {
     clearInterval(timer)
     offChat()
+    if (afterReply) clearTimeout(afterReply)
+  }
+}
+
+/**
+ * Keep the quota chip's numbers as live as the settings call for (quotaMode): with the ollama.com key, poll; with only
+ * an Ollama endpoint, read once (the plan, and the "add a key" prompt); with neither, fetch nothing. It follows settings
+ * changes, so saving a key starts polling and switching off the last Ollama endpoint stops it.
+ */
+export function startUsagePolling(): () => void {
+  let mode: QuotaMode | null = null
+  let stop: (() => void) | null = null
+  const apply = (settings: Settings | null) => {
+    const next = settings ? quotaMode(settings) : null
+    if (next === mode) return
+    mode = next
+    stop?.()
+    stop = null
+    if (next === 'show') stop = poll()
+    else if (next === 'add-key') void useUsage.getState().load()
+    else useUsage.setState({ account: null })
+  }
+  apply(useApp.getState().settings)
+  const unsubscribe = useApp.subscribe((s) => apply(s.settings))
+  return () => {
+    unsubscribe()
+    stop?.()
   }
 }

@@ -1,4 +1,4 @@
-import type { AccountUsage, ModelPrice, PriceTable, UsageWindow } from './types'
+import type { AccountUsage, Endpoint, ModelPrice, PriceTable, Settings, UsageWindow } from './types'
 
 // ---- Prices ---------------------------------------------------------------
 
@@ -297,4 +297,22 @@ export function formatTimeLeft(ms: number): string {
   const hours = Math.floor(minutes / 60)
   if (hours < 24) return `${hours}h ${minutes % 60}m`
   return `${Math.floor(hours / 24)}d ${hours % 24}h`
+}
+
+// ---- Quota chip --------------------------------------------------------------
+
+export type QuotaMode = 'show' | 'add-key' | 'hidden'
+
+/** Whether any enabled endpoint is an Ollama server (on this Mac, the network or ollama.com). */
+export function hasOllamaEndpoint(endpoints: ReadonlyArray<Pick<Endpoint, 'kind' | 'enabled'>>): boolean {
+  return endpoints.some((e) => e.kind === 'ollama' && e.enabled)
+}
+
+/**
+ * What the title bar's quota chip does: with the ollama.com key saved it shows usage (polled); with no key but an
+ * Ollama endpoint it offers to add one; with neither there's nothing to show, and nothing is fetched.
+ */
+export function quotaMode(s: Pick<Settings, 'endpoints' | 'ollamaAccount'>): QuotaMode {
+  if (s.ollamaAccount.hasKey) return 'show'
+  return hasOllamaEndpoint(s.endpoints) ? 'add-key' : 'hidden'
 }

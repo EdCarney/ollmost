@@ -1,6 +1,6 @@
 import { CircleCheck, CircleEqual, CircleHelp, ExternalLink, Gauge, KeyRound, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { formatDollars, formatPercent, formatTimeLeft, type Pace, type PaceStatus, paceOf, spendPeriod } from '@shared/usage'
+import { formatDollars, formatPercent, formatTimeLeft, type Pace, type PaceStatus, paceOf, quotaMode, spendPeriod } from '@shared/usage'
 import type { AccountUsage, ChatUsage, UsageSummary, UsageWindow } from '@shared/types'
 import { withPreview } from '@shared/settingsPreview'
 import { billingLabel, chatCostLabel } from '@shared/billing'
@@ -153,7 +153,7 @@ export function AccountQuota() {
   }, [open, since, until])
 
   // The palette previews the header toggle live, before it's saved.
-  if (!settings || !withPreview(settings, previewSettings).usage.showInHeader) return null
+  if (!settings || quotaMode(settings) === 'hidden' || !withPreview(settings, previewSettings).usage.showInHeader) return null
   const w = headlineWindow(account, settings.usage.headerWindow)
   const pace = w ? paceOf(w, now) : null
   // Per-model request counts cover every app on the account; prefer the longest window that has them.

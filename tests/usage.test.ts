@@ -11,12 +11,14 @@ import {
   formatDollars,
   formatPercent,
   formatTimeLeft,
+  hasOllamaEndpoint,
   monthlyBounds,
   nextReset,
   paceOf,
   parsePricingHtml,
   parseUsageResponse,
   priceFor,
+  quotaMode,
   spendPeriod
 } from '@shared/usage'
 import { toModelKey } from '@shared/modelKey'
@@ -380,5 +382,24 @@ describe('usage totals across endpoints', () => {
     s = usageSummary(endpoints, 1, at - 60_000, at + 60_000)
     expect(s.total.costUsd).toBeNull()
     expect(s.byDay[0].costUsd).toBeNull()
+  })
+})
+
+describe('the quota chip', () => {
+  const ollama = { kind: 'ollama', enabled: true } as Endpoint
+  const lmStudio = { kind: 'openai', enabled: true } as Endpoint
+  const off = { ...ollama, enabled: false }
+
+  it('shows usage whenever the ollama.com key is saved, even with no Ollama endpoint', () => {
+    expect(quotaMode({ endpoints: [lmStudio], ollamaAccount: { hasKey: true } })).toBe('show')
+  })
+
+  it('offers to add a key when an Ollama endpoint is set up without one', () => {
+    expect(quotaMode({ endpoints: [lmStudio, ollama], ollamaAccount: { hasKey: false } })).toBe('add-key')
+  })
+
+  it('is hidden, so nothing is polled, with neither; a switched-off Ollama endpoint counts as none', () => {
+    expect(quotaMode({ endpoints: [lmStudio, off], ollamaAccount: { hasKey: false } })).toBe('hidden')
+    expect(hasOllamaEndpoint([])).toBe(false)
   })
 })
