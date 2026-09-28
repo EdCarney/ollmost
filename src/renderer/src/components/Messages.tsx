@@ -645,6 +645,7 @@ export const AssistantMessage = memo(function AssistantMessage({
       return (
         <ThinkingBlock
           key={`k${item.position}`}
+          conversationId={conversationId}
           thinking={item.thinking.text}
           active={streaming && item.thinking.ms === null}
           durationMs={item.thinking.ms}
@@ -673,7 +674,7 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   return (
     <div className="group">
-      {awaitingFirst && <ThinkingBlock thinking="" active durationMs={null} />}
+      {awaitingFirst && <ThinkingBlock conversationId={conversationId} thinking="" active durationMs={null} />}
       {rendered}
       {working && !content && !thinkingSegments.some((t) => t.ms === null) && (
         <div className="stream-caret h-6" aria-label="Waiting for reply" />

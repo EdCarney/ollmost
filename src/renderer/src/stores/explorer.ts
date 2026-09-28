@@ -1,4 +1,5 @@
 import { create } from 'zustand'
+import { readJson, strings, writeJson } from '@/lib/storage'
 
 // The explorer's per-viewer conveniences, kept in browser storage: which nodes are open, and folders made but not yet
 // filled (a folder is its files' paths, so an empty one exists only here). One store, so every explorer on screen
@@ -7,22 +8,6 @@ import { create } from 'zustand'
 const EXPANDED_KEY = 'ollmost.explorer.expanded'
 const FOLDERS_KEY = 'ollmost.explorer.folders'
 
-function readJson(key: string): unknown {
-  try {
-    const raw = localStorage.getItem(key)
-    return raw ? JSON.parse(raw) : null
-  } catch {
-    return null
-  }
-}
-function writeJson(key: string, value: unknown): void {
-  try {
-    localStorage.setItem(key, JSON.stringify(value))
-  } catch {
-    // Storage may be unavailable; the state is a convenience.
-  }
-}
-const strings = (v: unknown): string[] => (Array.isArray(v) ? v.filter((s): s is string => typeof s === 'string') : [])
 function stringLists(v: unknown): Record<string, string[]> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
   return Object.fromEntries(Object.entries(v as Record<string, unknown>).map(([k, list]) => [k, strings(list)]))
