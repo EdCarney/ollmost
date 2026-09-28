@@ -34,6 +34,7 @@ import {
 } from '../db/conversations'
 import { getProject, projectKnowledge, touchProject } from '../db/projects'
 import { imageForModel, removeFiles } from '../files/ingest'
+import { toOllamaMessage } from '../providers/ollama/adapter'
 import { type ChatBody, chatOnce, endpointFor } from '../providers/ollama/wire'
 import { modelInfo } from '../providers/registry'
 import { webAvailable } from '../ollama/web'
@@ -451,7 +452,7 @@ async function generate(
 
     const body: ChatBody = {
       model: modelName,
-      messages: assembled.messages,
+      messages: assembled.messages.map(toOllamaMessage),
       think: toOllamaThink(profile, think),
       tools,
       // Cloud models manage their own context; local ones default to a small window unless told otherwise.

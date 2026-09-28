@@ -5,6 +5,7 @@ import { contextOptions, effectiveContext } from '@shared/context'
 import { resolveThinkProfile, toOllamaThink } from '@shared/thinking'
 import { childId } from '@shared/toolEvents'
 import type { MessageStats, Settings, ToolEvent } from '@shared/types'
+import { toOllamaMessage } from '../providers/ollama/adapter'
 import type { ChatBody } from '../providers/ollama/wire'
 import { modelInfo } from '../providers/registry'
 import type { ToolDef } from '../providers/types'
@@ -138,7 +139,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   })
   const body: ChatBody = {
     model: reply.model,
-    messages: assembled.messages,
+    messages: assembled.messages.map(toOllamaMessage),
     think: toOllamaThink(profile, reply.think),
     tools,
     options: contextOptions(model, settings.localNumCtx)

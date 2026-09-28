@@ -1,5 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ThinkProfile, ThinkSetting } from '@shared/types'
+import { assemble } from '../src/main/chat/assemble'
 import type { ChatChunk } from '../src/main/providers/ollama/wire'
 import type { ChatEvent, ChatRequest, ToolDef } from '../src/main/providers/types'
 import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMock'
@@ -11,7 +12,7 @@ vi.mock('../src/main/settings', () => ({
   getApiKey: () => null
 }))
 
-const { ollamaEvents, OllamaProvider, ollamaTimeouts, resultFromOllama, toOllamaBody } =
+const { ollamaEvents, OllamaProvider, ollamaTimeouts, resultFromOllama, toOllamaBody, toOllamaMessage } =
   await import('../src/main/providers/ollama/adapter')
 const { STREAM_TIMEOUTS } = await import('../src/main/providers/ollama/wire')
 
@@ -318,5 +319,48 @@ describe('OllamaProvider', () => {
     expect(ollamaTimeouts('gpt-oss:120b-cloud').toolIdleMs).toBe(STREAM_TIMEOUTS.idleMs)
     conn.mode = 'direct'
     expect(ollamaTimeouts('gpt-oss:120b').toolIdleMs).toBe(STREAM_TIMEOUTS.idleMs)
+  })
+})
+
+describe('assemble() through the adapter', () => {
+  it('replays history to Ollama exactly as before: calls without ids, results by tool_name, images as base64', () => {
+    const { messages } = assemble({
+      model: 'llama3.2',
+      contextLength: 8192,
+      userName: '',
+      preferences: '',
+      date: new Date('2026-09-27'),
+      artifacts: { enabled: false, allowCdn: false },
+      web: 'off',
+      grants: [],
+      pastTools: true,
+      project: null,
+      chatInstructions: '',
+      knowledge: [],
+      skillIndex: [],
+      selectedSkills: [],
+      loadedSkills: [],
+      history: [
+        { role: 'user', content: 'what is in the news?', documents: [], images: [], hiddenImages: [] },
+        {
+          role: 'assistant',
+          content: 'Ollmosts are back.',
+          tools: [{ name: 'web_search', args: { query: 'news' }, record: '1. Ollmosts are back', note: 'Kept in brief.' }],
+          documents: [],
+          images: [],
+          hiddenImages: []
+        },
+        { role: 'user', content: 'what is this?', documents: [], images: [{ data: 'iVBORw0KGgo=', mime: 'image/png' }], hiddenImages: [] }
+      ]
+    })
+    expect(bytes(messages.slice(1).map(toOllamaMessage))).toBe(
+      bytes([
+        { role: 'user', content: 'what is in the news?' },
+        { role: 'assistant', content: '', tool_calls: [{ function: { name: 'web_search', arguments: { query: 'news' } } }] },
+        { role: 'tool', tool_name: 'web_search', content: '1. Ollmosts are back\n\nKept in brief.' },
+        { role: 'assistant', content: 'Ollmosts are back.' },
+        { role: 'user', content: 'what is this?', images: ['iVBORw0KGgo='] }
+      ])
+    )
   })
 })

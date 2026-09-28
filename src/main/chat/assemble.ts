@@ -1,6 +1,6 @@
 import { parseMessage } from '@shared/artifactParser'
 import type { Skill } from '@shared/types'
-import type { OllamaMessage } from '../providers/ollama/wire'
+import type { ChatImage, ChatMessage } from '../providers/types'
 import { estimateTokens } from '../util'
 import {
   artifactsPrompt,
@@ -39,8 +39,8 @@ export interface HistoryTurn {
   tools?: PastToolCall[]
   thinking?: string | null
   documents: Array<{ name: string; text: string }>
-  /** Base64 images; only filled when the model has vision. */
-  images: string[]
+  /** Images for a vision model, with their type; only filled when the model has vision. */
+  images: ChatImage[]
   /** Names of images the current model can't see. */
   hiddenImages: string[]
 }
@@ -92,7 +92,7 @@ export interface AssembleInput {
 }
 
 export interface Assembled {
-  messages: OllamaMessage[]
+  messages: ChatMessage[]
   /** Oldest turns dropped to fit the context window. */
   droppedTurns: number
   estimatedTokens: number
@@ -147,15 +147,27 @@ export function buildSystemPrompt(input: AssembleInput): string {
   return parts.join('\n\n')
 }
 
-function turnToMessages(turn: HistoryTurn): OllamaMessage[] {
+function turnToMessages(turn: HistoryTurn, index: number): ChatMessage[] {
   if (turn.role === 'assistant') {
-    // Replayed in Ollama's own tool format, so the model sees what it looked up without learning to
-    // write tool summaries into its answers.
+    // Replayed as the tool calls and results they were, so the model sees what it looked up without learning to write
+    // tool summaries into its answers. A call's id comes from its turn and place: the same history always makes the
+    // same request, which a server's prompt cache relies on. It's 'c' and both in base 36, 4 digits each: 9 letters and
+    // digits, the only shape Mistral's chat templates on vLLM accept.
     const tools = turn.tools ?? []
-    const calls: OllamaMessage[] = tools.length
+    const ids = tools.map((_, n) => `c${index.toString(36).padStart(4, '0')}${n.toString(36).padStart(4, '0')}`)
+    const calls: ChatMessage[] = tools.length
       ? [
-          { role: 'assistant', content: '', tool_calls: tools.map((t) => ({ function: { name: t.name, arguments: t.args } })) },
-          ...tools.map((t): OllamaMessage => ({ role: 'tool', tool_name: t.name, content: t.note ? `${t.record}\n\n${t.note}` : t.record }))
+          {
+            role: 'assistant',
+            content: '',
+            toolCalls: tools.map((t, n) => ({ id: ids[n], function: { name: t.name, arguments: t.args } }))
+          },
+          ...tools.map((t, n): ChatMessage => ({
+            role: 'tool',
+            toolName: t.name,
+            toolCallId: ids[n],
+            content: t.note ? `${t.record}\n\n${t.note}` : t.record
+          }))
         ]
       : []
     return [...calls, { role: 'assistant', content: turn.content }]
@@ -235,8 +247,10 @@ export function assemble(input: AssembleInput): Assembled {
     kept.shift()
   }
 
+  // A turn's index in the whole history, not among those kept, names its calls: dropping older turns renames nothing.
+  const first = history.length - kept.length
   return {
-    messages: [{ role: 'system', content: system }, ...kept.flatMap(turnToMessages)],
+    messages: [{ role: 'system', content: system }, ...kept.flatMap((t, i) => turnToMessages(t, first + i))],
     droppedTurns: history.length - kept.length,
     estimatedTokens: used + estimateTokens(system)
   }
