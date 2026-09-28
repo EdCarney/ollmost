@@ -5,7 +5,7 @@ import { api } from '@/lib/api'
 import { cn } from '@/lib/format'
 import { reportError, useApp } from '@/stores/app'
 import { useSystemDark } from '@/theme/useTheme'
-import { Button, Field, Modal, TextField } from './ui'
+import { Button, chosenOption, Field, Modal, TextField } from './ui'
 
 const GROUPS: Array<{ label: string; keys: Array<[PaletteKey, string]> }> = [
   {
@@ -198,7 +198,7 @@ export function ThemeEditor({ base, open, onClose }: { base: ThemeDef; open: boo
                 <button
                   key={v}
                   onClick={() => setVariant(v)}
-                  className={cn('rounded-md px-3 py-1 capitalize', variant === v ? 'bg-panel text-fg shadow-sm' : 'text-muted')}
+                  className={cn('rounded-md px-3 py-1 capitalize', variant === v ? chosenOption : 'text-muted')}
                 >
                   {v} palette
                 </button>

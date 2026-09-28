@@ -2,7 +2,7 @@ import { Bug, Download, Search, Trash2, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { formatCost } from '@shared/usage'
 import type { TraceDetail, TraceKind, TraceSummary } from '@shared/types'
-import { IconButton, Switch, Tooltip, TooltipProvider } from '@/components/ui'
+import { chosenOption, IconButton, Switch, Tooltip, TooltipProvider } from '@/components/ui'
 import { api } from '@/lib/api'
 import { cn, displayModelName, formatTokens } from '@/lib/format'
 import { useApp } from '@/stores/app'
@@ -137,7 +137,7 @@ export function DebugApp() {
                   'rounded-md px-2 py-1',
                   // Not capitalized by CSS: it would read "Sub-Agent".
                   k !== 'delegate' && 'capitalize',
-                  kinds.has(k) ? 'bg-panel text-fg shadow-sm' : 'text-subtle hover:text-fg'
+                  kinds.has(k) ? chosenOption : 'text-subtle hover:text-fg'
                 )}
               >
                 {k === 'delegate' ? 'Sub-agent' : k}

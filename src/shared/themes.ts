@@ -175,7 +175,8 @@ export const BUILTIN_THEMES: ThemeDef[] = [
     }
   },
   {
-    // Light: the accent hues are darkened slightly to read on base2 code blocks. Dark: orange and red lightened for base02.
+    // Light: the accent hues are darkened slightly to read on base2 code blocks. Dark: orange and red lightened for base02,
+    // orange a little more so a chosen option (an orange chip) stands out in a dialog.
     id: 'solarized',
     name: 'Solarized',
     builtin: true,
@@ -218,7 +219,7 @@ export const BUILTIN_THEMES: ThemeDef[] = [
       subtle: '#6F8589',
       line: 'rgba(147, 161, 161, 0.16)',
       lineStrong: 'rgba(147, 161, 161, 0.3)',
-      accent: '#D2521F',
+      accent: '#E7581D',
       accentFg: '#FDF6E3',
       accentSoft: 'rgba(203, 75, 22, 0.18)',
       danger: '#E43B36',

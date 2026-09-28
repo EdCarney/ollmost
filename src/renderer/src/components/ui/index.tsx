@@ -380,6 +380,12 @@ export const TextArea = forwardRef<HTMLTextAreaElement, TextareaHTMLAttributes<H
   return <textarea ref={ref} className={cn(field, 'resize-none py-2 leading-relaxed', className)} {...rest} />
 })
 
+/**
+ * The chosen option in a row of options on a `bg-hover` track (Settings' Segmented and its look-alikes). A panel-coloured
+ * chip all but vanished on that track; the accent stands apart from it on every theme (tests/themes.test.ts).
+ */
+export const chosenOption = 'bg-accent text-accent-fg'
+
 export function Switch({
   checked,
   onChange,

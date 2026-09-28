@@ -12,7 +12,7 @@ import { useActiveTheme } from '@/theme/useTheme'
 import { ARTIFACT_META } from './ArtifactCard'
 import { CodeBlock, useCopy } from './CodeBlock'
 import { Markdown } from './Markdown'
-import { IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Spinner } from './ui'
+import { chosenOption, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Spinner } from './ui'
 
 interface Resolved {
   /** The chat the artifact belongs to (its links are previewed only if that chat allows it). */
@@ -304,7 +304,7 @@ export function ArtifactPanel() {
               <button
                 key={t}
                 onClick={() => panel.setTab(t)}
-                className={cn('rounded-md px-2.5 py-1 capitalize', tab === t ? 'bg-panel text-fg shadow-sm' : 'text-muted hover:text-fg')}
+                className={cn('rounded-md px-2.5 py-1 capitalize', tab === t ? chosenOption : 'text-muted hover:text-fg')}
               >
                 {t}
               </button>
