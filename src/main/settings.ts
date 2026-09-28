@@ -8,6 +8,8 @@ type StoredSettings = Omit<Settings, 'connection'> & { connection: Omit<Settings
 
 /** How many sub-agents one reply may run at the same time, unless the user sets it (or their settings file has none). */
 export const DEFAULT_SUB_AGENTS_AT_ONCE = 3
+/** How much of a sub-agent's reply comes back to the chat, in characters (about 4,000 words), unless the user sets it. */
+export const DEFAULT_SUB_AGENT_REPLY_CHARS = 24_000
 
 const DEFAULTS: StoredSettings = {
   userName: '',
@@ -24,7 +26,7 @@ const DEFAULTS: StoredSettings = {
   runner: { mode: 'ask', defaultOn: false, pypi: false, timeoutSec: 120 },
   chat: { maxRounds: 20 },
   code: { edits: 'ask', commands: 'ask', timeoutSec: 300, maxRounds: 60, defaultNetwork: 'none' },
-  delegate: { enabled: true, maxRounds: 20, parallel: DEFAULT_SUB_AGENTS_AT_ONCE },
+  delegate: { enabled: true, maxRounds: 20, parallel: DEFAULT_SUB_AGENTS_AT_ONCE, resultChars: DEFAULT_SUB_AGENT_REPLY_CHARS },
   debug: { record: true },
   links: { previews: false },
   usage: { showInHeader: true, headerWindow: 'auto', anchors: {}, monthlyDay: null, poolUsd: null }

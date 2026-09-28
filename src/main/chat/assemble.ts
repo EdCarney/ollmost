@@ -87,8 +87,13 @@ export interface AssembleInput {
   subAgents?: boolean
   /** How many sub-agents the reply may run at the same time (1 when unset: one after another). */
   subAgentsAtOnce?: number
-  /** This is a sub-agent's request: the task it was given. Replaces what a chat's reply gets that a task doesn't need. */
-  child?: { task: string } | null
+  /** Where a sub-agent's reply is cut when the reply has room for it all, in characters; unsaid when unset. */
+  subAgentReplyChars?: number
+  /**
+   * This is a sub-agent's request: the task it was given, and where its reply will be cut, in characters. Replaces
+   * what a chat's reply gets that a task doesn't need.
+   */
+  child?: { task: string; replyChars: number } | null
 }
 
 export interface Assembled {
@@ -121,11 +126,11 @@ function compactionPrompt(c: { summary: string; messages: number }): string {
 export function buildSystemPrompt(input: AssembleInput): string {
   const identity = { userName: input.userName, model: input.model, date: input.date, web: input.web, grants: input.grants }
   const parts = [input.codeSession ? codeSessionPrompt({ ...input.codeSession, ...identity }) : basePrompt(identity)]
-  if (input.child) parts.push(subAgentPrompt(input.child.task))
+  if (input.child) parts.push(subAgentPrompt(input.child.task, input.child.replyChars))
   if (input.web === 'on') parts.push(webPrompt())
   if (input.codeRunner && !input.codeSession) parts.push(codePrompt(input.codeRunner))
   if (input.mcpServers?.length) parts.push(mcpPrompt(input.mcpServers))
-  if (input.subAgents && !input.child) parts.push(subAgentsPrompt(input.subAgentsAtOnce ?? 1))
+  if (input.subAgents && !input.child) parts.push(subAgentsPrompt(input.subAgentsAtOnce ?? 1, input.subAgentReplyChars))
   // A sub-agent's task is all it needs of the conversation: the user's preferences, the project, the earlier
   // conversation and the artifacts prompt would only pull it away from the task.
   if (!input.child) {

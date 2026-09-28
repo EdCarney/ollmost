@@ -52,7 +52,7 @@ import { errorMessage, estimateTokens, now } from '../util'
 import { hasPrivateFiles } from './exposure'
 import { assemble, type HistoryTurn, promptBudget } from './assemble'
 import { TITLE_PROMPT } from './prompts'
-import { delegateTools, subAgentsAtOnce } from './delegate'
+import { delegateTools, subAgentReplyChars, subAgentsAtOnce } from './delegate'
 import { CHARS_PER_TOKEN, runRounds, toolsTokens } from './rounds'
 import { missingAbilities, registerToolProvider, replayCalls, settleToolEvent, type ToolContext, toolGrants, toolsFor } from './tools'
 import type { WebStatus } from './prompts'
@@ -437,6 +437,7 @@ async function generate(
       pastTools: toolsCapable,
       subAgents: tools?.some((t) => t.function.name === 'delegate') ?? false,
       subAgentsAtOnce: atOnce,
+      subAgentReplyChars: subAgentReplyChars(settings.delegate),
       project: project ? { name: project.name, instructions: project.instructions } : null,
       chatInstructions: conversation.instructions,
       knowledge: project ? projectKnowledge(project.id) : [],
