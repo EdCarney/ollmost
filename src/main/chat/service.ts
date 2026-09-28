@@ -315,9 +315,9 @@ async function generate(
     // What this reply may do, by the kind of conversation: a code session's row says so (#78).
     const policy = turnPolicy({
       mode: conversation.mode,
-      sources,
       artifacts: settings.artifacts.enabled && model.overrides.artifacts !== false,
       maxToolRounds: reply.maxToolRounds,
+      chatRounds: settings.chat.maxRounds,
       codeRounds: settings.code.maxRounds
     })
     const serverIds = sources.filter((s) => s.startsWith(MCP_SOURCE)).map((s) => s.slice(MCP_SOURCE.length))
@@ -394,7 +394,6 @@ async function generate(
         messageId,
         model: modelName,
         think,
-        maxRounds: policy.maxRounds,
         prompt: {
           userName: settings.userName,
           model: modelName,

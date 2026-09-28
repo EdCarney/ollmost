@@ -14,4 +14,12 @@ describe('settings saved by an earlier version', () => {
     expect(getSettings().delegate).toEqual({ enabled: false, maxRounds: 10, parallel: 3 })
     expect(getSettings().userName).toBe('Ed')
   })
+
+  it('read what they lack from the defaults: a chat’s reply gets up to 20 tool calls', () => {
+    openDatabase(':memory:')
+    // Saved before chats had their own tool-call limit.
+    writeSetting('app', { userName: 'Ed' })
+    expect(getSettings().chat).toEqual({ maxRounds: 20 })
+    expect(getSettings().userName).toBe('Ed')
+  })
 })

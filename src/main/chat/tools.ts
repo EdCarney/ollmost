@@ -44,7 +44,6 @@ export interface ToolContext {
     messageId: string
     model: string
     think: ThinkSetting | null
-    maxRounds: number
     /** The parts of the parent's prompt input a child's prompt is built from. */
     prompt: Pick<AssembleInput, 'userName' | 'model' | 'contextLength' | 'web' | 'mcpServers' | 'codeRunner' | 'codeSession' | 'skillIndex'>
     /** Tell the chat its usage moved: called on a child's own requests too, not only the parent's rounds. */
