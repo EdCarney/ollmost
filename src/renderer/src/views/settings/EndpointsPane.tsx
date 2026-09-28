@@ -355,7 +355,7 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
           {error && <span className="text-xs text-danger">{error}</span>}
         </div>
         {mine.length > 0 ? (
-          <div className="overflow-x-auto">
+          <div className="scroll-shadows-x overflow-x-auto">
             <table className="w-full text-left">
               <thead>
                 <tr className="text-xs text-subtle">
