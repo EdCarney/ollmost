@@ -9,7 +9,7 @@ export async function openFolder(root?: string): Promise<void> {
   try {
     // A session starts with the model new chats would use; it can be changed in the session's composer.
     const { draftModel, draftThink } = useApp.getState()
-    if (!draftModel) throw new Error('No model to start a session with. Check that Ollama is running and has a model.')
+    if (!draftModel) throw new Error('No model to start a session with. Check that a model server is running.')
     const folder = root ?? (await api.code.pickFolder())
     if (!folder) return
     const session = await api.code.create({ root: folder, model: draftModel, think: draftThink })

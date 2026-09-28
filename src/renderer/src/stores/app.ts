@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { DeepPartial } from '@shared/ipc'
+import type { SettingsTabId } from '@shared/palette'
 import { defaultThinkSetting, resolveThinkProfile } from '@shared/thinking'
 import type {
   Conversation,
@@ -17,7 +18,7 @@ import type {
 } from '@shared/types'
 import { api } from '@/lib/api'
 
-export type SettingsTab = 'general' | 'appearance' | 'models' | 'usage' | 'features' | 'tools' | 'data'
+export type SettingsTab = SettingsTabId
 
 export type Route =
   | { name: 'home' }

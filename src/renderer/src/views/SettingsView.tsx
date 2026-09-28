@@ -572,19 +572,22 @@ function FeaturesTab({ settings }: { settings: Settings }) {
         <Row
           label="Let models search the web and read pages"
           hint={
-            settings.ollamaAccount.hasKey ? (
-              'Uses your saved ollama.com API key.'
-            ) : (
-              <>
-                Needs an ollama.com API key.{' '}
-                <button
-                  className="text-accent hover:underline"
-                  onClick={() => useApp.getState().navigate({ name: 'settings', tab: 'usage' })}
-                >
-                  Add one in Usage & cost
-                </button>
-              </>
-            )
+            <>
+              Goes through ollama.com, for every model, including local ones.{' '}
+              {settings.ollamaAccount.hasKey ? (
+                'Uses your saved ollama.com API key.'
+              ) : (
+                <>
+                  Needs an ollama.com API key.{' '}
+                  <button
+                    className="text-accent hover:underline"
+                    onClick={() => useApp.getState().navigate({ name: 'settings', tab: 'usage' })}
+                  >
+                    Add one in Usage & cost
+                  </button>
+                </>
+              )}
+            </>
           }
         >
           <Switch checked={settings.web.enabled} onChange={(enabled) => update({ web: { enabled } })} />

@@ -28,12 +28,25 @@ export function HomeView() {
             <div className="mb-4 flex items-start gap-3 rounded-ollmost border border-line bg-panel p-4 text-sm">
               <TriangleAlert className="mt-0.5 size-4 shrink-0 text-danger" />
               <div className="flex-1">
-                <div className="font-medium">Ollmost can't find any models.</div>
-                <div className="mt-1 text-muted">
-                  {modelErrors.length
-                    ? modelErrors.map((e) => <div key={e.endpointId}>{e.message}</div>)
-                    : 'Make sure the Ollama app is running.'}
+                <div className="font-medium">
+                  {modelErrors.length ? "Couldn't load models from any endpoint" : "Ollmost can't find any models."}
                 </div>
+                {modelErrors.length ? (
+                  // Each message already names its endpoint and address.
+                  <ul className="mt-1 space-y-0.5 text-muted">
+                    {modelErrors.map((e) => (
+                      <li key={e.endpointId} className="selectable">
+                        {e.message}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="mt-1 text-muted">
+                    {settings?.endpoints.length
+                      ? 'None of your endpoints has a model yet. Add one, or add another endpoint in Settings → Models.'
+                      : 'No endpoints yet. Add one in Settings → Models.'}
+                  </div>
+                )}
               </div>
               <div className="flex gap-2">
                 <Button size="sm" onClick={() => loadModels(true)}>

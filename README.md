@@ -1,6 +1,6 @@
 # Ollmost
 
-A desktop chat app in the style of the Claude desktop app, running on your Ollama models (cloud and local).
+A desktop chat app in the style of the Claude desktop app, running on your Ollama models (cloud and local) and on OpenAI-compatible servers such as LM Studio, llama.cpp and vLLM.
 
 Features: projects (instructions + knowledge files), pinned chats and projects, searchable history, attachments (images, PDF, DOCX, XLSX, text/code), a model picker that adapts to each model's capabilities, thinking/effort controls, skills (`SKILL.md`), artifacts in a side panel, live token/cost and quota tracking, web search, and fully customisable themes.
 
@@ -12,7 +12,7 @@ On any Mac (Apple Silicon or Intel), without a checkout:
 curl -fsSL https://raw.githubusercontent.com/EdCarney/ollmost/main/scripts/install.sh | bash
 ```
 
-This downloads the right build from the latest [release](https://github.com/EdCarney/ollmost/releases/latest), installs it as `/Applications/Ollmost.app` (quitting and replacing any older copy), and opens it. Run it again to upgrade. You'll also need the [Ollama app](https://ollama.com) running; for cloud models, run `ollama signin` once.
+This downloads the right build from the latest [release](https://github.com/EdCarney/ollmost/releases/latest), installs it as `/Applications/Ollmost.app` (quitting and replacing any older copy), and opens it. Run it again to upgrade. You'll also need a model server: the [Ollama app](https://ollama.com) (for its cloud models, run `ollama signin` once), or an OpenAI-compatible server such as [LM Studio](https://lmstudio.ai). See [Model endpoints](#model-endpoints).
 
 To install somewhere else, such as your own `~/Applications` (which doesn't need an administrator account), set `OLLMOST_INSTALL_DIR`. The folder is created if it doesn't exist:
 
@@ -35,7 +35,7 @@ Two things don't carry over, because your Mac's keychain tied them to Kiln: your
 
 ## Run it from source
 
-Requirements: macOS, Node 22+, and the [Ollama app](https://ollama.com) running. For cloud models, run `ollama signin` once.
+Requirements: macOS, Node 22+, and the [Ollama app](https://ollama.com), or an OpenAI-compatible server (see [Model endpoints](#model-endpoints)). For Ollama cloud models, run `ollama signin` once.
 
 ```sh
 npm install
@@ -49,6 +49,19 @@ The app icon is an Icon Composer document, `resources/Ollmost.icon`. After chang
 
 Your data lives in `~/Library/Application Support/Ollmost/`: a SQLite database (`ollmost.db`), uploaded files, and your own skills (`skills/`).
 
+## Model endpoints
+
+Ollmost talks to Ollama natively, and to any server that speaks the OpenAI chat-completions API. The ones it's built for run on your Mac: [LM Studio](https://lmstudio.ai) (start its server in the Developer tab), llama.cpp's `llama-server`, and vLLM. LM Studio is the one checked against a live server so far; support for llama.cpp and vLLM follows their documentation. You can set up several endpoints at once in Settings → Models. Every model from every endpoint is in one picker (the chips under its search box filter by endpoint), and each chat remembers which endpoint its model is on, so you can switch a chat from one to another.
+
+- **Adding one.** Settings → Models → + Add endpoint. Type the address (presets: Ollama `:11434`, LM Studio `:1234`, llama.cpp `:8080`, vLLM `:8000`), a key if the server needs one, then Check. Ollmost works out what kind of server it is and what its models can do, and says so before you Add it.
+- **What works with every endpoint.** Web search and page reading (they go through ollama.com with your ollama.com key, for every model, including local ones), MCP servers, the code runner, skills, code sessions and sub-agents, with any model that can call tools.
+- **Capabilities.** Where a server doesn't report what a model can do, Ollmost assumes tools on, vision off, and the endpoint's "context when not reported" (8,192 tokens unless you change it). Each model's Thinking, Tools, Vision and Context can be overridden in its endpoint's table in Settings → Models. If a server turns tools down, Ollmost switches them off for that model and says which server flag they need.
+- **Thinking.** Reasoning is shown whenever a server sends it. The thinking control is filled in where the server reports its options (LM Studio); elsewhere it only shows reasoning until you pick a profile for the model.
+- **Cost.** Only Ollama cloud models are priced. A model on this Mac says `local`; anything else says `cost not tracked`.
+- **Keys.** An endpoint's own key is only ever sent to that endpoint, and your ollama.com key only to ollama.com.
+- **Removing one** asks first and says what goes: its chats keep their history and need a new model picked; its key and model settings are deleted.
+- **Going back to an older Ollmost.** Chats now store their model as `endpoint/model`, which an older version can't read. The upgrade backed your database up first, to `backups/ollmost-before-endpoints-<date>.db` in the data folder: to go back, quit Ollmost, put that file back as `ollmost.db`, and delete `ollmost.db-wal` and `ollmost.db-shm` beside it (a leftover copy of the newer data would otherwise be applied to the older one).
+
 ## How it works
 
 ```
@@ -61,7 +74,7 @@ src/renderer/    React UI: views/, components/, stores/ (zustand), theme/
 tests/           Vitest unit tests      e2e/   live Playwright run against real models
 ```
 
-- **Models.** The local daemon's `/api/tags` is merged with the ollama.com catalog. Cloud models are addressed as `name:cloud` / `name:tag-cloud`, so nothing needs pulling. `/api/show` capabilities drive the UI: the image warning, the thinking control, and automatic skills.
+- **Models.** Each endpoint lists its own models (see [Model endpoints](#model-endpoints)). For Ollama, the daemon's `/api/tags` is merged with the ollama.com catalog when the endpoint's "Show the Ollama cloud catalog" is on. Cloud models are addressed as `name:cloud` / `name:tag-cloud`, so nothing needs pulling. `/api/show` capabilities drive the UI: the image warning, the thinking control, and automatic skills.
 - **Thinking.** `src/shared/thinking.ts` maps each model family to a profile, based on probing the models:
   - gpt-oss: effort levels only; it can't be turned off.
   - glm: always on, because `think:false` leaks its reasoning into the reply.
@@ -126,18 +139,18 @@ tests/           Vitest unit tests      e2e/   live Playwright run against real 
   - An opt-in setting (Settings → Web, artifacts & skills) adds the page's title, description and image, fetched from your Mac. Not in chats with tools or files, though: a link the model writes there could carry their contents out (`https://evil.example/?d=…`), so those cards show the destination only.
   - Local-network and loopback addresses are never fetched, including after redirects.
 - **Debugger.** The bug icon in a chat's header, or ⌘⇧D, opens a separate **Ollmost Debugger** window. It shows every request the chat made (each chat round, tool call and title) live, grouped by turn. For each request:
-  - **Overview:** timings (first byte, first token, total, plus Ollama's own load/prompt/generation times when reported), prompt tokens counted by Ollama vs Ollmost's estimate, cost, `done_reason`, and stream chunk count.
+  - **Overview:** timings (first byte, first token, total, plus the server's own load/prompt/generation times when it reports them), prompt tokens counted by the server vs Ollmost's estimate, cost, the finish reason, and stream chunk count.
   - **Prompt anatomy:** where the tokens go (system sections, history, this turn, tool definitions, images), a context-window meter, and every message readable.
-  - **Request, Response, Tools:** the exact JSON sent (image bytes replaced by size placeholders; API keys are never recorded), the output with thinking and tool calls, Ollama's final stats, and the tool schemas offered.
-  - **Replay:** edit the recorded request and resend it without streaming, like a playground. It's recorded as a replay and counted as usage.
+  - **Request, Response, Tools:** the exact JSON sent (image bytes replaced by size placeholders; API keys are never recorded), the output with thinking and tool calls, the server's final stats, and the tool schemas offered.
+  - **Replay:** edit the recorded request and resend it, without streaming, to the endpoint it was sent to (or be told that endpoint no longer exists), like a playground. It's recorded as a replay and counted as usage.
 
-  The debugger can also copy a request as `curl` (keys appear as `$OLLAMA_API_KEY`), export traces as JSON, and open Chromium DevTools. Traces are stored locally, deleted with their chat, and capped at the newest 500. Turn recording off under Settings → Data.
+  The debugger can also copy a request as `curl` (keys appear as environment variables: `$OLLAMA_API_KEY` for ollama.com, `$LM_STUDIO_API_KEY` for an endpoint with the id `lm-studio`, and `$OLLAMA_ENDPOINT_API_KEY` for a key on an endpoint whose id is `ollama`, since `$OLLAMA_API_KEY` is for ollama.com only), export traces as JSON, and open Chromium DevTools. Traces are stored locally, deleted with their chat, and capped at the newest 500. Turn recording off under Settings → Data.
 - **Usage & cost.** The title bar shows two chips.
-  - **This chat:** tokens and estimated cost so far, including retries and title generation, updated as each round of tool calls ends rather than only when the reply does. Click it for a per-model breakdown and how full the context window is.
-  - **Your Ollama quota:** % used, and time left until the next reset. Its mini bar also marks how much of the period has passed.
+  - **This chat:** tokens and estimated cost so far (`local` or `not tracked` when nothing was priced), including retries and title generation, updated as each round of tool calls ends rather than only when the reply does. Click it for a per-model breakdown and how full the context window is.
+  - **Your Ollama quota** (when your ollama.com key is saved, or as a prompt to add one when you have an Ollama endpoint): % used, and time left until the next reset. Its mini bar also marks how much of the period has passed.
 
   Details:
-  - Costs use Ollama's published per-token prices. Ollmost re-reads them daily from ollama.com/pricing and falls back to a bundled snapshot. Each request is also logged locally (`usage_events`) for Settings → Usage & cost.
+  - Costs use Ollama's published per-token prices, for Ollama cloud models only; a model on this Mac says `local`, and one elsewhere `cost not tracked`. Ollmost re-reads them at most daily from ollama.com/pricing, when an Ollama endpoint is on, and falls back to a bundled snapshot. Each request is also logged locally (`usage_events`) for Settings → Usage & cost.
   - Quota comes from `ollama.com/api/usage`, which is undocumented and **needs an ollama.com API key** (Settings → Usage & cost). The Ollama app's sign-in doesn't cover it.
   - That endpoint doesn't say when limits reset. Ollmost dates a reset itself when it sees usage drop, or you can enter the time shown on ollama.com/settings.
 - **Theming.** Every colour, font and radius is a CSS variable (`src/renderer/src/index.css`), and code highlighting, Mermaid diagrams and the debugger window all take their colours from the active theme. Themes are JSON with a light and a dark palette (or a single palette, marked `only`); you can edit, import and export them from Settings → Appearance. Built in: Clay, Nord, Solarized, Gruvbox, High contrast, Catppuccin (Latte/Mocha), GitHub, Dracula (with Alucard), Rosé Pine (with Dawn) and Hack (dark only, in the Hack typeface).
@@ -176,7 +189,7 @@ The e2e run checks:
 - the command palette: a theme previewed live from its choice list, put back on Escape and on a click outside, kept on Enter, and a theme picked in Settings showing after one chosen in the palette
 - coming from Kiln: migrating data on first launch, waiting for Kiln to quit, and the one-time notice
 
-Screenshots go to `e2e/shots/`. Set `OLLMOST_DEBUG=1` to log every request Ollmost sends to Ollama to `debug.log` in the data folder, along with the PATH Ollmost gives processes it starts. Apps opened from the Dock get a bare PATH, so Ollmost reads the one your login shell sets up.
+Screenshots go to `e2e/shots/`. Set `OLLMOST_DEBUG=1` to log every request Ollmost sends to a model server to `debug.log` in the data folder, along with the PATH Ollmost gives processes it starts. Apps opened from the Dock get a bare PATH, so Ollmost reads the one your login shell sets up.
 
 ## Releasing
 
@@ -223,3 +236,8 @@ Builds are signed ad hoc (`identity: '-'` in `electron-builder.yml`), which is e
 - **A repository's own clean filter still runs when the Changes panel refreshes.** It's confined by the sandbox like any of the session's own git commands; only the fsmonitor, hooks, an external diff and textconv are switched off for the panel's git.
 - **Code sessions are macOS only.** They need the same sandbox as the code runner.
 - **tok/s is measured on this Mac when a server doesn't report it.** Ollama's cloud models, LM Studio and vLLM send no generation time, so their replies' tok/s runs from the first token to the end, network time included. A request that streamed no text (only a tool call), or finished within 50 ms of its first token, is left out of the figure.
+- **Cost tracking covers Ollama cloud models only.** Other endpoints show `local` (on this Mac) or `cost not tracked`; there's no price editor, and costs a provider reports aren't read.
+- **The thinking control is opt-in on OpenAI-compatible servers.** Ollmost shows whatever reasoning the server streams, but only sends a thinking setting once you pick a profile for the model in Settings → Models (LM Studio's reported options are filled in for you).
+- **vLLM needs flags for tools.** Start it with `--enable-auto-tool-choice --tool-call-parser <the parser for your model>`; without them it turns tool requests down, and Ollmost switches tools off for that model.
+- **llama.cpp needs `--jinja` for tools.** Without it `llama-server` can't use tools, and Ollmost switches them off for that model.
+- **Remote and paid OpenAI-compatible APIs aren't officially supported.** You can add one and it will work, but its replies say "cost not tracked", and only a Bearer key is supported.
