@@ -1,4 +1,5 @@
-import type { ChatUsage, ModelBilling, TokenTotals, UsageSummary } from '@shared/types'
+import { describeUsageModel } from '@shared/billing'
+import type { ChatUsage, Endpoint, ModelBilling, TokenTotals, UsageByModel, UsageSummary } from '@shared/types'
 import { now, uid } from '../util'
 import { getConversation } from './conversations'
 import { all, get, run } from './index'
@@ -41,26 +42,39 @@ interface TotalsRow {
   requests: number
 }
 
+// Local and untracked rows cost 0; only a priced row without a price leaves a total unknown.
 const TOTALS_SQL = `COALESCE(SUM(prompt_tokens), 0) AS prompt, COALESCE(SUM(completion_tokens), 0) AS completion,
-  SUM(cost_usd) AS cost, SUM(cost_usd IS NULL) AS unpriced, MAX(estimated) AS estimated, COUNT(*) AS requests`
+  SUM(cost_usd) AS cost, SUM(billing = 'priced' AND cost_usd IS NULL) AS unpriced, MAX(estimated) AS estimated,
+  COUNT(*) AS requests`
 
 function totals(r: TotalsRow | undefined): TokenTotals & { requests: number } {
   return {
     promptTokens: r?.prompt ?? 0,
     completionTokens: r?.completion ?? 0,
     // One unpriced cloud request makes the total unknowable rather than silently low.
-    costUsd: r && r.unpriced ? null : (r?.cost ?? 0),
+    costUsd: r?.unpriced ? null : (r?.cost ?? 0),
     estimated: !!r?.estimated,
     requests: r?.requests ?? 0
   }
 }
 
-export function conversationUsage(conversationId: string): ChatUsage {
+type ModelRow = TotalsRow & { model: string; billing: ModelBilling }
+
+/** Per-model rows with each model's name and endpoint; a model billed two ways (its endpoint moved) gets a row for each. */
+function byModel(rows: ModelRow[], endpoints: readonly Endpoint[]): UsageByModel[] {
+  return rows.map((r) => ({ model: r.model, billing: r.billing, ...describeUsageModel(r.model, endpoints), ...totals(r) }))
+}
+
+export function conversationUsage(conversationId: string, endpoints: readonly Endpoint[]): ChatUsage {
   const total = totals(get<TotalsRow>(`SELECT ${TOTALS_SQL} FROM usage_events WHERE conversation_id = ?`, conversationId))
-  const byModel = all<TotalsRow & { model: string }>(
-    `SELECT model, ${TOTALS_SQL} FROM usage_events WHERE conversation_id = ? GROUP BY model ORDER BY SUM(completion_tokens) DESC`,
-    conversationId
-  ).map((r) => ({ model: r.model, ...totals(r) }))
+  const models = byModel(
+    all<ModelRow>(
+      `SELECT model, billing, ${TOTALS_SQL} FROM usage_events WHERE conversation_id = ?
+       GROUP BY model, billing ORDER BY SUM(completion_tokens) DESC`,
+      conversationId
+    ),
+    endpoints
+  )
   // A compacted chat's older rows no longer reflect what the next request sends, and a row whose message
   // was later deleted (an Edit or Retry) never went out either; skip both so the meter reads null, not a
   // stale number, until a real request lands.
@@ -76,29 +90,32 @@ export function conversationUsage(conversationId: string): ChatUsage {
     compactedAt
   )
   const { requests: _requests, ...rest } = total
-  return { ...rest, byModel, lastContextTokens: last?.tokens ?? null }
+  return { ...rest, byModel: models, lastContextTokens: last?.tokens ?? null }
 }
 
 /**
  * Totals over the last `days`, or between `sinceMs` and `untilMs` when given (the account's own period, to sit
  * beside its spend; a reported period may have ended before now).
  */
-export function usageSummary(days: number, sinceMs?: number, untilMs?: number | null): UsageSummary {
+export function usageSummary(endpoints: readonly Endpoint[], days: number, sinceMs?: number, untilMs?: number | null): UsageSummary {
   const since = sinceMs ?? Date.now() - days * 86_400_000
   const until = untilMs ?? Number.MAX_SAFE_INTEGER
   const total = totals(get<TotalsRow>(`SELECT ${TOTALS_SQL} FROM usage_events WHERE created_at >= ? AND created_at < ?`, since, until))
-  const byModel = all<TotalsRow & { model: string }>(
-    `SELECT model, ${TOTALS_SQL} FROM usage_events WHERE created_at >= ? AND created_at < ?
-     GROUP BY model ORDER BY SUM(cost_usd) DESC, SUM(completion_tokens) DESC`,
-    since,
-    until
-  ).map((r) => ({ model: r.model, ...totals(r) }))
-  const byDay = all<{ day: string; cost: number | null; tokens: number }>(
+  const models = byModel(
+    all<ModelRow>(
+      `SELECT model, billing, ${TOTALS_SQL} FROM usage_events WHERE created_at >= ? AND created_at < ?
+       GROUP BY model, billing ORDER BY SUM(cost_usd) DESC, SUM(completion_tokens) DESC`,
+      since,
+      until
+    ),
+    endpoints
+  )
+  const byDay = all<{ day: string; cost: number | null; unpriced: number | null; tokens: number }>(
     `SELECT date(created_at / 1000, 'unixepoch', 'localtime') AS day, SUM(cost_usd) AS cost,
-       SUM(prompt_tokens + completion_tokens) AS tokens
+       SUM(billing = 'priced' AND cost_usd IS NULL) AS unpriced, SUM(prompt_tokens + completion_tokens) AS tokens
      FROM usage_events WHERE created_at >= ? AND created_at < ? GROUP BY day ORDER BY day`,
     since,
     until
-  ).map((r) => ({ day: r.day, costUsd: r.cost ?? 0, tokens: r.tokens }))
-  return { days, total, byModel, byDay }
+  ).map((r) => ({ day: r.day, costUsd: r.unpriced ? null : (r.cost ?? 0), tokens: r.tokens }))
+  return { days, total, byModel: models, byDay }
 }

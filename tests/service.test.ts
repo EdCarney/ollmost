@@ -1007,7 +1007,7 @@ describe('/compact', () => {
       try {
         await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
         // The meter reads null right after compacting; it doesn't still count the pre-compaction reply.
-        expect(conversationUsage(r.conversation.id).lastContextTokens).toBeNull()
+        expect(conversationUsage(r.conversation.id, getSettings().endpoints).lastContextTokens).toBeNull()
       } finally {
         restore()
       }
@@ -2276,7 +2276,7 @@ describe('sub-agent settings and usage', () => {
       billing: 'priced',
       estimated: false
     })
-    const u = conversationUsage(c.id)
+    const u = conversationUsage(c.id, getSettings().endpoints)
     expect(u.promptTokens + u.completionTokens).toBe(5160)
     expect(u.lastContextTokens).toBe(110)
   })
@@ -2377,7 +2377,7 @@ describe('runRounds', () => {
         { kind: 'delegate', message_id: message.id },
         { kind: 'delegate', message_id: message.id }
       ])
-      expect(conversationUsage(conversation.id).promptTokens).toBeGreaterThan(0)
+      expect(conversationUsage(conversation.id, getSettings().endpoints).promptTokens).toBeGreaterThan(0)
     } finally {
       off()
     }

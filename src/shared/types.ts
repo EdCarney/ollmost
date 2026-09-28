@@ -416,14 +416,24 @@ export interface AccountUsage {
 export interface TokenTotals {
   promptTokens: number
   completionTokens: number
-  /** Null when some usage came from a cloud model without a known price. */
+  /** Null when a priced (Ollama cloud) request had no known price. Local and untracked requests count as 0. */
   costUsd: number | null
   /** At least one request had no token counts (e.g. stopped mid-stream) and was estimated. */
   estimated: boolean
 }
 
+/** One model's usage: its key, its name at its endpoint, the endpoint as it is now, and how its requests were billed. */
+export interface UsageByModel extends TokenTotals {
+  model: string
+  name: string
+  /** A removed endpoint's rows read `{ id: '', name: 'Removed endpoint' }`. */
+  endpoint: ModelInfo['endpoint']
+  billing: ModelBilling
+  requests: number
+}
+
 export interface ChatUsage extends TokenTotals {
-  byModel: Array<TokenTotals & { model: string; requests: number }>
+  byModel: UsageByModel[]
   /** Tokens the most recent request sent + received, for a context-window meter. */
   lastContextTokens: number | null
 }
@@ -431,8 +441,9 @@ export interface ChatUsage extends TokenTotals {
 export interface UsageSummary {
   days: number
   total: TokenTotals & { requests: number }
-  byModel: Array<TokenTotals & { model: string; requests: number }>
-  byDay: Array<{ day: string; costUsd: number; tokens: number }>
+  byModel: UsageByModel[]
+  /** A day's cost is null when one of its priced requests had no price. */
+  byDay: Array<{ day: string; costUsd: number | null; tokens: number }>
 }
 
 // ---- Debugger traces -----------------------------------------------------

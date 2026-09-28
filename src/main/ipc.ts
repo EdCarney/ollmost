@@ -288,7 +288,9 @@ const impl: Impl = {
     list: async (opts) => listConversations(opts),
     get: async (id) => {
       const conversation = getConversation(id)
-      return conversation ? { conversation, messages: listMessages(id), artifacts: listArtifacts(id), usage: conversationUsage(id) } : null
+      return conversation
+        ? { conversation, messages: listMessages(id), artifacts: listArtifacts(id), usage: conversationUsage(id, getSettings().endpoints) }
+        : null
     },
     update: async (id, { stage, ...patch }) => {
       // The stage is the reply service's (it keeps or drops the plan); the rest of the patch is a plain update.
@@ -382,7 +384,7 @@ const impl: Impl = {
 
   usage: {
     account: (refresh) => getAccountUsage(refresh),
-    summary: async (days, since, until) => usageSummary(days, since, until),
+    summary: async (days, since, until) => usageSummary(getSettings().endpoints, days, since, until),
     raw: async () => lastRawUsage(),
     prices: async () => getPriceTable(),
     refreshPrices: () => refreshPrices(true)

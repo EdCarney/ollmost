@@ -413,7 +413,7 @@ async function generate(
           codeSession: codeSessionForPrompt,
           skillIndex
         },
-        onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
+        onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) })
       }
     }
     const grants = toolGrants(toolContext)
@@ -486,7 +486,7 @@ async function generate(
       traceKind: 'chat',
       onDelta: (d) => emit({ type: 'delta', conversationId, messageId, ...d }),
       onToolEvent: (index, event) => emit({ type: 'tool', conversationId, messageId, index, event }),
-      onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) }),
+      onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) }),
       onLoadedSkill: (id) => {
         // Remember it for later turns so it doesn't have to be reloaded.
         if (loadedIds.includes(id)) return
@@ -552,7 +552,7 @@ async function generate(
     message,
     artifacts: listArtifacts(conversationId),
     conversation: getConversation(conversationId)!,
-    usage: conversationUsage(conversationId)
+    usage: conversationUsage(conversationId, getSettings().endpoints)
   })
 
   // A plain Stop still titles a new chat; a stop for a delete or a quit doesn't start a title request.
@@ -782,7 +782,7 @@ async function summarizeOnce(
       billing: info.billing,
       estimated: res.usage.completion === undefined
     })
-    if (chat) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
+    if (chat) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) })
     if (!summary) throw new Error('The model gave no summary; nothing was compacted.')
     trace.finish({
       status: 'ok',
@@ -866,7 +866,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       billing: info.billing,
       estimated: res.usage.completion === undefined
     })
-    emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
+    emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) })
     titleTrace.finish({
       status: 'ok',
       response: { content: res.content, thinking: res.thinking || undefined, final: res.raw },

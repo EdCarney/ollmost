@@ -1,5 +1,6 @@
 import { Bug, Download, Search, Trash2, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { traceCostTotal } from '@shared/billing'
 import { formatCost } from '@shared/usage'
 import { labelForKey } from '@shared/modelLabel'
 import type { TraceDetail, TraceKind, TraceSummary } from '@shared/types'
@@ -93,7 +94,8 @@ export function DebugApp() {
       requests: traces.length,
       prompt: done.reduce((n, t) => n + (t.promptTokens ?? 0), 0),
       completion: done.reduce((n, t) => n + (t.completionTokens ?? 0), 0),
-      cost: done.reduce((n, t) => n + (t.costUsd ?? 0), 0)
+      // Unknown only when a priced request had no price, as in Settings → Usage & cost.
+      cost: traceCostTotal(done)
     }
   }, [traces])
 
@@ -161,7 +163,7 @@ export function DebugApp() {
           <div className="flex-1" />
           <span className="truncate text-xs tabular-nums text-subtle">
             {totals.requests} requests · {formatTokens(totals.prompt)} in / {formatTokens(totals.completion)} out ·{' '}
-            {formatCost(totals.cost)}
+            {totals.cost === null ? 'cost unknown' : formatCost(totals.cost)}
           </span>
           <Tooltip content={settings.debug.record ? 'Recording every request' : 'Recording is paused'}>
             <label className="flex items-center gap-1.5 text-xs text-muted">

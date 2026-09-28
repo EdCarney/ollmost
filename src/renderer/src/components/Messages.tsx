@@ -22,9 +22,9 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { parseMessage, parseMessageRanges, typeForCodeLanguage } from '@shared/artifactParser'
 import { diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
-import type { Artifact, Compaction, Endpoint, Message, ThinkingSegment, ToolDecision, ToolEvent } from '@shared/types'
+import type { Artifact, Compaction, Endpoint, Message, MessageStats, ThinkingSegment, ToolDecision, ToolEvent } from '@shared/types'
 import { IMAGE_FILE, openWith } from '@shared/workspace'
-import { formatCost } from '@shared/usage'
+import { billingLabel, legacyBilling } from '@shared/billing'
 import { labelForKey } from '@shared/modelLabel'
 import { api } from '@/lib/api'
 import { cn, formatBytes, formatDuration, formatTokens } from '@/lib/format'
@@ -541,6 +541,12 @@ export function ToolGroup({
   )
 }
 
+/** The reply's cost as its stats say it: dollars (≈ when estimated), 'local', 'cost not tracked', or nothing. */
+function replyCost(s: MessageStats): string | null {
+  const label = billingLabel(s.billing ?? legacyBilling(s.costUsd), s.costUsd ?? null)
+  return label?.startsWith('$') && s.estimated ? `≈${label}` : label
+}
+
 function statsLine(message: Message, endpoints: readonly Endpoint[]): string {
   const s = message.stats
   if (!s) return labelForKey(message.model, endpoints)
@@ -549,7 +555,7 @@ function statsLine(message: Message, endpoints: readonly Endpoint[]): string {
     s.tokensPerSecond && `${s.tokensPerSecond.toFixed(0)} tok/s`,
     s.completionTokens && `${formatTokens(s.completionTokens)} output tokens`,
     s.durationMs && formatDuration(s.durationMs),
-    s.costUsd === 0 ? 'local' : s.costUsd != null ? `${s.estimated ? '≈' : ''}${formatCost(s.costUsd)}` : null,
+    replyCost(s),
     s.truncatedHistory && `${s.truncatedHistory} older messages left out to fit the context window`,
     s.shortenedToolResults &&
       `${s.shortenedToolResults} earlier tool ${s.shortenedToolResults === 1 ? 'result' : 'results'} shortened to fit the context window`
