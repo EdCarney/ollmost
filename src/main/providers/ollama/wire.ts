@@ -1,9 +1,27 @@
 // Ollama's HTTP API: /api/chat as NDJSON, /api/tags and /api/show. Only the adapter (adapter.ts) and the model list
 // (models.ts) call it; everything else speaks the neutral types in ../types.ts.
-import { getApiKey, ollamaConnection } from '../../settings'
+import { OLLAMA_CLOUD_URL } from '@shared/endpoints'
+import type { ModelWhere } from '@shared/types'
 import type { ToolDef } from '../types'
 
-export const OLLAMA_CLOUD = 'https://ollama.com'
+export const OLLAMA_CLOUD = OLLAMA_CLOUD_URL
+
+/** One Ollama server, as a request sees it. adapter.ts's ollamaTarget() makes one from an endpoint. */
+export interface OllamaTarget {
+  /** The server's root, without a trailing slash. */
+  base: string
+  /** The endpoint's name, for errors ("Can't reach GPU box at …"). */
+  name: string
+  /** The one key this server may be sent, as a header; empty when there's none. */
+  headers: Record<string, string>
+  /** The server is ollama.com itself. */
+  cloud: boolean
+  /** A key of the endpoint's own is sent (an Ollama behind a proxy that checks one). */
+  keyed: boolean
+}
+
+// ollama.com's public catalog. No key goes with it: an endpoint's key must never reach ollama.com.
+const CATALOG: OllamaTarget = { base: OLLAMA_CLOUD, name: 'ollama.com', headers: {}, cloud: true, keyed: false }
 
 /** A tool call as Ollama sends it. Newer versions give each call an `id` and say which came first (`index`). */
 export interface OllamaToolCall {
@@ -52,15 +70,6 @@ export class OllamaError extends Error {
   }
 }
 
-function target(): { base: string; headers: Record<string, string> } {
-  const c = ollamaConnection()
-  if (c.mode === 'direct') {
-    const key = getApiKey()
-    return { base: OLLAMA_CLOUD, headers: key ? { Authorization: `Bearer ${key}` } : {} }
-  }
-  return { base: c.host.replace(/\/+$/, ''), headers: {} }
-}
-
 const NOT_ENOUGH_MEMORY_RE = /model requires more system memory/i
 
 /** Ollama's daemon says the model needs more RAM than the machine has; point at the two real fixes. */
@@ -71,7 +80,7 @@ function notEnoughMemory(detail: string, model?: string): string | undefined {
     : `Not enough memory to load the model. Lower the context window in Settings → Models, or pick a smaller or more quantized model.`
 }
 
-function friendly(status: number, body: string, model?: string): OllamaError {
+function friendly(t: OllamaTarget, status: number, body: string, model?: string): OllamaError {
   let detail = body
   try {
     detail = (JSON.parse(body) as { error?: string }).error ?? body
@@ -80,40 +89,41 @@ function friendly(status: number, body: string, model?: string): OllamaError {
   }
   if (status === 401 || status === 403)
     return new OllamaError(
-      ollamaConnection().mode === 'direct'
-        ? 'Ollama cloud rejected the API key. Check it in Settings → Models.'
-        : 'Ollama cloud needs you to sign in. Run `ollama signin` in a terminal, then retry.',
+      t.cloud
+        ? 'Ollama cloud rejected the API key. Check it in Settings → Models → ollama.com account.'
+        : t.keyed
+          ? `${t.name} rejected the API key. Check it in Settings → Models → ${t.name}.`
+          : 'Ollama cloud needs you to sign in. Run `ollama signin` in a terminal, then retry.',
       status
     )
   if (status === 429) return new OllamaError('Ollama cloud usage limit reached. Try again later, or switch to a local model.', status)
   if (status === 404 && /not found/i.test(detail))
-    return new OllamaError(model ? `Model “${model}” was not found by Ollama.` : detail, status)
-  return new OllamaError(notEnoughMemory(detail, model) ?? (detail || `Ollama returned HTTP ${status}`), status)
+    return new OllamaError(model ? `Model “${model}” was not found by ${t.name}.` : detail, status)
+  // 4b69183: Ollama's "model requires more system memory" in plain English, naming the model.
+  return new OllamaError(notEnoughMemory(detail, model) ?? (detail || `${t.name} returned HTTP ${status}`), status)
 }
 
 // Short calls (model lists, /api/show) should never hang the UI on a wedged daemon.
 const METADATA_TIMEOUT_MS = 30_000
 
-async function request(path: string, init: RequestInit & { model?: string; base?: string } = {}): Promise<Response> {
-  const { base, headers } = target()
-  const url = `${init.base ?? base}${path}`
+async function request(t: OllamaTarget, path: string, init: RequestInit & { model?: string } = {}): Promise<Response> {
   let res: Response
   try {
-    res = await fetch(url, {
+    res = await fetch(`${t.base}${path}`, {
       ...init,
       signal: init.signal ?? AbortSignal.timeout(METADATA_TIMEOUT_MS),
-      headers: { 'Content-Type': 'application/json', ...headers, ...(init.headers as Record<string, string>) }
+      headers: { 'Content-Type': 'application/json', ...t.headers, ...(init.headers as Record<string, string>) }
     })
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err
-    if ((err as Error).name === 'TimeoutError') throw new OllamaError('Ollama took too long to respond. Try again in a moment.')
+    if ((err as Error).name === 'TimeoutError') throw new OllamaError(`${t.name} took too long to respond. Try again in a moment.`)
     throw new OllamaError(
-      ollamaConnection().mode === 'direct'
+      t.cloud
         ? `Can't reach ${OLLAMA_CLOUD}. Check your internet connection.`
-        : `Can't reach Ollama at ${base}. Is the Ollama app running?`
+        : `Can't reach ${t.name} at ${t.base}. Is the Ollama app running?`
     )
   }
-  if (!res.ok) throw friendly(res.status, await res.text().catch(() => ''), init.model)
+  if (!res.ok) throw friendly(t, res.status, await res.text().catch(() => ''), init.model)
   return res
 }
 
@@ -133,11 +143,11 @@ export interface StreamTimeouts {
 export const STREAM_TIMEOUTS: StreamTimeouts = { firstByteMs: 10 * 60_000, idleMs: 3 * 60_000, toolIdleMs: 30 * 60_000 }
 
 /**
- * The long tool-call allowance is only for local models: cloud models finish a tool call's arguments in
+ * The long tool-call allowance is for models that run on a machine: a cloud model finishes a tool call's arguments in
  * seconds, so a long silence there is always a dead connection.
  */
-export function streamTimeoutsFor(location: 'cloud' | 'local'): StreamTimeouts {
-  return location === 'local' ? STREAM_TIMEOUTS : { ...STREAM_TIMEOUTS, toolIdleMs: STREAM_TIMEOUTS.idleMs }
+export function streamTimeoutsFor(where: ModelWhere): StreamTimeouts {
+  return where === 'cloud' ? { ...STREAM_TIMEOUTS, toolIdleMs: STREAM_TIMEOUTS.idleMs } : STREAM_TIMEOUTS
 }
 
 function parseChunk(line: string): ChatChunk {
@@ -154,6 +164,7 @@ function parseChunk(line: string): ChatChunk {
  * Aborting `signal` still surfaces as an AbortError, which callers treat as the user stopping.
  */
 export async function* chatStream(
+  t: OllamaTarget,
   body: ChatBody,
   signal: AbortSignal,
   timeouts: StreamTimeouts = STREAM_TIMEOUTS
@@ -174,20 +185,20 @@ export async function* chatStream(
 
   arm(
     timeouts.firstByteMs,
-    `Ollama didn't start replying within ${Math.round(timeouts.firstByteMs / 60_000)} minutes. Check that it's running, then retry.`
+    `${t.name} didn't start replying within ${Math.round(timeouts.firstByteMs / 60_000)} minutes. Check that it's running, then retry.`
   )
   try {
-    const res = await request('/api/chat', {
+    const res = await request(t, '/api/chat', {
       method: 'POST',
       body: JSON.stringify({ ...body, stream: true }),
       signal: inner.signal,
       model: body.model
     })
-    if (!res.body) throw new OllamaError('Ollama returned an empty response')
+    if (!res.body) throw new OllamaError(`${t.name} returned an empty response`)
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
     const idleMs = body.tools?.length ? timeouts.toolIdleMs : timeouts.idleMs
-    const idle = `Ollama stopped responding in the middle of the reply (nothing for ${Math.round(idleMs / 60_000)} minutes).`
+    const idle = `${t.name} stopped responding in the middle of the reply (nothing for ${Math.round(idleMs / 60_000)} minutes).`
     let buffer = ''
     let finished = false
     for (;;) {
@@ -213,7 +224,7 @@ export async function* chatStream(
       if (chunk.done) finished = true
       yield chunk
     }
-    if (!finished) throw new OllamaError('The connection to Ollama dropped before the reply finished.')
+    if (!finished) throw new OllamaError(`The connection to ${t.name} dropped before the reply finished.`)
   } catch (err) {
     if (stalled && !signal.aborted) throw new OllamaError(stalled)
     throw err
@@ -225,9 +236,9 @@ export async function* chatStream(
   }
 }
 
-export async function chatOnce(body: ChatBody, opts: { signal?: AbortSignal; timeoutMs: number }): Promise<ChatChunk> {
+export async function chatOnce(t: OllamaTarget, body: ChatBody, opts: { signal?: AbortSignal; timeoutMs: number }): Promise<ChatChunk> {
   const timeout = AbortSignal.timeout(opts.timeoutMs)
-  const res = await request('/api/chat', {
+  const res = await request(t, '/api/chat', {
     method: 'POST',
     body: JSON.stringify({ ...body, stream: false }),
     signal: opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout,
@@ -242,10 +253,13 @@ export interface TagModel {
   details?: { family?: string; parameter_size?: string }
 }
 
-export async function listTags(fromCloudCatalog = false): Promise<TagModel[]> {
-  const res = await request('/api/tags', fromCloudCatalog ? { base: OLLAMA_CLOUD } : {})
+export async function listTags(t: OllamaTarget): Promise<TagModel[]> {
+  const res = await request(t, '/api/tags')
   return ((await res.json()) as { models?: TagModel[] }).models ?? []
 }
+
+/** ollama.com's cloud catalog, read with no key. */
+export const listCloudCatalog = (): Promise<TagModel[]> => listTags(CATALOG)
 
 export interface ShowResponse {
   capabilities?: string[]
@@ -253,18 +267,14 @@ export interface ShowResponse {
   model_info?: Record<string, unknown>
 }
 
-export async function showModel(model: string): Promise<ShowResponse> {
-  const res = await request('/api/show', { method: 'POST', body: JSON.stringify({ model }), model })
+export async function showModel(t: OllamaTarget, model: string): Promise<ShowResponse> {
+  const res = await request(t, '/api/show', { method: 'POST', body: JSON.stringify({ model }), model })
   return (await res.json()) as ShowResponse
 }
 
 export const isCloudName = (name: string): boolean => /(:|-)cloud$/.test(name)
 
-/** Full URL for an Ollama API path on the current target (never includes credentials). */
-export function endpointFor(path: string): string {
-  return `${target().base}${path}`
-}
-
-export function connectionMode(): 'local' | 'direct' {
-  return ollamaConnection().mode
+/** Full URL for an Ollama API path on this target (never includes credentials). */
+export function endpointFor(t: OllamaTarget, path: string): string {
+  return `${t.base}${path}`
 }

@@ -49,8 +49,7 @@ const {
 } = await import('../src/main/db/conversations')
 const { registerToolProvider } = await import('../src/main/chat/tools')
 const { runRounds } = await import('../src/main/chat/rounds')
-const { getModelInfo } = await import('../src/main/providers/ollama/models')
-const { resolve } = await import('../src/main/providers/registry')
+const { invalidateProviders, modelInfo, resolve } = await import('../src/main/providers/registry')
 const { replayRequest } = await import('../src/main/debug/replay')
 const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
 const approvals = await import('../src/main/chat/approvals')
@@ -80,6 +79,7 @@ beforeAll(() => {
       numCtx: 32768
     }
   ])
+  invalidateProviders()
   updateSettings({ skills: { autoLoad: false }, web: { enabled: true } })
   ollama.handler = (req, res) => {
     if (req.url === '/api/show')
@@ -2149,7 +2149,7 @@ describe('runRounds', () => {
   async function setup() {
     const conversation = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], mode: 'chat' })
     const message = insertMessage({ conversationId: conversation.id, parentId: null, role: 'assistant', content: '', model: 'llama3.2' })
-    const model = await getModelInfo('llama3.2')
+    const model = await modelInfo('llama3.2')
     const body: RoundsInput['body'] = {
       model: 'llama3.2',
       messages: [
@@ -2362,6 +2362,7 @@ describe('runRounds', () => {
       const requests: ChatRequest[] = []
       const provider: Provider = {
         id: 'fake',
+        endpoint: { id: 'fake', name: 'Fake', kind: 'openai', flavor: 'generic', baseUrl: 'fake://', enabled: true, hasKey: false },
         listModels: () => Promise.resolve([]),
         modelInfo: () => Promise.reject(new Error('not used')),
         async *chatStream(req) {

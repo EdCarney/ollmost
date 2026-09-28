@@ -12,18 +12,8 @@ import { contextWindowFor, findModel, reportError, useApp } from '@/stores/app'
 import { useDrafts } from '@/stores/drafts'
 
 export function ProjectView({ id }: { id: string }) {
-  const {
-    projects,
-    conversations,
-    loadProjects,
-    loadConversations,
-    navigate,
-    models,
-    draftModel,
-    settings,
-    projectFilesVersion,
-    touchProjectFiles
-  } = useApp()
+  const { projects, conversations, loadProjects, loadConversations, navigate, models, draftModel, projectFilesVersion, touchProjectFiles } =
+    useApp()
   const project = projects.find((p) => p.id === id)
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [uploading, setUploading] = useState(false)
@@ -47,7 +37,7 @@ export function ProjectView({ id }: { id: string }) {
   const chats = conversations.filter((c) => c.projectId === id)
   const knowledgeTokens = files.reduce((n, f) => n + f.tokenEstimate, 0)
   const model = findModel(models, draftModel)
-  const capacity = contextWindowFor(model, settings)
+  const capacity = contextWindowFor(model)
   const usage = capacity ? knowledgeTokens / capacity : 0
 
   const save = async (patch: Parameters<typeof api.projects.update>[1]) => {

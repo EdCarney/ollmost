@@ -1,5 +1,7 @@
+import { isOllamaCloudUrl } from '@shared/endpoints'
 import { toOllamaThink } from '@shared/thinking'
-import type { ModelInfo } from '@shared/types'
+import type { Endpoint, ModelInfo, ModelWhere } from '@shared/types'
+import { endpointSecretName, getSecret, OLLAMA_ACCOUNT_SECRET } from '../secrets'
 import type {
   ChatEvent,
   ChatImage,
@@ -12,17 +14,15 @@ import type {
   ToolCall,
   WireRequest
 } from '../types'
-import { getModelInfo, listModels as listOllamaModels } from './models'
+import { getModelInfo, listOllamaModels, ollamaWhere } from './models'
 import {
   type ChatBody,
   type ChatChunk,
   chatOnce as postChat,
   chatStream as streamChat,
-  connectionMode,
   endpointFor,
-  isCloudName,
-  OllamaError,
   type OllamaMessage,
+  type OllamaTarget,
   type OllamaToolCall,
   type StreamTimeouts,
   streamTimeoutsFor
@@ -31,16 +31,32 @@ import {
 // Ollama's side of the seam: neutral requests become /api/chat bodies, NDJSON chunks become neutral events. A body is
 // byte for byte what Ollmost sent before the seam existed (tests/ollamaAdapter.test.ts holds it to that).
 
-/** Where a model runs, by the one rule: everything through ollama.com, and `-cloud` names through the app. */
-const runsInCloud = (model: string): boolean => connectionMode() === 'direct' || isCloudName(model)
+/** How a request reaches an endpoint: its root, its name for errors, and the one key it may be sent. */
+export function ollamaTarget(endpoint: Pick<Endpoint, 'id' | 'name' | 'baseUrl'>): OllamaTarget {
+  const base = endpoint.baseUrl.replace(/\/+$/, '')
+  const cloud = isOllamaCloudUrl(base)
+  // ollama.com takes the ollama.com account key; any other server is only ever sent its own.
+  const key = getSecret(cloud ? OLLAMA_ACCOUNT_SECRET : endpointSecretName(endpoint.id))
+  return { base, name: endpoint.name, cloud, keyed: !cloud && key !== null, headers: key ? { Authorization: `Bearer ${key}` } : {} }
+}
 
 /**
- * The long tool-call allowance is only for models on this Mac: Ollama holds a call back until its arguments are
- * complete, and a slow local model can be quiet for minutes. A cloud model that goes quiet has dropped.
+ * A request's options: the temperature when asked, and num_ctx only where Ollmost sets the window. Every request to
+ * a local model carries the same num_ctx, titles included: a different one makes Ollama reload the model.
  */
-export function ollamaTimeouts(model: string): StreamTimeouts {
-  return streamTimeoutsFor(runsInCloud(model) ? 'cloud' : 'local')
+export function ollamaOptions(
+  req: Pick<ChatRequest, 'temperature' | 'contextWindow'>,
+  clientContext: boolean
+): Record<string, number> | undefined {
+  const options: Record<string, number> = {}
+  if (req.temperature !== undefined) options.temperature = req.temperature
+  if (clientContext && req.contextWindow !== null) options.num_ctx = req.contextWindow
+  return Object.keys(options).length ? options : undefined
 }
+
+/** How long a stream may go quiet: see streamTimeoutsFor. */
+export const ollamaTimeouts = (endpoint: Pick<Endpoint, 'baseUrl'>, model: string): StreamTimeouts =>
+  streamTimeoutsFor(ollamaWhere(endpoint, model))
 
 // Each call Ollama sent, by the neutral call made from it. The next round echoes a call back exactly as Ollama sent it,
 // its own id and index included. A call assemble() rebuilt from history has no entry and goes back without the id
@@ -71,21 +87,16 @@ export function toOllamaMessage(m: ChatMessage): OllamaMessage {
 }
 
 /**
- * The /api/chat body for a request. A local model gets the request's window as num_ctx on every call, titles included:
- * a request with a different num_ctx makes Ollama reload the model. Cloud models manage their own context.
+ * The /api/chat body for a request. `clientContext`: Ollmost sets this model's window (a model the Ollama app runs),
+ * so the request's window goes as num_ctx. Cloud models manage their own context.
  */
-export function toOllamaBody(req: ChatRequest): ChatBody {
-  const numCtx = runsInCloud(req.model) || req.contextWindow == null ? undefined : req.contextWindow
-  const options =
-    req.temperature === undefined && numCtx === undefined
-      ? undefined
-      : { ...(req.temperature !== undefined && { temperature: req.temperature }), ...(numCtx !== undefined && { num_ctx: numCtx }) }
+export function toOllamaBody(req: ChatRequest, clientContext: boolean): ChatBody {
   return {
     model: req.model,
     messages: req.messages.map(toOllamaMessage),
     think: toOllamaThink(req.profile, req.think),
     tools: req.tools,
-    options
+    options: ollamaOptions(req, clientContext)
   }
 }
 
@@ -141,38 +152,52 @@ export function resultFromOllama(res: ChatChunk): ChatResult {
   }
 }
 
-/** The Ollama app, or ollama.com in direct mode: whichever Settings → Models points at. */
+/** One Ollama endpoint: the Ollama app, another machine's, or ollama.com itself. */
 export class OllamaProvider implements Provider {
-  readonly id = 'ollama'
+  constructor(readonly endpoint: Endpoint) {}
 
-  async listModels(refresh: boolean): Promise<ModelInfo[]> {
-    const { models, error } = await listOllamaModels(refresh)
-    // The list carries an error only when it's empty; the registry reports it in place of the models.
-    if (error) throw new OllamaError(error)
-    return models
+  get id(): string {
+    return this.endpoint.id
+  }
+
+  // Read per request, so a key saved since applies at once.
+  private target(): OllamaTarget {
+    return ollamaTarget(this.endpoint)
+  }
+
+  private where(model: string): ModelWhere {
+    return ollamaWhere(this.endpoint, model)
+  }
+
+  private body(req: ChatRequest): ChatBody {
+    return toOllamaBody(req, this.where(req.model) !== 'cloud')
+  }
+
+  listModels(refresh: boolean): Promise<ModelInfo[]> {
+    return listOllamaModels(this.endpoint, this.target(), refresh)
   }
 
   modelInfo(model: string, refresh = false): Promise<ModelInfo> {
-    return getModelInfo(model, refresh)
+    return getModelInfo(this.endpoint, this.target(), model, refresh)
   }
 
   async *chatStream(req: ChatRequest, signal: AbortSignal): AsyncGenerator<ChatEvent> {
-    yield* ollamaEvents(streamChat(toOllamaBody(req), signal, ollamaTimeouts(req.model)))
+    yield* ollamaEvents(streamChat(this.target(), this.body(req), signal, ollamaTimeouts(this.endpoint, req.model)))
   }
 
   async chatOnce(req: ChatRequest, opts: { signal?: AbortSignal; timeoutMs: number }): Promise<ChatResult> {
-    return resultFromOllama(await postChat(toOllamaBody(req), opts))
+    return resultFromOllama(await postChat(this.target(), this.body(req), opts))
   }
 
   wire(req: ChatRequest, stream: boolean): WireRequest {
-    return { endpoint: this.wireEndpoint(), body: { ...toOllamaBody(req), stream } }
+    return { endpoint: this.wireEndpoint(), body: { ...this.body(req), stream } }
   }
 
   wireEndpoint(): string {
-    return endpointFor('/api/chat')
+    return endpointFor(this.target(), '/api/chat')
   }
 
   async sendWire(body: unknown, opts: { signal?: AbortSignal; timeoutMs: number }): Promise<ChatResult> {
-    return resultFromOllama(await postChat(body as ChatBody, opts))
+    return resultFromOllama(await postChat(this.target(), body as ChatBody, opts))
   }
 }

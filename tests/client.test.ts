@@ -1,30 +1,28 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import type { OllamaTarget } from '../src/main/providers/ollama/wire'
 import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMock'
-
-const conn = vi.hoisted(() => ({ host: '' }))
-vi.mock('../src/main/settings', () => ({
-  getSettings: () => ({ connection: { mode: 'local' as const, host: conn.host } }),
-  ollamaConnection: () => ({ mode: 'local' as const, host: conn.host, showCloudCatalog: false, numCtx: 32768 }),
-  getApiKey: () => null
-}))
 
 const { chatOnce, chatStream, OllamaError, STREAM_TIMEOUTS, streamTimeoutsFor } = await import('../src/main/providers/ollama/wire')
 
+const t: OllamaTarget = { base: '', name: 'Ollama', headers: {}, cloud: false, keyed: false }
 let ollama: MockOllama
 beforeAll(async () => {
   ollama = await startMockOllama()
-  conn.host = ollama.url
+  t.base = ollama.url
 })
 afterAll(() => ollama.close())
 
 const body = { model: 'llama3.2', messages: [{ role: 'user' as const, content: 'hi' }] }
 const fast = { firstByteMs: 2_000, idleMs: 2_000, toolIdleMs: 2_000 }
 
-async function collect(signal = new AbortController().signal, timeouts = fast, request: Parameters<typeof chatStream>[0] = body) {
+type Body = Parameters<typeof chatStream>[1]
+
+async function collectFrom(target: OllamaTarget, signal = new AbortController().signal, timeouts = fast, request: Body = body) {
   const chunks = []
-  for await (const c of chatStream(request, signal, timeouts)) chunks.push(c)
+  for await (const c of chatStream(target, request, signal, timeouts)) chunks.push(c)
   return chunks
 }
+const collect = (signal?: AbortSignal, timeouts = fast, request: Body = body) => collectFrom(t, signal, timeouts, request)
 
 describe('chatStream', () => {
   it('reassembles JSON lines split across network chunks', async () => {
@@ -130,7 +128,7 @@ describe('chatStream', () => {
       res.on('close', () => (closed = true))
       return streamChunks(res, [line({ message: { role: 'assistant', content: 'a' }, done: false })]) // then keeps the socket open
     }
-    for await (const _chunk of chatStream(body, new AbortController().signal, { firstByteMs: 5_000, idleMs: 5_000, toolIdleMs: 5_000 }))
+    for await (const _chunk of chatStream(t, body, new AbortController().signal, { firstByteMs: 5_000, idleMs: 5_000, toolIdleMs: 5_000 }))
       break
     await vi.waitFor(() => expect(closed).toBe(true), { timeout: 2_000 })
   })
@@ -155,19 +153,34 @@ describe('chatOnce', () => {
   it('returns the single response', async () => {
     ollama.handler = (_req, res) =>
       void res.writeHead(200).end(JSON.stringify({ message: { role: 'assistant', content: 'Title' }, done: true }))
-    expect((await chatOnce(body, { timeoutMs: 2_000 })).message?.content).toBe('Title')
+    expect((await chatOnce(t, body, { timeoutMs: 2_000 })).message?.content).toBe('Title')
   })
 
   it('times out instead of hanging', async () => {
     ollama.handler = () => undefined
-    await expect(chatOnce(body, { timeoutMs: 150 })).rejects.toThrow(/took too long/)
+    await expect(chatOnce(t, body, { timeoutMs: 150 })).rejects.toThrow(/took too long/)
   })
 })
 
 describe('streamTimeoutsFor', () => {
-  it('gives only local models the long quiet allowance for tool calls', () => {
-    expect(streamTimeoutsFor('local').toolIdleMs).toBe(STREAM_TIMEOUTS.toolIdleMs)
+  it('gives only models on a machine the long quiet allowance for tool calls', () => {
+    expect(streamTimeoutsFor('this-mac').toolIdleMs).toBe(STREAM_TIMEOUTS.toolIdleMs)
+    expect(streamTimeoutsFor('network').toolIdleMs).toBe(STREAM_TIMEOUTS.toolIdleMs)
     expect(streamTimeoutsFor('cloud').toolIdleMs).toBe(STREAM_TIMEOUTS.idleMs)
     expect(STREAM_TIMEOUTS.toolIdleMs).toBeGreaterThan(STREAM_TIMEOUTS.idleMs)
+  })
+})
+
+describe('targets', () => {
+  it('sends the target’s key and names it when it can’t be reached', async () => {
+    let auth: string | undefined
+    ollama.handler = (req, res) => {
+      auth = req.headers.authorization
+      return streamChunks(res, [line({ done: true })]).then(() => res.end())
+    }
+    await collectFrom({ ...t, headers: { Authorization: 'Bearer k' }, keyed: true })
+    expect(auth).toBe('Bearer k')
+    const gone = { ...t, base: 'http://127.0.0.1:9', name: 'GPU box' }
+    await expect(chatOnce(gone, body, { timeoutMs: 2_000 })).rejects.toThrow("Can't reach GPU box at http://127.0.0.1:9.")
   })
 })

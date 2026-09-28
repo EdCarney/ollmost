@@ -9,8 +9,8 @@ const themes = [
   { id: 'nord', name: 'Nord' }
 ] as ThemeDef[]
 const models = [
-  { name: 'gpt-oss:120b-cloud', location: 'cloud' },
-  { name: 'gemma4:e4b', location: 'local' }
+  { name: 'gpt-oss:120b-cloud', where: 'cloud' },
+  { name: 'gemma4:e4b', where: 'this-mac' }
 ] as ModelInfo[]
 
 describe('the settings the palette offers choices for', () => {

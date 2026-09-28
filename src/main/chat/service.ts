@@ -1,7 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { parseMessage } from '@shared/artifactParser'
 import { normalizeSpaces } from '@shared/text'
-import { effectiveContext } from '@shared/context'
 import { EVENT_CHANNELS } from '@shared/ipc'
 import { resolveThinkProfile } from '@shared/thinking'
 import type {
@@ -39,7 +38,7 @@ import { modelInfo, resolve } from '../providers/registry'
 import type { ChatRequest, Provider } from '../providers/types'
 import { webAvailable } from '../ollama/web'
 import { startTrace, type Trace } from '../debug/traces'
-import { getSettings, ollamaConnection } from '../settings'
+import { getSettings } from '../settings'
 import { getSkill, listSkills } from '../skills/library'
 import { ensure as ensureServers, readyTools } from '../mcp/manager'
 import { MCP_SOURCE } from '../mcp/provider'
@@ -297,7 +296,7 @@ async function generate(
     const profile = resolveThinkProfile(modelName, model.capabilities, model.overrides.think)
     const vision = model.capabilities.includes('vision')
     const toolsCapable = model.capabilities.includes('tools')
-    const numCtx = effectiveContext(model, ollamaConnection().numCtx)
+    const numCtx = model.contextWindow
     const budget = promptBudget(numCtx)
     const autoSkills = settings.skills.autoLoad && toolsCapable && model.overrides.autoSkills !== false
     const web: WebStatus = !settings.web.enabled ? 'off' : !toolsCapable ? 'unsupported' : webAvailable() ? 'on' : 'no-key'
@@ -680,7 +679,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
     const { provider, model: serverName } = resolve(opts.model)
     const info = await modelInfo(opts.model)
     const profile = resolveThinkProfile(opts.model, info.capabilities, info.overrides.think)
-    const contextWindow = effectiveContext(info, ollamaConnection().numCtx)
+    const contextWindow = info.contextWindow
     const focus = opts.focus.trim()
     const system = focus ? `${COMPACT_PROMPT}\n\nAbove all, keep what the user asked for: ${focus}` : COMPACT_PROMPT
     const request = (transcript: string): ChatRequest => ({
@@ -812,7 +811,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       think: leastThinking(profile),
       profile,
       // Same window as the chat: a different num_ctx makes Ollama reload a local model just for the title.
-      contextWindow: effectiveContext(info, ollamaConnection().numCtx),
+      contextWindow: info.contextWindow,
       temperature: 0.3
     }
     const wire = provider.wire(request, false)

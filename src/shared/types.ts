@@ -1,5 +1,7 @@
 // Domain types shared by the main process, preload bridge and renderer.
 
+import type { ModelKey } from './modelKey'
+
 export type ID = string
 
 export interface Project {
@@ -256,50 +258,6 @@ export interface SearchHit {
   mode: 'chat' | 'code'
 }
 
-// ---- Models -------------------------------------------------------------
-
-export type ThinkProfile =
-  { kind: 'none' } | { kind: 'toggle' } | { kind: 'always'; note?: string } | { kind: 'levels'; canDisable: boolean }
-
-export interface ModelOverrides {
-  think?: ThinkProfile['kind']
-  artifacts?: boolean
-  autoSkills?: boolean
-}
-
-export interface ModelPrice {
-  /** USD per million tokens. */
-  input: number
-  cachedInput: number | null
-  output: number
-}
-
-export interface PriceTable {
-  prices: Record<string, ModelPrice>
-  /** When the table was read from ollama.com/pricing (or the bundled snapshot date). */
-  updatedAt: number
-  source: 'ollama.com' | 'bundled'
-}
-
-export interface ModelInfo {
-  name: string
-  /** Cloud models run on ollama.com; local ones on this machine. */
-  location: 'cloud' | 'local'
-  installed: boolean
-  capabilities: string[]
-  contextLength: number | null
-  family: string | null
-  parameterSize: string | null
-  overrides: ModelOverrides
-  /** Published cloud price, if known. Local models are free. */
-  price: ModelPrice | null
-}
-
-export interface ModelListResult {
-  models: ModelInfo[]
-  error: string | null
-}
-
 // ---- Endpoints ------------------------------------------------------------
 
 export type EndpointKind = 'ollama' | 'openai'
@@ -345,6 +303,71 @@ export interface EndpointProbe {
 export type ModelWhere = 'cloud' | 'this-mac' | 'network'
 /** Whether Ollmost can price a model's requests. Only Ollama's cloud models are priced. */
 export type ModelBilling = 'priced' | 'local' | 'untracked'
+
+// ---- Models -------------------------------------------------------------
+
+export type ThinkProfile =
+  { kind: 'none' } | { kind: 'toggle' } | { kind: 'always'; note?: string } | { kind: 'levels'; canDisable: boolean }
+
+export interface ModelOverrides {
+  think?: ThinkProfile['kind']
+  artifacts?: boolean
+  autoSkills?: boolean
+  /** Set in Settings → Models (PR 3's columns); unset means Auto. */
+  vision?: boolean
+  tools?: boolean
+  contextLength?: number
+}
+
+/** What Ollmost learned from a server's errors, kept apart from the user's overrides. "Re-detect" clears it. */
+export interface ModelDetected {
+  tools?: false
+  contextLength?: number
+  reason?: string
+}
+
+export interface ModelPrice {
+  /** USD per million tokens. */
+  input: number
+  cachedInput: number | null
+  output: number
+}
+
+export interface PriceTable {
+  prices: Record<string, ModelPrice>
+  /** When the table was read from ollama.com/pricing (or the bundled snapshot date). */
+  updatedAt: number
+  source: 'ollama.com' | 'bundled'
+}
+
+export interface ModelInfo {
+  /** "<endpoint id>/<name>": what chats, settings and every lookup use. */
+  key: ModelKey
+  /** The model's id at its server: what requests send. */
+  name: string
+  endpoint: { id: string; name: string; kind: EndpointKind; flavor: EndpointFlavor }
+  where: ModelWhere
+  billing: ModelBilling
+  /** 'client': Ollmost sends the window (Ollama's num_ctx). 'server': the server fixed it when it loaded the model. */
+  contextControl: 'client' | 'server'
+  /** The window this model's requests get. History trimming, the meter and num_ctx all use this one number. */
+  contextWindow: number | null
+  installed: boolean
+  capabilities: string[]
+  contextLength: number | null
+  family: string | null
+  parameterSize: string | null
+  overrides: ModelOverrides
+  detected: ModelDetected
+  /** Published price for a priced model, when known. */
+  price: ModelPrice | null
+}
+
+export interface ModelListResult {
+  models: ModelInfo[]
+  /** Endpoints that couldn't list their models this time, and why. The others still list. */
+  errors: Array<{ endpointId: string; message: string }>
+}
 
 // ---- Usage & cost ---------------------------------------------------------
 

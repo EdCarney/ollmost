@@ -1,4 +1,4 @@
-import type { ModelInfo, ThinkProfile, ThinkSetting } from '@shared/types'
+import type { Endpoint, ModelInfo, ThinkProfile, ThinkSetting } from '@shared/types'
 
 // The shapes every model server is spoken to in. Shared code builds and reads only these; each adapter translates them
 // to and from its server's API, so nothing one server needs (Ollama's num_ctx, OpenAI's tool_call_id) leaks out.
@@ -91,7 +91,9 @@ export interface WireRequest {
 
 /** One model server behind the seam. Every model call reaches it through registry.resolve(). */
 export interface Provider {
+  /** The endpoint's id. */
   readonly id: string
+  readonly endpoint: Endpoint
   /** Every model it serves; throws when nothing can be listed. */
   listModels(refresh: boolean): Promise<ModelInfo[]>
   modelInfo(model: string, refresh?: boolean): Promise<ModelInfo>

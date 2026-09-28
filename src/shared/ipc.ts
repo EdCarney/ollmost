@@ -98,8 +98,8 @@ export interface OllmostApi {
   }
   models: {
     list(refresh?: boolean): Promise<ModelListResult>
-    info(name: string): Promise<ModelInfo>
-    setOverrides(name: string, overrides: ModelOverrides): Promise<ModelInfo>
+    info(key: string): Promise<ModelInfo>
+    setOverrides(key: string, overrides: ModelOverrides): Promise<ModelInfo>
   }
   projects: {
     list(): Promise<Project[]>

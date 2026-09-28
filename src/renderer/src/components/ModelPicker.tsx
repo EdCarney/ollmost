@@ -31,8 +31,8 @@ export function ModelPicker({ value, onChange }: { value: string | null; onChang
     const q = query.toLowerCase()
     const filtered = models.filter((m) => m.name.toLowerCase().includes(q))
     return [
-      { label: 'Cloud', icon: Cloud, items: filtered.filter((m) => m.location === 'cloud') },
-      { label: 'On this Mac', icon: HardDrive, items: filtered.filter((m) => m.location === 'local') }
+      { label: 'Cloud', icon: Cloud, items: filtered.filter((m) => m.where === 'cloud') },
+      { label: 'On this Mac', icon: HardDrive, items: filtered.filter((m) => m.where !== 'cloud') }
     ].filter((g) => g.items.length)
   }, [models, query])
 
@@ -46,7 +46,7 @@ export function ModelPicker({ value, onChange }: { value: string | null; onChang
           aria-label="Choose model"
         >
           <span className="truncate">{displayModelName(value)}</span>
-          {current?.location === 'cloud' && <Cloud className="size-3.5 shrink-0 text-subtle" />}
+          {current?.where === 'cloud' && <Cloud className="size-3.5 shrink-0 text-subtle" />}
           <ChevronDown className="size-3.5 shrink-0" />
         </button>
       </PopoverTrigger>

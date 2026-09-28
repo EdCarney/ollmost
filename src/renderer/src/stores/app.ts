@@ -1,8 +1,5 @@
 import { create } from 'zustand'
-import { effectiveContext } from '@shared/context'
-import { DEFAULT_NUM_CTX } from '@shared/endpoints'
 import type { DeepPartial } from '@shared/ipc'
-import { MIGRATED_ENDPOINT_ID } from '@shared/modelKey'
 import { defaultThinkSetting, resolveThinkProfile } from '@shared/thinking'
 import type {
   Conversation,
@@ -121,8 +118,8 @@ export const useApp = create<AppState>((set, get) => ({
   loadModels: async (refresh = false) => {
     set({ modelsLoading: true })
     try {
-      const { models, error } = await api.models.list(refresh)
-      set({ models, modelsError: error })
+      const { models, errors } = await api.models.list(refresh)
+      set({ models, modelsError: errors[0]?.message ?? null })
       const { draftModel, settings } = get()
       if (!draftModel || !models.some((m) => m.name === draftModel)) {
         const preferred = settings?.defaultModel && models.find((m) => m.name === settings.defaultModel)
@@ -194,11 +191,9 @@ export function findModel(models: ModelInfo[], name: string | null): ModelInfo |
   return name ? models.find((m) => m.name === name) : undefined
 }
 
-/** The window a chat with this model actually gets (local models are capped at the endpoint's num_ctx). */
-export function contextWindowFor(model: ModelInfo | undefined, settings: Settings | null): number | null {
-  if (!model) return null
-  const numCtx = settings?.endpoints.find((e) => e.id === MIGRATED_ENDPOINT_ID)?.numCtx ?? DEFAULT_NUM_CTX
-  return settings ? effectiveContext(model, numCtx) : model.contextLength
+/** The window a chat with this model actually gets, as main worked it out. */
+export function contextWindowFor(model: ModelInfo | undefined): number | null {
+  return model?.contextWindow ?? null
 }
 
 export function thinkProfileFor(models: ModelInfo[], name: string | null): ThinkProfile {

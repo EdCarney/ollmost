@@ -644,7 +644,7 @@ function ModelRow({ model, onChange }: { model: ModelInfo; onChange: (m: ModelIn
   const auto = resolveThinkProfile(model.name, model.capabilities)
   const set = async (patch: ModelOverrides) => {
     try {
-      onChange(await api.models.setOverrides(model.name, { ...model.overrides, ...patch }))
+      onChange(await api.models.setOverrides(model.key, { ...model.overrides, ...patch }))
     } catch (err) {
       reportError(err)
     }
@@ -653,7 +653,7 @@ function ModelRow({ model, onChange }: { model: ModelInfo; onChange: (m: ModelIn
     <tr className="border-t border-line align-middle">
       <td className="py-2.5 pr-3">
         <div className="flex items-center gap-1.5 text-[13px] font-medium">
-          {model.location === 'cloud' ? <Cloud className="size-3.5 text-subtle" /> : <HardDrive className="size-3.5 text-subtle" />}
+          {model.where === 'cloud' ? <Cloud className="size-3.5 text-subtle" /> : <HardDrive className="size-3.5 text-subtle" />}
           {displayModelName(model.name)}
         </div>
         <div className="mt-0.5 flex gap-1">
@@ -709,9 +709,9 @@ function ModelsTab({ settings }: { settings: Settings }) {
     >
       <option value="">{emptyLabel}</option>
       {models.map((m) => (
-        <option key={m.name} value={m.name}>
+        <option key={m.key} value={m.key}>
           {displayModelName(m.name)}
-          {m.location === 'cloud' ? ' (cloud)' : ''}
+          {m.where === 'cloud' ? ' (cloud)' : ''}
         </option>
       ))}
     </select>
@@ -750,12 +750,12 @@ function ModelsTab({ settings }: { settings: Settings }) {
           <tbody>
             {list.map((m) => (
               <ModelRow
-                key={m.name}
+                key={m.key}
                 model={m}
                 onChange={(updated) => {
-                  setList((l) => l.map((x) => (x.name === updated.name ? { ...updated, installed: x.installed } : x)))
+                  setList((l) => l.map((x) => (x.key === updated.key ? { ...updated, installed: x.installed } : x)))
                   useApp.setState((s) => ({
-                    models: s.models.map((x) => (x.name === updated.name ? { ...updated, installed: x.installed } : x))
+                    models: s.models.map((x) => (x.key === updated.key ? { ...updated, installed: x.installed } : x))
                   }))
                 }}
               />

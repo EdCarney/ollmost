@@ -3,9 +3,11 @@ import { homedir } from 'node:os'
 import { basename, dirname } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type OpenDialogOptions, shell } from 'electron'
 import { artifactExtension, slugify } from '@shared/artifactParser'
+import { isOllamaCloudUrl } from '@shared/endpoints'
 import { normalizeFolder } from '@shared/fileTree'
 import { EVENT_CHANNELS, type OllmostApi } from '@shared/ipc'
 import { parseServersJson } from '@shared/mcpImport'
+import { toModelKey } from '@shared/modelKey'
 import { openWith } from '@shared/workspace'
 import { BUILTIN_THEMES } from '@shared/themes'
 import type { ThemeDef } from '@shared/types'
@@ -27,7 +29,7 @@ import {
   setConversationRoot,
   updateConversation
 } from './db/conversations'
-import { deleteCustomTheme, listCustomThemes, saveCustomTheme } from './db/kv'
+import { deleteCustomTheme, listCustomThemes, saveCustomTheme, writeModelOverrides } from './db/kv'
 import { conversationUsage, usageSummary } from './db/usage'
 import {
   createProject,
@@ -43,7 +45,6 @@ import {
 } from './db/projects'
 import { ingestAll, removeFiles } from './files/ingest'
 import { appPages, isAppFrame } from './ipcSender'
-import { setModelOverrides } from './providers/ollama/models'
 import { paths } from './paths'
 import { quarantine } from './quarantine'
 import { errorMessage } from './util'
@@ -93,8 +94,7 @@ import {
   statuses as serverStatuses,
   toolFingerprint
 } from './mcp/manager'
-import { connectionMode, endpointFor } from './providers/ollama/wire'
-import { listAllModels, modelInfo } from './providers/registry'
+import { listAllModels, modelInfo, resolve } from './providers/registry'
 import { getPriceTable, refreshPrices } from './usage/pricing'
 import {
   deleteSkill,
@@ -203,8 +203,14 @@ const impl: Impl = {
 
   models: {
     list: (refresh) => listAllModels(refresh),
-    info: (name) => modelInfo(name),
-    setOverrides: (name, overrides) => setModelOverrides(name, overrides)
+    info: (key) => modelInfo(key),
+    setOverrides: async (key, overrides) => {
+      // Saved under the canonical key, which is what every read uses (a bare name from before keys is Ollama's).
+      const { endpoint, model } = resolve(key)
+      const canonical = toModelKey(endpoint.id, model)
+      writeModelOverrides(canonical, overrides)
+      return modelInfo(canonical)
+    }
   },
 
   projects: {
@@ -541,7 +547,15 @@ const impl: Impl = {
       return true
     },
     replay: (conversationId, body) => replayRequest(conversationId, body),
-    target: async () => ({ chatEndpoint: endpointFor('/api/chat'), needsKey: connectionMode() === 'direct' }),
+    target: async () => {
+      // "Copy as curl" for Ollama: the first Ollama endpoint's chat URL, and the ollama.com key when one is on ollama.com.
+      const endpoints = getSettings().endpoints.filter((e) => e.enabled && e.kind === 'ollama')
+      const first = endpoints[0]
+      return {
+        chatEndpoint: first ? `${first.baseUrl.replace(/\/+$/, '')}/api/chat` : '',
+        needsKey: endpoints.some((e) => isOllamaCloudUrl(e.baseUrl))
+      }
+    },
     inspectApp: async () => {
       const main = BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().includes('#debug'))
       main?.webContents.openDevTools({ mode: 'detach' })

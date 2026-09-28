@@ -318,7 +318,7 @@ export function ChatCost({ usage, model: modelName }: { usage: ChatUsage | null;
     return null
   const model = findModel(models, modelName)
   const total = usage.promptTokens + usage.completionTokens
-  const contextWindow = contextWindowFor(model, settings)
+  const contextWindow = contextWindowFor(model)
   const context = contextWindow && usage.lastContextTokens ? usage.lastContextTokens / contextWindow : null
   const allLocal = usage.byModel.every((m) => m.costUsd === 0)
   const cost = allLocal ? 'local' : usage.costUsd === null ? 'cost unknown' : `${usage.estimated ? '≈' : ''}${formatCost(usage.costUsd)}`

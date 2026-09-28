@@ -1,31 +1,28 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ThinkProfile, ThinkSetting } from '@shared/types'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import type { Endpoint, ThinkProfile, ThinkSetting } from '@shared/types'
 import { assemble } from '../src/main/chat/assemble'
-import type { ChatChunk } from '../src/main/providers/ollama/wire'
+import type { ChatBody, ChatChunk } from '../src/main/providers/ollama/wire'
 import type { ChatEvent, ChatRequest, ToolDef } from '../src/main/providers/types'
 import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMock'
 
-// Only the connection Settings → Models points at is faked.
-const conn = vi.hoisted(() => ({ mode: 'local' as 'local' | 'direct', host: '' }))
-vi.mock('../src/main/settings', () => ({
-  getSettings: () => ({ connection: { mode: conn.mode, host: conn.host } }),
-  ollamaConnection: () => ({ mode: conn.mode, host: conn.host, showCloudCatalog: false, numCtx: 32768 }),
-  getApiKey: () => null
+// The adapter reads the keychain for an endpoint's key; these endpoints have none.
+vi.mock('../src/main/providers/secrets', () => ({
+  OLLAMA_ACCOUNT_SECRET: 'apiKey',
+  endpointSecretName: (id: string) => `endpointKey:${id}`,
+  getSecret: () => null
 }))
 
-const { ollamaEvents, OllamaProvider, ollamaTimeouts, resultFromOllama, toOllamaBody, toOllamaMessage } =
+const { ollamaEvents, ollamaOptions, OllamaProvider, ollamaTimeouts, resultFromOllama, toOllamaBody, toOllamaMessage } =
   await import('../src/main/providers/ollama/adapter')
 const { STREAM_TIMEOUTS } = await import('../src/main/providers/ollama/wire')
 
+const endpoint: Endpoint = { id: 'ollama', name: 'Ollama', kind: 'ollama', flavor: 'ollama', baseUrl: '', enabled: true, hasKey: false }
 let ollama: MockOllama
 beforeAll(async () => {
   ollama = await startMockOllama()
-  conn.host = ollama.url
+  endpoint.baseUrl = ollama.url
 })
 afterAll(() => ollama.close())
-beforeEach(() => {
-  conn.mode = 'local'
-})
 
 const weather: ToolDef = {
   type: 'function',
@@ -119,7 +116,7 @@ describe('toOllamaBody: Ollama gets the bytes it got before the seam', () => {
       tools: [weather],
       options: { num_ctx: 8192 }
     }
-    expect(bytes(toOllamaBody(request))).toBe(bytes(before))
+    expect(bytes(toOllamaBody(request, true))).toBe(bytes(before))
   })
 
   it('gives a call Ollama sent without an id one of its own, and never sends that id', async () => {
@@ -137,13 +134,16 @@ describe('toOllamaBody: Ollama gets the bytes it got before the seam', () => {
     )
     // Nine letters and digits, like every id Ollmost makes up (Mistral's templates on vLLM refuse any other shape).
     expect(call).toEqual({ id: 't00000000', function: { name: 'get_weather', arguments: { city: 'Oslo' } } })
-    const body = toOllamaBody({
-      ...plain,
-      messages: [
-        { role: 'assistant', content: '', toolCalls: [call] },
-        { role: 'tool', content: 'rain', toolName: 'get_weather', toolCallId: call.id }
-      ]
-    })
+    const body = toOllamaBody(
+      {
+        ...plain,
+        messages: [
+          { role: 'assistant', content: '', toolCalls: [call] },
+          { role: 'tool', content: 'rain', toolName: 'get_weather', toolCallId: call.id }
+        ]
+      },
+      true
+    )
     expect(bytes(body.messages)).toBe(
       bytes([
         { role: 'assistant', content: '', tool_calls: [{ function: { name: 'get_weather', arguments: { city: 'Oslo' } } }] },
@@ -154,17 +154,20 @@ describe('toOllamaBody: Ollama gets the bytes it got before the seam', () => {
 
   it('sends a title or summary as before: the least thinking, then temperature before num_ctx', () => {
     const titleOf = (profile: ThinkProfile, think: ThinkSetting | null) =>
-      toOllamaBody({
-        model: 'qwen3:8b',
-        messages: [
-          { role: 'system', content: 'T' },
-          { role: 'user', content: 'U' }
-        ],
-        think,
-        profile,
-        contextWindow: 32_768,
-        temperature: 0.3
-      })
+      toOllamaBody(
+        {
+          model: 'qwen3:8b',
+          messages: [
+            { role: 'system', content: 'T' },
+            { role: 'user', content: 'U' }
+          ],
+          think,
+          profile,
+          contextWindow: 32_768,
+          temperature: 0.3
+        },
+        true
+      )
     expect(bytes(titleOf({ kind: 'toggle' }, 'off'))).toBe(
       bytes({
         model: 'qwen3:8b',
@@ -181,7 +184,7 @@ describe('toOllamaBody: Ollama gets the bytes it got before the seam', () => {
     expect(bytes(titleOf({ kind: 'none' }, null))).not.toContain('"think"')
   })
 
-  it('leaves the window to cloud models: no num_ctx for a -cloud name, nor for any model in direct mode', () => {
+  it('leaves the window to cloud models: no num_ctx for a -cloud name, nor for any model on ollama.com', () => {
     const cloud: ChatRequest = {
       model: 'gpt-oss:120b-cloud',
       messages: [{ role: 'user', content: 'hi' }],
@@ -189,14 +192,29 @@ describe('toOllamaBody: Ollama gets the bytes it got before the seam', () => {
       profile: { kind: 'levels', canDisable: false },
       contextWindow: 131_072
     }
-    expect(bytes(toOllamaBody(cloud))).toBe('{"model":"gpt-oss:120b-cloud","messages":[{"role":"user","content":"hi"}],"think":"medium"}')
-    conn.mode = 'direct'
-    expect(toOllamaBody({ ...cloud, model: 'gpt-oss:120b' }).options).toBeUndefined()
-    expect(toOllamaBody({ ...cloud, model: 'gpt-oss:120b', temperature: 0.3 }).options).toEqual({ temperature: 0.3 })
+    // What each provider actually sends: its body() decides whether the window goes as num_ctx.
+    const sent = (on: Endpoint, req: ChatRequest) => new OllamaProvider(on).wire(req, true).body as ChatBody
+    const ollamaCom: Endpoint = { ...endpoint, id: 'cloud', name: 'Ollama cloud', baseUrl: 'https://ollama.com' }
+    // A -cloud name through the Ollama app on this Mac.
+    expect(bytes(sent(endpoint, cloud))).toBe(
+      '{"model":"gpt-oss:120b-cloud","messages":[{"role":"user","content":"hi"}],"think":"medium","stream":true}'
+    )
+    // Any model on ollama.com itself.
+    expect(sent(ollamaCom, { ...cloud, model: 'gpt-oss:120b' }).options).toBeUndefined()
+    expect(sent(ollamaCom, { ...cloud, model: 'gpt-oss:120b', temperature: 0.3 }).options).toEqual({ temperature: 0.3 })
+    // A model the Ollama app runs gets its window, the one worked out from the endpoint's num_ctx.
+    expect(sent(endpoint, { ...cloud, model: 'llama3.2', contextWindow: 32_768 }).options).toEqual({ num_ctx: 32_768 })
   })
 
   it('sends no options for a local request with no window', () => {
-    expect(bytes(toOllamaBody(plain))).toBe('{"model":"llama3.2","messages":[{"role":"user","content":"hi"}]}')
+    expect(bytes(toOllamaBody(plain, true))).toBe('{"model":"llama3.2","messages":[{"role":"user","content":"hi"}]}')
+  })
+
+  it('sends num_ctx only where Ollmost sets the window, after the temperature', () => {
+    expect(ollamaOptions({ temperature: 0.3, contextWindow: 8192 }, true)).toEqual({ temperature: 0.3, num_ctx: 8192 })
+    expect(bytes(ollamaOptions({ temperature: 0.3, contextWindow: 8192 }, true))).toBe('{"temperature":0.3,"num_ctx":8192}')
+    expect(ollamaOptions({ temperature: 0.3, contextWindow: 8192 }, false)).toEqual({ temperature: 0.3 })
+    expect(ollamaOptions({ contextWindow: null }, true)).toBeUndefined()
   })
 })
 
@@ -276,7 +294,7 @@ describe('ollamaEvents', () => {
 })
 
 describe('OllamaProvider', () => {
-  const provider = new OllamaProvider()
+  const provider = new OllamaProvider(endpoint)
   const req: ChatRequest = { ...plain, contextWindow: 4096 }
 
   it('streams /api/chat with exactly the body wire() describes', async () => {
@@ -316,10 +334,9 @@ describe('OllamaProvider', () => {
   })
 
   it('gives only models on this Mac the long quiet allowance for tool calls', () => {
-    expect(ollamaTimeouts('llama3.2')).toEqual(STREAM_TIMEOUTS)
-    expect(ollamaTimeouts('gpt-oss:120b-cloud').toolIdleMs).toBe(STREAM_TIMEOUTS.idleMs)
-    conn.mode = 'direct'
-    expect(ollamaTimeouts('gpt-oss:120b').toolIdleMs).toBe(STREAM_TIMEOUTS.idleMs)
+    expect(ollamaTimeouts(endpoint, 'llama3.2')).toEqual(STREAM_TIMEOUTS)
+    expect(ollamaTimeouts(endpoint, 'gpt-oss:120b-cloud').toolIdleMs).toBe(STREAM_TIMEOUTS.idleMs)
+    expect(ollamaTimeouts({ baseUrl: 'https://ollama.com' }, 'gpt-oss:120b').toolIdleMs).toBe(STREAM_TIMEOUTS.idleMs)
   })
 })
 

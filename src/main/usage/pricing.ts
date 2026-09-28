@@ -1,7 +1,8 @@
 import { costOf, parsePricingHtml, priceFor } from '@shared/usage'
 import type { ModelPrice, PriceTable } from '@shared/types'
 import { readSetting, writeSetting } from '../db/kv'
-import { connectionMode, isCloudName } from '../providers/ollama/wire'
+import { isCloudName } from '../providers/ollama/wire'
+import { ollamaConnection } from '../settings'
 
 // Snapshot of ollama.com/pricing (USD per million tokens), used until the first live refresh.
 const BUNDLED: PriceTable = {
@@ -66,7 +67,7 @@ export function modelPrice(model: string): ModelPrice | null {
 }
 
 export function isBilled(model: string): boolean {
-  return connectionMode() === 'direct' || isCloudName(model)
+  return ollamaConnection().mode === 'direct' || isCloudName(model)
 }
 
 export function requestCost(model: string, promptTokens: number, completionTokens: number): number | null {

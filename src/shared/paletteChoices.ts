@@ -22,8 +22,7 @@ const range = (from: number, to: number, step: number) =>
   Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, i) => from + i * step)
 
 /** "gpt-oss:120b-cloud" → "gpt-oss:120b", as the model picker shows it, with cloud models marked. */
-const modelLabel = (m: ModelInfo) =>
-  `${m.name.replace(/(:|-)cloud$/, '').replace(/:latest$/, '')}${m.location === 'cloud' ? ' (cloud)' : ''}`
+const modelLabel = (m: ModelInfo) => `${m.name.replace(/(:|-)cloud$/, '').replace(/:latest$/, '')}${m.where === 'cloud' ? ' (cloud)' : ''}`
 
 /**
  * Every list opens on the value in force with a check, so a saved value off a list (a width off the slider's grid,
