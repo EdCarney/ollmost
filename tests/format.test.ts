@@ -41,4 +41,15 @@ describe('contextSizeLabel', () => {
     expect(contextSizeLabel(42_496)).toBe('42K')
     expect(contextSizeLabel(null)).toBe('')
   })
+
+  it('reads a round decimal size the decimal way, even when it also divides by 1024', () => {
+    expect(contextSizeLabel(128_000)).toBe('128K')
+    expect(contextSizeLabel(256_000)).toBe('256K')
+    expect(contextSizeLabel(512_000)).toBe('512K')
+    expect(contextSizeLabel(32_000)).toBe('32K')
+    expect(contextSizeLabel(1_024_000)).toBe('1.0M')
+    expect(contextSizeLabel(1_000_000)).toBe('1M')
+    // Binary sizes still read in binary.
+    expect(contextSizeLabel(8192)).toBe('8K')
+  })
 })
