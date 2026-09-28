@@ -371,6 +371,27 @@ describe('chatStream', () => {
     expect(server.requests).toHaveLength(3)
   })
 
+  // FastAPI servers (vLLM, SGLang, TabbyAPI) echo the whole body in a validation error, stream_options and all.
+  it('remembers nothing when the retry without stream_options fails too', async () => {
+    server.handler = (r, res) =>
+      void res.writeHead(400).end(
+        JSON.stringify({
+          object: 'error',
+          message: `1 validation error for ChatCompletionRequest\nmessages.0.role\n  Input should be 'user' [type=literal_error, input_value=${JSON.stringify(r.json)}, input_type=dict]`,
+          type: 'BadRequestError',
+          code: 400
+        })
+      )
+    const p = provider()
+    await expect(collect(p)).rejects.toThrow('LM Studio: 1 validation error for ChatCompletionRequest')
+    expect(server.requests.map((b) => 'stream_options' in b)).toEqual([true, false])
+    expect(fake.streamOptions).toEqual([])
+    expect(p.wire(req(), true).body).toHaveProperty('stream_options')
+    await expect(collect(p)).rejects.toThrow('LM Studio: 1 validation error for ChatCompletionRequest')
+    expect(server.requests.map((b) => 'stream_options' in b)).toEqual([true, false, true, false])
+    expect(fake.streamOptions).toEqual([])
+  })
+
   it('leaves stream_options out for an endpoint that rejected it before', async () => {
     await replay(ok(), provider({ streamOptions: false }))
     expect(server.requests.at(-1)).not.toHaveProperty('stream_options')

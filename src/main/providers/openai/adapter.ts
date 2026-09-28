@@ -82,7 +82,8 @@ const infoOf = (d: DiscoveredModel): CachedModelInfo => ({
 
 const minutes = (ms: number): number => Math.round(ms / 60_000)
 
-// A server that doesn't know stream_options names it (OpenAI answers 400; FastAPI-based servers 422).
+// A server that doesn't know stream_options names it (OpenAI answers 400; FastAPI-based servers 422), but so does a
+// FastAPI server's error about anything else: it echoes the body. post() tells them apart by retrying without.
 const rejectsStreamOptions = (status: number, text: string): boolean => (status === 400 || status === 422) && /stream_options/i.test(text)
 
 /**
@@ -318,16 +319,21 @@ export class OpenAIProvider implements Provider {
     }
   }
 
-  /** POST a body. A server that rejects stream_options gets it again without, once, and the endpoint remembers. */
+  /**
+   * POST a body. A server that seems to reject stream_options gets it again without, once, and the endpoint remembers
+   * only if that one is taken: FastAPI servers echo the whole body in any validation error, stream_options included.
+   */
   private async post(body: Record<string, unknown>, model: string | undefined, signal: AbortSignal): Promise<Response> {
     let res = await this.send(body, signal)
     if (!res.ok && 'stream_options' in body) {
       const text = await res.text().catch(() => '')
       if (!rejectsStreamOptions(res.status, text)) throw this.fail(res.status, text, model)
-      this.streamOptions = false
-      setEndpointStreamOptions(this.endpoint.id, false)
       const { stream_options: _dropped, ...rest } = body
       res = await this.send(rest, signal)
+      if (res.ok) {
+        this.streamOptions = false
+        setEndpointStreamOptions(this.endpoint.id, false)
+      }
     }
     if (!res.ok) throw this.fail(res.status, await res.text().catch(() => ''), model)
     return res
