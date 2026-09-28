@@ -1,36 +1,38 @@
 import { stripImagePlaceholders } from '@shared/debug'
 import type { TraceDetail } from '@shared/types'
 import { insertUsageEvent } from '../db/usage'
-import { resultFromOllama } from '../providers/ollama/adapter'
-import { type ChatBody, chatOnce, endpointFor } from '../providers/ollama/wire'
+import { resolve } from '../providers/registry'
 import { requestCost } from '../usage/pricing'
 import { errorMessage } from '../util'
 import { startTrace } from './traces'
 
+type Recorded = { model: string; messages: unknown[] }
+
 /**
- * Re-send a (possibly edited) recorded request, non-streaming, to the configured Ollama target.
+ * Re-send a (possibly edited) recorded request, non-streaming, to its model's server, in that server's own shape.
  * Nothing is added to the chat; the call is recorded as a 'replay' trace and counted as usage.
  */
 export async function replayRequest(conversationId: string | null, raw: unknown): Promise<TraceDetail> {
-  if (!raw || typeof raw !== 'object' || typeof (raw as ChatBody).model !== 'string' || !Array.isArray((raw as ChatBody).messages))
+  const recorded = raw as Partial<Recorded> | null
+  if (!recorded || typeof recorded !== 'object' || typeof recorded.model !== 'string' || !Array.isArray(recorded.messages))
     throw new Error('A replay needs a JSON object with a "model" string and a "messages" array.')
-  const { body } = stripImagePlaceholders(raw as ChatBody)
-  const request = { ...body, stream: false } as ChatBody & { stream: false }
+  const { body } = stripImagePlaceholders(recorded as Recorded)
+  const request = { ...body, stream: false }
+  const { provider } = resolve(request.model)
   const trace = startTrace({
     kind: 'replay',
     conversationId,
     messageId: null,
     model: request.model,
-    endpoint: endpointFor('/api/chat'),
+    endpoint: provider.wireEndpoint(),
     request,
     summary: 'Replay…'
   })
   try {
-    const res = await chatOnce(request, { timeoutMs: 10 * 60_000 })
+    const res = await provider.sendWire(request, { timeoutMs: 10 * 60_000 })
     trace.firstByte()
-    const { message, ...final } = res
-    const promptTokens = res.prompt_eval_count ?? 0
-    const completionTokens = res.eval_count ?? 0
+    const promptTokens = res.usage.prompt ?? 0
+    const completionTokens = res.usage.completion ?? 0
     const costUsd = requestCost(request.model, promptTokens, completionTokens)
     insertUsageEvent({
       conversationId,
@@ -44,12 +46,17 @@ export async function replayRequest(conversationId: string | null, raw: unknown)
     })
     return trace.finish({
       status: 'ok',
-      response: { content: message?.content, thinking: message?.thinking, toolCalls: message?.tool_calls, final },
+      response: {
+        content: res.content,
+        thinking: res.thinking || undefined,
+        toolCalls: res.toolCalls.length ? res.toolCalls : undefined,
+        final: res.raw
+      },
       promptTokens,
       completionTokens,
       costUsd,
-      summary: `Replay: ${message?.content?.trim() || (message?.tool_calls?.length ? 'tool call' : '(empty)')}`,
-      timing: resultFromOllama(res).timing
+      summary: `Replay: ${res.content.trim() || (res.toolCalls.length ? 'tool call' : '(empty)')}`,
+      timing: res.timing
     })
   } catch (err) {
     const error = errorMessage(err)

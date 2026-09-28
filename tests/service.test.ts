@@ -51,6 +51,7 @@ const { registerToolProvider } = await import('../src/main/chat/tools')
 const { runRounds } = await import('../src/main/chat/rounds')
 const { getModelInfo } = await import('../src/main/providers/ollama/models')
 const { resolve } = await import('../src/main/providers/registry')
+const { replayRequest } = await import('../src/main/debug/replay')
 const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
 const approvals = await import('../src/main/chat/approvals')
 const mcpConfig = await import('../src/main/mcp/config')
@@ -679,6 +680,28 @@ describe('reply loop', () => {
     const trace = listTraces(r.conversation.id).find((t) => t.kind === 'chat')!
     expect(getTrace(trace.id)?.timing).toMatchObject({ loadMs: 3, promptEvalMs: 1, evalMs: 1500 })
   })
+
+  it('titles through the chat model’s provider, sending the body it always sent', async () => {
+    const once = vi.spyOn(resolve('llama3.2').provider, 'chatOnce')
+    try {
+      chat = reply('Hi there')
+      const r = start()
+      await doneEvent(r.conversation.id)
+      await waitFor(() => once.mock.calls.length > 0)
+      expect(once).toHaveBeenCalledWith(
+        expect.objectContaining({ model: 'llama3.2', think: null, contextWindow: 8192, temperature: 0.3 }),
+        {
+          timeoutMs: 300_000
+        }
+      )
+      await waitFor(() => titleCalls.length > 0)
+      // No think for a model that can't think, the temperature before the chat's num_ctx, and not streamed.
+      expect(Object.keys(titleCalls[0])).toEqual(['model', 'messages', 'options', 'stream'])
+      expect(JSON.stringify(titleCalls[0].options)).toBe('{"temperature":0.3,"num_ctx":8192}')
+    } finally {
+      once.mockRestore()
+    }
+  })
 })
 
 describe('/compact', () => {
@@ -764,6 +787,33 @@ describe('/compact', () => {
     }
     await waitFor(() => !service.isReplying())
   }
+
+  it('summarizes through the chat model’s provider, sending the body it always sent', async () => {
+    chat = reply('an answer')
+    const r = start('a question')
+    await doneEvent(r.conversation.id)
+    await waitFor(() => !service.isReplying())
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['Short.'], calls)
+    const once = vi.spyOn(resolve('llama3.2').provider, 'chatOnce')
+    try {
+      await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      expect(once).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messages: [expect.objectContaining({ role: 'system' }), expect.objectContaining({ role: 'user' })],
+          think: null,
+          contextWindow: 8192,
+          temperature: 0.3
+        }),
+        { timeoutMs: 300_000 }
+      )
+      expect(Object.keys(calls[0])).toEqual(['model', 'messages', 'options', 'stream'])
+      expect(JSON.stringify(calls[0].options)).toBe('{"temperature":0.3,"num_ctx":8192}')
+    } finally {
+      once.mockRestore()
+      restore()
+    }
+  })
 
   it('summarizes in pieces when the older messages outgrow the model’s window, folding each summary into the next', async () => {
     // The mock model's window is 8192 tokens (~32k characters): seven 6,000-character messages won't fit at once.
@@ -3087,5 +3137,53 @@ describe('sub-agents', () => {
     const system = String((childReq.messages as Array<{ content: string }>)[0].content)
     expect(system).toMatch(/<plan_mode>/)
     expect(system).toMatch(/<sub_agent>[\s\S]*Survey the folder\./)
+  })
+})
+
+describe('replay', () => {
+  it('re-sends a recorded body through its model’s provider, as recorded, and counts it', async () => {
+    const sendWire = vi.spyOn(resolve('llama3.2').provider, 'sendWire')
+    const base = ollama.handler
+    const replays: Array<Record<string, unknown>> = []
+    ollama.handler = (req, res) => {
+      const first = (req.json.messages as Array<{ content: string }> | undefined)?.[0]
+      if (req.url === '/api/chat' && first?.content === 'replay me') {
+        replays.push(req.json)
+        return void res.writeHead(200).end(
+          JSON.stringify({
+            message: { role: 'assistant', content: 'Replayed.' },
+            done: true,
+            prompt_eval_count: 4,
+            eval_count: 2,
+            eval_duration: 2_000_000
+          })
+        )
+      }
+      return base(req, res)
+    }
+    try {
+      const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+      const detail = await replayRequest(c.id, {
+        model: 'llama3.2',
+        messages: [{ role: 'user', content: 'replay me', images: ['<image 3 KB>'] }],
+        stream: true
+      })
+      expect(sendWire).toHaveBeenCalledOnce()
+      // As recorded, less the image placeholder, and not streamed.
+      expect(JSON.stringify(replays[0])).toBe('{"model":"llama3.2","messages":[{"role":"user","content":"replay me"}],"stream":false}')
+      expect(detail).toMatchObject({
+        kind: 'replay',
+        endpoint: `${ollama.url}/api/chat`,
+        status: 'ok',
+        promptTokens: 4,
+        completionTokens: 2,
+        response: { content: 'Replayed.' },
+        timing: { evalMs: 2 }
+      })
+      expect(all<{ kind: string }>('SELECT kind FROM usage_events WHERE conversation_id = ?', c.id)).toEqual([{ kind: 'replay' }])
+    } finally {
+      ollama.handler = base
+      sendWire.mockRestore()
+    }
   })
 })

@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
 import { parseMessage } from '@shared/artifactParser'
 import { normalizeSpaces } from '@shared/text'
-import { contextOptions, effectiveContext } from '@shared/context'
+import { effectiveContext } from '@shared/context'
 import { EVENT_CHANNELS } from '@shared/ipc'
 import { resolveThinkProfile } from '@shared/thinking'
 import type {
@@ -13,6 +13,7 @@ import type {
   SendRequest,
   SendResult,
   ThinkingSegment,
+  ThinkProfile,
   ThinkSetting,
   ToolEvent
 } from '@shared/types'
@@ -34,10 +35,8 @@ import {
 } from '../db/conversations'
 import { getProject, projectKnowledge, touchProject } from '../db/projects'
 import { imageForModel, removeFiles } from '../files/ingest'
-import { resultFromOllama } from '../providers/ollama/adapter'
-import { type ChatBody, chatOnce, endpointFor } from '../providers/ollama/wire'
 import { modelInfo, resolve } from '../providers/registry'
-import type { ChatRequest } from '../providers/types'
+import type { ChatRequest, Provider } from '../providers/types'
 import { webAvailable } from '../ollama/web'
 import { startTrace, type Trace } from '../debug/traces'
 import { getSettings } from '../settings'
@@ -657,6 +656,10 @@ function uncompactFrom(conversationId: string, from: Message): void {
   if (c && from.createdAt <= c.upTo) setCompaction(conversationId, null)
 }
 
+/** A title or a summary isn't worth reasoning over: the least thinking the model allows. */
+const leastThinking = (profile: ThinkProfile): ThinkSetting | null =>
+  profile.kind === 'levels' ? 'low' : profile.kind === 'toggle' ? 'off' : null
+
 /**
  * /compact: summarize every message since the last compaction (or the start) with the chat's model, and keep the
  * summary on the chat so later replies replay it and only the messages that came after (the messages stay in the
@@ -674,25 +677,27 @@ export async function compact(conversationId: string, opts: { focus: string; mod
   if (!since.length) throw new Error(earlier ? 'Nothing new to compact since the last summary.' : 'Nothing to compact yet.')
   compacting.add(conversationId)
   try {
+    const { provider, model: serverName } = resolve(opts.model)
     const info = await modelInfo(opts.model)
     const profile = resolveThinkProfile(opts.model, info.capabilities, info.overrides.think)
     const settings = getSettings()
+    const contextWindow = effectiveContext(info, settings.localNumCtx)
     const focus = opts.focus.trim()
     const system = focus ? `${COMPACT_PROMPT}\n\nAbove all, keep what the user asked for: ${focus}` : COMPACT_PROMPT
-    const body = (transcript: string): ChatBody => ({
-      model: opts.model,
+    const request = (transcript: string): ChatRequest => ({
+      model: serverName,
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: transcript }
       ],
-      think: profile.kind === 'levels' ? 'low' : profile.kind === 'toggle' ? false : undefined,
-      options: { temperature: 0.3, ...contextOptions(info, settings.localNumCtx) }
+      think: leastThinking(profile),
+      profile,
+      // The chat's own window: a different num_ctx would make Ollama reload a local model for the summary.
+      contextWindow,
+      temperature: 0.3
     })
     // A model with a tiny window still gets a piece worth summarizing rather than one message cut to nothing.
-    const budget = Math.max(
-      2000,
-      promptBudget(effectiveContext(info, settings.localNumCtx)) - estimateTokens(system) - COMPACT_REPLY_TOKENS
-    )
+    const budget = Math.max(2000, promptBudget(contextWindow) - estimateTokens(system) - COMPACT_REPLY_TOKENS)
     const lines = since.map(transcriptLine)
     let summary = earlier?.summary ?? null
     let i = 0
@@ -711,7 +716,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
         i++
       }
       const transcript = `${head}<conversation>\n${piece.join('\n\n')}\n</conversation>\n\n${COMPACT_INSTRUCTION}`
-      summary = await summarizeOnce(conversationId, opts.model, body(transcript), transcript, piece.length)
+      summary = await summarizeOnce(conversationId, opts.model, provider, request(transcript), transcript, piece.length)
     }
     if (!getConversation(conversationId)) throw new Error('The chat was deleted while it was being compacted.')
     const compaction: Compaction = {
@@ -732,25 +737,27 @@ export async function compact(conversationId: string, opts: { focus: string; mod
 async function summarizeOnce(
   conversationId: string,
   modelName: string,
-  body: ChatBody,
+  provider: Provider,
+  request: ChatRequest,
   transcript: string,
   count: number
 ): Promise<string> {
+  const wire = provider.wire(request, false)
   const trace = startTrace({
     kind: 'compact',
     conversationId,
     messageId: null,
     model: modelName,
-    endpoint: endpointFor('/api/chat'),
-    request: { ...body, stream: false },
+    endpoint: wire.endpoint,
+    request: wire.body,
     summary: 'Compacting…'
   })
   try {
-    const res = await chatOnce(body, { timeoutMs: 5 * 60_000 })
+    const res = await provider.chatOnce(request, { timeoutMs: 5 * 60_000 })
     trace.firstByte()
-    const summary = (res.message?.content ?? '').replace(/<think>[\s\S]*?<\/think>/g, '').trim()
-    const promptTokens = res.prompt_eval_count ?? estimateTokens(transcript)
-    const completionTokens = res.eval_count ?? estimateTokens(summary)
+    const summary = res.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
+    const promptTokens = res.usage.prompt ?? estimateTokens(transcript)
+    const completionTokens = res.usage.completion ?? estimateTokens(summary)
     const costUsd = requestCost(modelName, promptTokens, completionTokens)
     // Spent tokens are kept even for a chat deleted meanwhile (with no chat to bill them to), and the chat's usage
     // chip moves after each piece, so a later failure leaves it right.
@@ -763,14 +770,13 @@ async function summarizeOnce(
       promptTokens,
       completionTokens,
       costUsd,
-      estimated: res.eval_count === undefined
+      estimated: res.usage.completion === undefined
     })
     if (chat) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
     if (!summary) throw new Error('The model gave no summary; nothing was compacted.')
-    const { message: _m, ...finalStats } = res
     trace.finish({
       status: 'ok',
-      response: { content: summary, final: finalStats },
+      response: { content: summary, final: res.raw },
       promptTokens,
       completionTokens,
       costUsd,
@@ -795,33 +801,37 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
   let titleTrace: Trace | null = null
   try {
     const modelName = getSettings().titleModel || chatModel
+    const { provider, model: serverName } = resolve(modelName)
     const info = await modelInfo(modelName)
     const profile = resolveThinkProfile(modelName, info.capabilities, info.overrides.think)
-    const titleBody: ChatBody = {
-      model: modelName,
+    const request: ChatRequest = {
+      model: serverName,
       messages: [
         { role: 'system', content: TITLE_PROMPT },
         { role: 'user', content: transcript }
       ],
-      think: profile.kind === 'levels' ? 'low' : profile.kind === 'toggle' ? false : undefined,
-      // Same num_ctx as the chat: a different one makes Ollama reload a local model just for the title.
-      options: { temperature: 0.3, ...contextOptions(info, getSettings().localNumCtx) }
+      think: leastThinking(profile),
+      profile,
+      // Same window as the chat: a different num_ctx makes Ollama reload a local model just for the title.
+      contextWindow: effectiveContext(info, getSettings().localNumCtx),
+      temperature: 0.3
     }
+    const wire = provider.wire(request, false)
     titleTrace = startTrace({
       kind: 'title',
       conversationId,
       messageId: null,
       model: modelName,
-      endpoint: endpointFor('/api/chat'),
-      request: { ...titleBody, stream: false },
+      endpoint: wire.endpoint,
+      request: wire.body,
       summary: 'Generating title…'
     })
     // Bounded: a title is never worth a request that hangs forever (it may still need a cold model load).
-    const res = await chatOnce(titleBody, { timeoutMs: 5 * 60_000 })
+    const res = await provider.chatOnce(request, { timeoutMs: 5 * 60_000 })
     titleTrace.firstByte()
-    title = cleanTitle(res.message?.content ?? '')
-    const promptTokens = res.prompt_eval_count ?? estimateTokens(transcript)
-    const completionTokens = res.eval_count ?? estimateTokens(res.message?.content ?? '')
+    title = cleanTitle(res.content)
+    const promptTokens = res.usage.prompt ?? estimateTokens(transcript)
+    const completionTokens = res.usage.completion ?? estimateTokens(res.content)
     const costUsd = requestCost(modelName, promptTokens, completionTokens)
     insertUsageEvent({
       conversationId,
@@ -831,18 +841,17 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       promptTokens,
       completionTokens,
       costUsd,
-      estimated: res.eval_count === undefined
+      estimated: res.usage.completion === undefined
     })
     emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
-    const { message: titleMessage, ...titleStats } = res
     titleTrace.finish({
       status: 'ok',
-      response: { content: titleMessage?.content, thinking: titleMessage?.thinking, final: titleStats },
+      response: { content: res.content, thinking: res.thinking || undefined, final: res.raw },
       promptTokens,
       completionTokens,
       costUsd,
       summary: `Title: ${title || '(empty)'}`,
-      timing: resultFromOllama(res).timing
+      timing: res.timing
     })
   } catch (err) {
     titleTrace?.finish({ status: 'error', response: { error: errorMessage(err) }, summary: `Title failed: ${errorMessage(err)}` })
