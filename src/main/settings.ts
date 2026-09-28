@@ -128,9 +128,12 @@ export function setEndpoints(list: Array<StoredEndpoint | Endpoint>): void {
   writeSetting('app', cache)
 }
 
-/** A server rejected `stream_options`: stop sending it to this endpoint, across restarts too. */
-export function setEndpointStreamOptions(id: string, supported: boolean): void {
-  setEndpoints(stored().endpoints.map((e) => (e.id === id ? { ...e, streamOptions: supported } : e)))
+/**
+ * A server rejected `stream_options`: stop sending it to this endpoint, across restarts too. Only while the endpoint
+ * still has the address that server answered at: a reply still running after an address edit tells nothing about the new one.
+ */
+export function setEndpointStreamOptions(id: string, baseUrl: string, supported: boolean): void {
+  setEndpoints(stored().endpoints.map((e) => (e.id === id && e.baseUrl === baseUrl ? { ...e, streamOptions: supported } : e)))
 }
 
 // The ollama.com API key never leaves the main process; see providers/secrets.ts.

@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
-import { type MockOllama, startMockOllama } from './ollamaMock'
+import { type MockOllama, sseDelta, sseDone, startMockOllama, streamSse } from './ollamaMock'
 
 // The registry and the endpoint store for real, on an in-memory database; only Electron is faked.
 vi.mock('electron', () => ({
@@ -68,7 +68,7 @@ describe('an OpenAI-compatible endpoint', () => {
   })
 
   it('keeps a rejected stream_options off, across new providers', () => {
-    setEndpointStreamOptions(id, false)
+    setEndpointStreamOptions(id, `${server.url}/v1`, false)
     expect(getSettings().endpoints.find((e) => e.id === id)?.streamOptions).toBe(false)
     registry.invalidateProviders()
     expect(registry.resolve('lm-studio/x').provider.wire(request, true).body).not.toHaveProperty('stream_options')
@@ -103,12 +103,43 @@ describe('an OpenAI-compatible endpoint', () => {
       r.url === '/v1/models' ? void res.writeHead(200).end(JSON.stringify({ data: [{ id: 'm' }] })) : void res.writeHead(404).end()
     const box = addEndpoint({ name: 'Old box', baseUrl: 'http://127.0.0.1:10/v1', kind: 'openai', flavor: 'generic' })
     try {
-      setEndpointStreamOptions(box.id, false)
+      setEndpointStreamOptions(box.id, 'http://127.0.0.1:10/v1', false)
       await updateEndpoint(box.id, { baseUrl: moved.url })
       expect(getSettings().endpoints.find((e) => e.id === box.id)?.streamOptions).toBeUndefined()
       expect(registry.resolve(`${box.id}/m`).provider.wire(request, true).body).toHaveProperty('stream_options')
     } finally {
       removeEndpoint(box.id)
+      await moved.close()
+    }
+  })
+
+  it('keeps that reset when a reply still running on the old server learns it refused stream_options', async () => {
+    let refuse = () => {}
+    const held = new Promise<void>((resolve) => (refuse = resolve))
+    const old = await startMockOllama()
+    old.handler = async (r, res) => {
+      if (!r.json.stream_options) return streamSse(res, [sseDelta({ content: 'ok' }, 'stop'), sseDone]).then(() => res.end())
+      await held
+      res.writeHead(400).end(JSON.stringify({ error: { message: 'Unrecognized request argument supplied: stream_options' } }))
+    }
+    const moved = await startMockOllama()
+    moved.handler = (r, res) =>
+      r.url === '/v1/models' ? void res.writeHead(200).end(JSON.stringify({ data: [{ id: 'm' }] })) : void res.writeHead(404).end()
+    const box = addEndpoint({ name: 'Moving box', baseUrl: `${old.url}/v1`, kind: 'openai', flavor: 'generic' })
+    try {
+      const reply = (async () => {
+        for await (const _event of registry.resolve(`${box.id}/m`).provider.chatStream(request, new AbortController().signal));
+      })()
+      await vi.waitFor(() => expect(old.requests).toHaveLength(1))
+      await updateEndpoint(box.id, { baseUrl: moved.url })
+      refuse()
+      await reply
+      expect(old.requests.map((b) => 'stream_options' in b)).toEqual([true, false])
+      expect(getSettings().endpoints.find((e) => e.id === box.id)?.streamOptions).toBeUndefined()
+      expect(registry.resolve(`${box.id}/m`).provider.wire(request, true).body).toHaveProperty('stream_options')
+    } finally {
+      removeEndpoint(box.id)
+      await old.close()
       await moved.close()
     }
   })

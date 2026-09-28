@@ -332,7 +332,7 @@ export class OpenAIProvider implements Provider {
       res = await this.send(rest, signal)
       if (res.ok) {
         this.streamOptions = false
-        setEndpointStreamOptions(this.endpoint.id, false)
+        setEndpointStreamOptions(this.endpoint.id, this.endpoint.baseUrl, false)
       }
     }
     if (!res.ok) throw this.fail(res.status, await res.text().catch(() => ''), model)

@@ -23,7 +23,7 @@ const fake = vi.hoisted(() => {
   type Row = { info: unknown; fetchedAt: number; overrides: Record<string, unknown>; detected: Record<string, unknown> }
   const rows = new Map<string, Row>()
   const row = (key: string): Row => rows.get(key) ?? { info: null, fetchedAt: 0, overrides: {}, detected: {} }
-  return { rows, row, key: null as string | null, streamOptions: [] as Array<[string, boolean]> }
+  return { rows, row, key: null as string | null, streamOptions: [] as Array<[string, string, boolean]> }
 })
 vi.mock('../src/main/db/kv', () => ({
   readModelProfile: (key: string) => fake.row(key),
@@ -31,7 +31,9 @@ vi.mock('../src/main/db/kv', () => ({
   writeModelDetected: (key: string, detected: Record<string, unknown>) => void fake.rows.set(key, { ...fake.row(key), detected }),
   writeModelOverrides: (key: string, overrides: Record<string, unknown>) => void fake.rows.set(key, { ...fake.row(key), overrides })
 }))
-vi.mock('../src/main/settings', () => ({ setEndpointStreamOptions: (id: string, v: boolean) => void fake.streamOptions.push([id, v]) }))
+vi.mock('../src/main/settings', () => ({
+  setEndpointStreamOptions: (id: string, baseUrl: string, v: boolean) => void fake.streamOptions.push([id, baseUrl, v])
+}))
 vi.mock('../src/main/providers/secrets', () => ({ endpointSecretName: (id: string) => `endpointKey:${id}`, getSecret: () => fake.key }))
 
 const { OpenAIProvider } = await import('../src/main/providers/openai/adapter')
@@ -365,7 +367,7 @@ describe('chatStream', () => {
     const p = provider()
     expect(text(await collect(p), 'content')).toBe('ok')
     expect(server.requests.map((b) => 'stream_options' in b)).toEqual([true, false])
-    expect(fake.streamOptions).toEqual([['lm', false]])
+    expect(fake.streamOptions).toEqual([['lm', `${server.url}/v1`, false]])
     expect(p.wire(req(), true).body).not.toHaveProperty('stream_options')
     await collect(p)
     expect(server.requests).toHaveLength(3)
