@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, statSync } from 'node:fs'
+import { existsSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
@@ -82,6 +82,17 @@ describe('the model-key migration', () => {
     openDatabase(file)
     openDatabase(oldDatabase(dir, 'other.db'))
     expect(statSync(backup).mtimeMs).toBe(made)
+  })
+
+  it('leaves the database as it was when it can’t be backed up, and says why', () => {
+    const dir = folder()
+    const file = oldDatabase(dir)
+    // A file where the backups folder goes: the folder can't be made, and the copy it would hold can't be cleaned up.
+    writeFileSync(join(dir, 'backups'), '')
+    expect(() => openDatabase(file)).toThrow(/^Ollmost couldn't back up its database before updating it/)
+    const d = new DatabaseSync(file)
+    expect(d.prepare('PRAGMA user_version').get()).toEqual({ user_version: MODEL_KEYS_MIGRATION })
+    d.close()
   })
 
   it('makes no backup of a new database', () => {

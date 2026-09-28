@@ -42,8 +42,12 @@ function backUp(d: DatabaseSync, file: string): void {
     mkdirSync(dirname(file), { recursive: true })
     d.prepare('VACUUM INTO ?').run(file)
   } catch (err) {
-    // A half-written copy would pass for a backup tomorrow.
-    rmSync(file, { force: true })
+    // A half-written copy would pass for a backup tomorrow. The clean-up failing mustn't hide why the backup did.
+    try {
+      rmSync(file, { force: true })
+    } catch {
+      /* nothing to clean up */
+    }
     throw new Error(`Ollmost couldn't back up its database before updating it, so it left it as it was: ${(err as Error).message}`, {
       cause: err
     })
