@@ -1,4 +1,5 @@
 // What an endpoint is, as data both processes need: the defaults, and what an address says about a server.
+import { formatContext } from './format'
 import type { EndpointFlavor, EndpointProbe, ModelWhere } from './types'
 
 export const OLLAMA_CLOUD_URL = 'https://ollama.com'
@@ -60,6 +61,22 @@ export function probeSummary(p: EndpointProbe): string {
         : ['capabilities not reported — defaults apply (tools on, vision off)'])
     )
   return parts.join(' · ')
+}
+
+/** Where the dialog says its models' context sizes will come from. */
+export function probeContextNote(p: Pick<EndpointProbe, 'reportsContext'>): string {
+  return p.reportsContext
+    ? 'Context sizes reported by the server'
+    : `Context sizes not reported — models get ${formatContext(DEFAULT_CONTEXT)} unless you change “Context when not reported”`
+}
+
+/** A name for a new endpoint: its server's, numbered when another endpoint has it. */
+export function suggestEndpointName(p: Pick<EndpointProbe, 'flavor'>, taken: readonly string[]): string {
+  const base = FLAVOR_LABELS[p.flavor]
+  if (!taken.includes(base)) return base
+  let n = 2
+  while (taken.includes(`${base} ${n}`)) n++
+  return `${base} ${n}`
 }
 
 /** The question before an endpoint is removed: what goes (the confirm-before-loss rule). */

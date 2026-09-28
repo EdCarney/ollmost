@@ -259,13 +259,15 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
   const cloud = isOllamaCloudUrl(endpoint.baseUrl)
   const error = modelErrors.find((x) => x.endpointId === endpoint.id)?.message
   const mine = models.filter((m) => m.endpoint.id === endpoint.id)
-  // Bumped when an edit is refused, so the name and address fields remount showing what's stored, not the refused text.
+  // Bumped when an edit is refused, so the name and address fields remount showing what's stored, not the refused
+  // text; also after a baseUrl save, since an OpenAI endpoint stores its probed base, not what was typed.
   const [rev, setRev] = useState(0)
 
   const update = async (patch: Parameters<typeof api.endpoints.update>[1]) => {
     try {
       await api.endpoints.update(endpoint.id, patch)
       await endpointsChanged()
+      if ('baseUrl' in patch) setRev((n) => n + 1)
     } catch (err) {
       setRev((n) => n + 1)
       reportError(err)

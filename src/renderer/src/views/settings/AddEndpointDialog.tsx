@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { displayAddress, FLAVOR_LABELS, isOllamaCloudUrl, probeSummary } from '@shared/endpoints'
+import { displayAddress, isOllamaCloudUrl, probeContextNote, probeSummary, suggestEndpointName } from '@shared/endpoints'
 import type { Endpoint, EndpointProbe } from '@shared/types'
 import { Button, Field, Modal, TextField } from '@/components/ui'
 import { api } from '@/lib/api'
@@ -15,12 +15,6 @@ const PRESETS = [
 // Electron prefixes errors thrown in ipcMain handlers; the dialog shows only the message.
 const messageOf = (err: unknown) =>
   (err instanceof Error ? err.message : String(err)).replace(/^Error invoking remote method '[^']+': (Error: )?/, '')
-
-/** A name for what was found: the server's kind, and its address when another endpoint has that name. */
-function suggestName(found: EndpointProbe, endpoints: readonly Endpoint[]): string {
-  const base = FLAVOR_LABELS[found.flavor]
-  return endpoints.some((e) => e.name === base) ? `${base} (${displayAddress(found.baseUrl)})` : base
-}
 
 /** Add an endpoint: an address (and a key, if the server wants one) is checked first; then it's named and added. */
 export function AddEndpointDialog({
@@ -39,8 +33,6 @@ export function AddEndpointDialog({
   const [name, setName] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  // Only Ollama can be added until OpenAI-compatible servers have an adapter.
-  const supported = found?.kind === 'ollama'
 
   const close = (next: boolean) => {
     if (!next) {
@@ -59,7 +51,12 @@ export function AddEndpointDialog({
     try {
       const probe = await api.endpoints.probe({ baseUrl: address, apiKey: apiKey.trim() || undefined })
       setFound(probe)
-      setName(suggestName(probe, endpoints))
+      setName(
+        suggestEndpointName(
+          probe,
+          endpoints.map((e) => e.name)
+        )
+      )
     } catch (err) {
       setError(messageOf(err))
     } finally {
@@ -106,7 +103,7 @@ export function AddEndpointDialog({
             >
               Back
             </Button>
-            <Button variant="primary" disabled={!supported || !name.trim()} loading={busy} onClick={() => void add()}>
+            <Button variant="primary" disabled={!name.trim()} loading={busy} onClick={() => void add()}>
               Add
             </Button>
           </>
@@ -127,7 +124,7 @@ export function AddEndpointDialog({
           <div className="rounded-ollmost border border-line bg-canvas p-3 text-sm">
             <div className="font-medium text-success">{probeSummary(found)}</div>
             <div className="mt-0.5 text-muted">at {displayAddress(found.baseUrl)}</div>
-            {!supported && <div className="mt-2 text-muted">This server speaks the OpenAI API; support arrives in the next update.</div>}
+            <div className="mt-0.5 text-muted">{probeContextNote(found)}</div>
           </div>
           {/* addEndpoint never keeps an endpoint key for ollama.com: it takes the account key instead. */}
           {isOllamaCloudUrl(found.baseUrl) && apiKey.trim() && (
@@ -135,16 +132,14 @@ export function AddEndpointDialog({
               ollama.com takes your ollama.com account key, so the key typed here isn't kept. Set it in “ollama.com account”.
             </p>
           )}
-          {supported && (
-            <Field label="Name">
-              <TextField
-                autoFocus
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && name.trim() && void add()}
-              />
-            </Field>
-          )}
+          <Field label="Name">
+            <TextField
+              autoFocus
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              onKeyDown={(e) => e.key === 'Enter' && name.trim() && void add()}
+            />
+          </Field>
         </div>
       ) : (
         <div className="space-y-4">
