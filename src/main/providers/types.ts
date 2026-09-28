@@ -94,7 +94,11 @@ export interface Provider {
   /** The endpoint's id. */
   readonly id: string
   readonly endpoint: Endpoint
-  /** Every model it serves; throws when nothing can be listed. */
+  /**
+   * Every model it serves, or [] for a server with no models. Throws when its server can't be reached or refuses the
+   * listing (an ollama.com endpoint's server is ollama.com's catalog); the registry reports that error for this
+   * endpoint alone.
+   */
   listModels(refresh: boolean): Promise<ModelInfo[]>
   modelInfo(model: string, refresh?: boolean): Promise<ModelInfo>
   chatStream(req: ChatRequest, signal: AbortSignal): AsyncGenerator<ChatEvent>

@@ -19,7 +19,8 @@ const { deleteEndpointProfiles, readModelProfile, writeModelOverrides } = await 
 const { setApiKey, setEndpoints } = await import('../src/main/settings')
 const { endpointSecretName, setSecret } = await import('../src/main/providers/secrets')
 const registry = await import('../src/main/providers/registry')
-const { ollamaTarget } = await import('../src/main/providers/ollama/adapter')
+const { OllamaProvider, ollamaTarget } = await import('../src/main/providers/ollama/adapter')
+const { listCloudCatalog } = await import('../src/main/providers/ollama/wire')
 const { contextWindowFor } = await import('../src/main/providers/context')
 const { billingOf } = await import('../src/main/providers/where')
 const { requestCost } = await import('../src/main/usage/pricing')
@@ -118,6 +119,26 @@ describe('listing every endpoint', () => {
     })
   })
 
+  it('reports a listModels that throws before returning a promise for its own endpoint alone', async () => {
+    const real = OllamaProvider.prototype.listModels
+    // Not async, so it throws synchronously (OllamaProvider's own listModels is async and never does).
+    function listOrThrow(this: InstanceType<typeof OllamaProvider>, refresh: boolean) {
+      if (this.endpoint.id === 'gpu') throw new Error('GPU box broke before listing')
+      return real.call(this, refresh)
+    }
+    const broken = vi.spyOn(OllamaProvider.prototype, 'listModels').mockImplementation(listOrThrow)
+    try {
+      const { models, errors } = await registry.listAllModels(true)
+      expect(models.map((m) => m.key)).toEqual(['ollama/gpt-oss:120b-cloud', 'ollama/llama3.2', 'ollama/qwen3:8b'])
+      expect(errors).toEqual([
+        { endpointId: 'gpu', message: 'GPU box broke before listing' },
+        { endpointId: 'down', message: expect.stringMatching(/^Can't reach Down box/) }
+      ])
+    } finally {
+      broken.mockRestore()
+    }
+  })
+
   it('caches model info by key, so a name on two endpoints never shares a row', async () => {
     await registry.listAllModels(true)
     expect(readModelProfile('ollama/qwen3:8b').info).not.toBeNull()
@@ -203,6 +224,25 @@ describe('which key goes where', () => {
     } finally {
       setApiKey(null)
       setSecret(endpointSecretName('plain'), null)
+    }
+  })
+})
+
+describe('ollama.com’s catalog', () => {
+  it('is read with no key, even with the ollama.com account key set', async () => {
+    setApiKey('account-key')
+    const fetchMock = vi.fn<typeof fetch>(async () => new Response(JSON.stringify({ models: [{ name: 'gpt-oss:120b' }] })))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      expect((await listCloudCatalog()).map((m) => m.name)).toEqual(['gpt-oss:120b'])
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      const [url, init] = fetchMock.mock.calls[0]
+      expect(url).toBe('https://ollama.com/api/tags')
+      // No Authorization header: the account key goes only with chat on an ollama.com endpoint, usage and web tools.
+      expect(init?.headers).toEqual({ 'Content-Type': 'application/json' })
+    } finally {
+      vi.unstubAllGlobals()
+      setApiKey(null)
     }
   })
 })

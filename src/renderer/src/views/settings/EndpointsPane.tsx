@@ -157,12 +157,15 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
   const cloud = isOllamaCloudUrl(endpoint.baseUrl)
   const error = modelErrors.find((x) => x.endpointId === endpoint.id)?.message
   const mine = models.filter((m) => m.endpoint.id === endpoint.id)
+  // Bumped when an edit is refused, so the name and address fields remount showing what's stored, not the refused text.
+  const [rev, setRev] = useState(0)
 
   const update = async (patch: Parameters<typeof api.endpoints.update>[1]) => {
     try {
       await api.endpoints.update(endpoint.id, patch)
       await endpointsChanged()
     } catch (err) {
+      setRev((n) => n + 1)
       reportError(err)
     }
   }
@@ -184,10 +187,15 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
         description={`${FLAVOR_LABELS[endpoint.flavor]} at ${displayAddress(endpoint.baseUrl)} · ${STATUS[statusOf(endpoint, modelErrors)]}`}
       >
         <Field label="Name">
-          <BlurField value={endpoint.name} onSave={(name) => void update({ name })} />
+          <BlurField key={`name-${rev}`} value={endpoint.name} onSave={(name) => void update({ name })} />
         </Field>
         <Field label="Address">
-          <BlurField value={endpoint.baseUrl} onSave={(baseUrl) => void update({ baseUrl })} placeholder="http://127.0.0.1:11434" />
+          <BlurField
+            key={`address-${rev}`}
+            value={endpoint.baseUrl}
+            onSave={(baseUrl) => void update({ baseUrl })}
+            placeholder="http://127.0.0.1:11434"
+          />
         </Field>
         {cloud ? (
           <Row label="API key" hint="ollama.com takes your ollama.com account key.">

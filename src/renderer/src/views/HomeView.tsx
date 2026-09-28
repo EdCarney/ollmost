@@ -9,8 +9,9 @@ import { greeting } from '@/lib/format'
 import { useApp } from '@/stores/app'
 
 export function HomeView() {
-  const { settings, models, modelErrors, modelsLoading, loadModels, navigate, skills } = useApp()
-  const noModels = !modelsLoading && models.length === 0
+  const { settings, models, modelErrors, modelsLoading, modelsReady, loadModels, navigate, skills } = useApp()
+  // Not before the first listing has finished: on the first render nothing has been asked yet.
+  const noModels = modelsReady && !modelsLoading && models.length === 0
 
   return (
     <div className="flex h-full flex-col">

@@ -57,7 +57,8 @@ export function modelInfo(key: string, refresh = false): Promise<ModelInfo> {
 /** Every enabled endpoint's models, asked in parallel. One that fails adds to `errors`; the others still list. */
 export async function listAllModels(refresh = false): Promise<ModelListResult> {
   const list = [...live().values()]
-  const settled = await Promise.allSettled(list.map((p) => p.listModels(refresh)))
+  // Each call made async, so a provider that throws before it returns a promise still fails only its own endpoint.
+  const settled = await Promise.allSettled(list.map(async (p) => p.listModels(refresh)))
   const result: ModelListResult = { models: [], errors: [] }
   settled.forEach((r, i) => {
     if (r.status === 'fulfilled') result.models.push(...r.value)

@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { displayAddress, FLAVOR_LABELS, probeSummary } from '@shared/endpoints'
+import { displayAddress, FLAVOR_LABELS, isOllamaCloudUrl, probeSummary } from '@shared/endpoints'
 import type { Endpoint, EndpointProbe } from '@shared/types'
 import { Button, Field, Modal, TextField } from '@/components/ui'
 import { api } from '@/lib/api'
@@ -129,6 +129,12 @@ export function AddEndpointDialog({
             <div className="mt-0.5 text-muted">at {displayAddress(found.baseUrl)}</div>
             {!supported && <div className="mt-2 text-muted">This server speaks the OpenAI API; support arrives in the next update.</div>}
           </div>
+          {/* addEndpoint never keeps an endpoint key for ollama.com: it takes the account key instead. */}
+          {isOllamaCloudUrl(found.baseUrl) && apiKey.trim() && (
+            <p className="text-sm text-muted">
+              ollama.com takes your ollama.com account key, so the key typed here isn't kept. Set it in “ollama.com account”.
+            </p>
+          )}
           {supported && (
             <Field label="Name">
               <TextField

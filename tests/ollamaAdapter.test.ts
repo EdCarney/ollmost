@@ -202,7 +202,8 @@ describe('toOllamaBody: Ollama gets the bytes it got before the seam', () => {
     // Any model on ollama.com itself.
     expect(sent(ollamaCom, { ...cloud, model: 'gpt-oss:120b' }).options).toBeUndefined()
     expect(sent(ollamaCom, { ...cloud, model: 'gpt-oss:120b', temperature: 0.3 }).options).toEqual({ temperature: 0.3 })
-    // A model the Ollama app runs gets its window, the one worked out from the endpoint's num_ctx.
+    // A model the Ollama app runs gets the request's contextWindow as num_ctx, unchanged. Capping it at the endpoint's
+    // numCtx is contextWindowFor's job, pinned in registry.test.ts.
     expect(sent(endpoint, { ...cloud, model: 'llama3.2', contextWindow: 32_768 }).options).toEqual({ num_ctx: 32_768 })
   })
 
