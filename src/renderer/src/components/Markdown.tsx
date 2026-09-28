@@ -4,6 +4,7 @@ import rehypeKatex from 'rehype-katex'
 import remarkGfm from 'remark-gfm'
 import remarkMath from 'remark-math'
 import { normalizeCitations } from '@shared/citations'
+import { normalizeMath } from '@shared/mathText'
 import { normalizeSpaces } from '@shared/text'
 import { cn } from '@/lib/format'
 import { CodeBlock } from './CodeBlock'
@@ -18,13 +19,6 @@ interface Props {
   conversationId: string | null
   className?: string
   onOpenAsArtifact?: (code: string, lang: string | null) => void
-}
-
-// Models often write \( \) and \[ \] delimiters; remark-math only understands dollars.
-function normalizeMath(text: string): string {
-  return text
-    .replace(/\\\[([\s\S]+?)\\\]/g, (_m, inner: string) => `$$${inner}$$`)
-    .replace(/\\\(([\s\S]+?)\\\)/g, (_m, inner: string) => `$${inner}$`)
 }
 
 function textOf(children: ReactNode): string {
