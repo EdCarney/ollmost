@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import { chosenOption, TextArea, TextField } from '@/components/ui'
 import { cn } from '@/lib/format'
@@ -20,8 +20,18 @@ export function BlurField({
   rows?: number
 }) {
   const [local, setLocal] = useState(value)
-  useEffect(() => setLocal(value), [value])
-  const commit = () => local !== value && onSave(local)
+  // The text last saved, until `value` catches up: Enter saves, and the blur after it mustn't send the same text again
+  // while that save (an address probe, say) is still on its way.
+  const sent = useRef<string | null>(null)
+  useEffect(() => {
+    setLocal(value)
+    sent.current = null
+  }, [value])
+  const commit = () => {
+    if (local === value || local === sent.current) return
+    sent.current = local
+    onSave(local)
+  }
   return multiline ? (
     <TextArea value={local} onChange={(e) => setLocal(e.target.value)} onBlur={commit} {...rest} />
   ) : (

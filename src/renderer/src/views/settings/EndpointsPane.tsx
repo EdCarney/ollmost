@@ -259,17 +259,20 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
   const cloud = isOllamaCloudUrl(endpoint.baseUrl)
   const error = modelErrors.find((x) => x.endpointId === endpoint.id)?.message
   const mine = models.filter((m) => m.endpoint.id === endpoint.id)
-  // Bumped when an edit is refused, so the name and address fields remount showing what's stored, not the refused
-  // text; also after a baseUrl save, since an OpenAI endpoint stores its probed base, not what was typed.
-  const [rev, setRev] = useState(0)
+  // Bumped so a field remounts showing what's stored, not the text typed: the name's when a name edit is refused, the
+  // address's when an address edit is refused or saved (an OpenAI endpoint stores its probed base, not what was typed).
+  // Apart, so an address probe finishing doesn't remount a name being typed.
+  const [nameRev, setNameRev] = useState(0)
+  const [addressRev, setAddressRev] = useState(0)
 
   const update = async (patch: Parameters<typeof api.endpoints.update>[1]) => {
     try {
       await api.endpoints.update(endpoint.id, patch)
       await endpointsChanged()
-      if ('baseUrl' in patch) setRev((n) => n + 1)
+      if ('baseUrl' in patch) setAddressRev((n) => n + 1)
     } catch (err) {
-      setRev((n) => n + 1)
+      if ('name' in patch) setNameRev((n) => n + 1)
+      if ('baseUrl' in patch) setAddressRev((n) => n + 1)
       reportError(err)
     }
   }
@@ -291,11 +294,11 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
         description={`${FLAVOR_LABELS[endpoint.flavor]} at ${displayAddress(endpoint.baseUrl)} · ${STATUS[statusOf(endpoint, modelErrors)]}`}
       >
         <Field label="Name">
-          <BlurField key={`name-${rev}`} value={endpoint.name} onSave={(name) => void update({ name })} />
+          <BlurField key={`name-${nameRev}`} value={endpoint.name} onSave={(name) => void update({ name })} />
         </Field>
         <Field label="Address">
           <BlurField
-            key={`address-${rev}`}
+            key={`address-${addressRev}`}
             value={endpoint.baseUrl}
             onSave={(baseUrl) => void update({ baseUrl })}
             placeholder="http://127.0.0.1:11434"
