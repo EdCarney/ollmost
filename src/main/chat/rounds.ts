@@ -5,7 +5,7 @@ import { getConversation, updateConversation } from '../db/conversations'
 import { insertUsageEvent } from '../db/usage'
 import { startTrace, type Trace } from '../debug/traces'
 import { paths } from '../paths'
-import type { ChatEvent, ChatRequest, IdentifiedToolCall, Provider, ToolCall } from '../providers/types'
+import type { ChatEvent, ChatRequest, IdentifiedToolCall, Provider } from '../providers/types'
 import { requestCost } from '../usage/pricing'
 import { errorMessage, estimateTokens } from '../util'
 import { EVERY_TIME, waitForDecision } from './approvals'
@@ -444,7 +444,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
 
 /** A call the round has shown on its card, waiting to run. */
 interface ShownCall {
-  call: ToolCall
+  call: IdentifiedToolCall
   /** Its place in the reply's tool events. */
   index: number
   pending: ToolEvent
@@ -454,8 +454,8 @@ interface ShownCall {
  * A round's calls in order, in batches: calls in a row that may run together (runsInParallel) make one batch when the
  * reply runs more than one at once; every other call is a batch of its own.
  */
-function batchesOf(calls: ToolCall[], parallel: number, ctx: ToolContext): ToolCall[][] {
-  const batches: Array<{ calls: ToolCall[]; together: boolean }> = []
+function batchesOf(calls: IdentifiedToolCall[], parallel: number, ctx: ToolContext): IdentifiedToolCall[][] {
+  const batches: Array<{ calls: IdentifiedToolCall[]; together: boolean }> = []
   for (const call of calls) {
     const together = parallel > 1 && runsInParallel(call, ctx)
     const last = batches.at(-1)
