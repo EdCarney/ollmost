@@ -22,6 +22,7 @@ const DEFAULTS: StoredSettings = {
   skills: { sources: { ollama: true, claude: true }, disabled: [], enabledImports: [], autoLoad: true },
   web: { enabled: true },
   runner: { mode: 'ask', defaultOn: false, pypi: false, timeoutSec: 120 },
+  chat: { maxRounds: 20 },
   code: { edits: 'ask', commands: 'ask', timeoutSec: 300, maxRounds: 60, defaultNetwork: 'none' },
   delegate: { enabled: true, maxRounds: 20, parallel: DEFAULT_SUB_AGENTS_AT_ONCE },
   debug: { record: true },

@@ -1,20 +1,23 @@
 import { describe, expect, it } from 'vitest'
-import { CODE_TOOL_ROUNDS, DEFAULT_TOOL_ROUNDS, TOOL_SOURCE_ROUNDS, turnPolicy } from '../src/main/chat/turn'
+import { CHAT_TOOL_ROUNDS, CODE_TOOL_ROUNDS, turnPolicy } from '../src/main/chat/turn'
 
 // What a reply may do depends on the kind of conversation (#82): the round loop reads this and nothing else.
 
 describe('the policy for a reply', () => {
-  it('gives a chat a few rounds, more with tool sources on, and a code session many', () => {
-    expect(turnPolicy({ mode: 'chat', sources: [], artifacts: true }).maxRounds).toBe(DEFAULT_TOOL_ROUNDS)
-    expect(turnPolicy({ mode: 'chat', sources: ['mcp:x'], artifacts: true }).maxRounds).toBe(TOOL_SOURCE_ROUNDS)
+  it('gives a chat and a code session their own default, whether or not the chat has tool sources on', () => {
+    expect(turnPolicy({ mode: 'chat', sources: [], artifacts: true }).maxRounds).toBe(CHAT_TOOL_ROUNDS)
+    expect(turnPolicy({ mode: 'chat', sources: ['mcp:x'], artifacts: true }).maxRounds).toBe(CHAT_TOOL_ROUNDS)
     expect(turnPolicy({ mode: 'code', sources: [], artifacts: true }).maxRounds).toBe(CODE_TOOL_ROUNDS)
     expect(turnPolicy({ mode: 'code', sources: ['mcp:x'], artifacts: true }).maxRounds).toBe(CODE_TOOL_ROUNDS)
-    expect(CODE_TOOL_ROUNDS).toBeGreaterThan(TOOL_SOURCE_ROUNDS)
+    expect(CODE_TOOL_ROUNDS).toBeGreaterThan(CHAT_TOOL_ROUNDS)
   })
 
-  it('takes a code session’s rounds from Settings when given, and the constant otherwise', () => {
+  it('takes a chat’s or a code session’s rounds from Settings when given, and the constant otherwise', () => {
+    expect(turnPolicy({ mode: 'chat', sources: [], artifacts: true, chatRounds: 40 }).maxRounds).toBe(40)
+    expect(turnPolicy({ mode: 'chat', sources: ['mcp:x'], artifacts: true, chatRounds: 40 }).maxRounds).toBe(40)
+    expect(turnPolicy({ mode: 'chat', sources: [], artifacts: true, codeRounds: 20 }).maxRounds).toBe(CHAT_TOOL_ROUNDS)
     expect(turnPolicy({ mode: 'code', sources: [], artifacts: true, codeRounds: 20 }).maxRounds).toBe(20)
-    expect(turnPolicy({ mode: 'chat', sources: [], artifacts: true, codeRounds: 20 }).maxRounds).toBe(DEFAULT_TOOL_ROUNDS)
+    expect(turnPolicy({ mode: 'code', sources: [], artifacts: true, chatRounds: 40 }).maxRounds).toBe(CODE_TOOL_ROUNDS)
     expect(turnPolicy({ mode: 'code', sources: [], artifacts: true, codeRounds: 20, maxToolRounds: 3 }).maxRounds).toBe(3)
   })
 

@@ -166,7 +166,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
     model,
     body,
     budget: promptBudget(numCtx),
-    maxRounds: Math.max(1, Math.min(settings.delegate.maxRounds, reply.maxRounds)),
+    maxRounds: Math.max(1, settings.delegate.maxRounds),
     // A child has no delegate of its own, so nothing of its runs beside anything else.
     parallel: 1,
     toolContext: childCtx,

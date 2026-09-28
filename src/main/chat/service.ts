@@ -318,6 +318,7 @@ async function generate(
       sources,
       artifacts: settings.artifacts.enabled && model.overrides.artifacts !== false,
       maxToolRounds: reply.maxToolRounds,
+      chatRounds: settings.chat.maxRounds,
       codeRounds: settings.code.maxRounds
     })
     const serverIds = sources.filter((s) => s.startsWith(MCP_SOURCE)).map((s) => s.slice(MCP_SOURCE.length))
@@ -394,7 +395,6 @@ async function generate(
         messageId,
         model: modelName,
         think,
-        maxRounds: policy.maxRounds,
         prompt: {
           userName: settings.userName,
           model: modelName,

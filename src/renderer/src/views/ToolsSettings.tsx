@@ -489,6 +489,28 @@ function RunnerSection() {
   )
 }
 
+const CHAT_ROUNDS = [10, 20, 40, 60].map((n) => ({ value: String(n), label: String(n) }))
+
+function ChatsSection() {
+  const { settings, updateSettings } = useApp()
+  if (!settings) return null
+  const c = settings.chat
+  const update = (patch: Partial<Settings['chat']>) => void updateSettings({ chat: patch })
+
+  return (
+    <Section title="Chats">
+      <Row label="Tool calls per reply" hint="A chat's reply stops after this many and offers Continue.">
+        <Segmented
+          label="Tool calls per reply"
+          value={String(c.maxRounds)}
+          options={CHAT_ROUNDS}
+          onChange={(v) => update({ maxRounds: Number(v) })}
+        />
+      </Row>
+    </Section>
+  )
+}
+
 const ASK_ALLOW: Array<{ value: 'ask' | 'allow'; label: string }> = [
   { value: 'ask', label: 'Ask each time' },
   { value: 'allow', label: 'Always allow' }
@@ -597,10 +619,7 @@ function SubAgentsSection() {
       <Row label="Sub-agents">
         <Switch label="Sub-agents" checked={d.enabled} onChange={(enabled) => updateDelegate({ enabled })} />
       </Row>
-      <Row
-        label="Requests per task"
-        hint="The most a sub-agent may make before it stops and returns what it has; it never gets more than the chat's own reply may make."
-      >
+      <Row label="Requests per task" hint="The most a sub-agent may make before it stops and returns what it has.">
         <Segmented
           label="Requests per task"
           value={String(d.maxRounds)}
@@ -635,6 +654,7 @@ export function ToolsTab() {
 
   return (
     <>
+      <ChatsSection />
       <RunnerSection />
       <CodeSessionsSection />
       <SubAgentsSection />

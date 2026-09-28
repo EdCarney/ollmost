@@ -596,6 +596,8 @@ export interface Settings {
    * whether code may download Python packages from PyPI, and how long a run may take.
    */
   runner: { mode: 'off' | 'ask' | 'allow'; defaultOn: boolean; pypi: boolean; timeoutSec: number }
+  /** A chat's reply: how many tool calls it may make before it stops and offers Continue. */
+  chat: { maxRounds: number }
   /**
    * Code sessions (a model working in a folder of the user's): whether its edits and its commands ask first, how long
    * a command may run, how many tool calls a reply may make, and the network preset new sessions start with.

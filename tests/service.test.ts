@@ -521,10 +521,10 @@ describe('reply loop', () => {
     const r = start('research this')
     const done = await doneEvent(r.conversation.id)
     expect(done.message.content).toBe('Final answer')
-    expect(chatCalls.length).toBe(6)
+    expect(chatCalls.length).toBe(20)
     expect(chatCalls.at(-1)!.tools).toBeUndefined()
     // It was still calling tools, so the reply says it ran out of rounds (and offers Continue).
-    expect(done.message.stats?.toolRoundLimit).toBe(6)
+    expect(done.message.stats?.toolRoundLimit).toBe(20)
   })
 
   it('takes the round limit from the reply options', async () => {
@@ -2256,7 +2256,6 @@ describe('sub-agents', () => {
     messageId,
     model: 'llama3.2',
     think: null,
-    maxRounds: 10,
     prompt: { userName: '', model: 'llama3.2', contextLength: 8192, web: 'on', skillIndex: [] }
   })
   /** A tool that acts on this Mac: it asks first, and can be allowed for the chat. */
@@ -2435,6 +2434,26 @@ describe('sub-agents', () => {
       expect(done.message.toolEvents[0].child?.rounds).toBe(2)
     } finally {
       updateSettings({ delegate: { enabled: true, maxRounds: 20 } })
+    }
+  })
+
+  it('a sub-agent gets its own Requests-per-task limit, even above the chat reply’s own', async () => {
+    // The chat's own reply may make only 2 requests; the sub-agent's task budget is much higher.
+    updateSettings({ chat: { maxRounds: 2 }, delegate: { enabled: true, maxRounds: 10 } })
+    try {
+      chat = (b, res, n) => {
+        if (isChild(b))
+          return b.tools ? void res.writeHead(200).end(toolCall('web_search', { query: 'x' })) : reply('Still going.')(b, res, n)
+        return hasToolResult(b) ? reply('ok')(b, res, n) : void res.writeHead(200).end(delegateCall('Keep going.'))
+      }
+      web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] }))
+      const r = start('go')
+      const done = await doneEvent(r.conversation.id)
+      // The child ran to the delegate limit, well past what the chat's own reply may make.
+      expect(done.message.toolEvents[0].child?.rounds).toBe(10)
+      expect(done.message.toolEvents[0].child?.rounds).toBeGreaterThan(2)
+    } finally {
+      updateSettings({ chat: { maxRounds: 20 }, delegate: { enabled: true, maxRounds: 20 } })
     }
   })
 
