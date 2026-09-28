@@ -11,6 +11,8 @@ const CACHE_MS = 30_000
 const USAGE_URL = process.env.OLLMOST_USAGE_URL ?? `${OLLAMA_CLOUD}/api/usage`
 let cache: AccountUsage | null = null
 let inflight: Promise<AccountUsage> | null = null
+/** Bumped when settings change under a load: a load begun before that must not fill the cache or be joined. */
+let generation = 0
 let plan: string | null = null
 /** The address /api/me last failed at: not asked again this session (a server without it would fail on every load). */
 let planFailedAt: string | null = null
@@ -100,9 +102,18 @@ export function getAccountUsage(refresh = false): Promise<AccountUsage> {
     const { anchors, monthlyDay } = getSettings().usage
     return Promise.resolve({ ...cache, windows: describeWindows(cache.windows, { anchors, monthlyDay }, Date.now()) })
   }
-  inflight ??= load()
-    .then((u) => (cache = u))
-    .finally(() => (inflight = null))
+  if (!inflight) {
+    const started = generation
+    const run: Promise<AccountUsage> = load()
+      .then((u) => {
+        if (started === generation) cache = u
+        return u
+      })
+      .finally(() => {
+        if (inflight === run) inflight = null
+      })
+    inflight = run
+  }
   return inflight
 }
 
@@ -110,7 +121,9 @@ export function lastRawUsage(): { at: number; json: unknown } | null {
   return readSetting<{ at: number; json: unknown } | null>('usageRaw', null)
 }
 
-/** Settings changed (key, reset times): drop the cache so the next read is fresh. */
+/** Settings changed (key, reset times): drop the cache, and any load still running, so the next read is fresh. */
 export function invalidateAccountUsage(): void {
+  generation++
   cache = null
+  inflight = null
 }
