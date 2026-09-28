@@ -63,11 +63,16 @@ export function probeSummary(p: EndpointProbe): string {
   return parts.join(' · ')
 }
 
-/** Where the dialog says its models' context sizes will come from. */
-export function probeContextNote(p: Pick<EndpointProbe, 'reportsContext'>): string {
-  return p.reportsContext
-    ? 'Context sizes reported by the server'
-    : `Context sizes not reported — models get ${formatContext(DEFAULT_CONTEXT)} unless you change “Context when not reported”`
+/**
+ * Where the dialog says its models' context sizes will come from. LM Studio reports a model's size only once it has
+ * loaded the model, so at add time it usually reports none yet.
+ */
+export function probeContextNote(p: Pick<EndpointProbe, 'reportsContext' | 'flavor'>): string {
+  const fallback = `models get ${formatContext(DEFAULT_CONTEXT)} unless you change “Context when not reported”`
+  if (p.reportsContext) return 'Context sizes reported by the server'
+  return p.flavor === 'lmstudio'
+    ? `Context sizes reported once a model is loaded — until then ${fallback}`
+    : `Context sizes not reported — ${fallback}`
 }
 
 /** A name for a new endpoint: its server's, numbered when another endpoint has it. */

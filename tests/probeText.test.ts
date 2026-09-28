@@ -3,10 +3,18 @@ import { probeContextNote, suggestEndpointName } from '@shared/endpoints'
 
 describe('probeContextNote', () => {
   it('says whether context sizes come from the server or the endpoint’s setting', () => {
-    expect(probeContextNote({ reportsContext: true })).toBe('Context sizes reported by the server')
-    expect(probeContextNote({ reportsContext: false })).toBe(
+    expect(probeContextNote({ reportsContext: true, flavor: 'vllm' })).toBe('Context sizes reported by the server')
+    expect(probeContextNote({ reportsContext: false, flavor: 'generic' })).toBe(
       'Context sizes not reported — models get 8K unless you change “Context when not reported”'
     )
+  })
+
+  // LM Studio reports no size for a model it hasn't loaded yet (FINDINGS Q6), which is every model at add time.
+  it('says an LM Studio server reports a size once the model is loaded', () => {
+    expect(probeContextNote({ reportsContext: false, flavor: 'lmstudio' })).toBe(
+      'Context sizes reported once a model is loaded — until then models get 8K unless you change “Context when not reported”'
+    )
+    expect(probeContextNote({ reportsContext: true, flavor: 'lmstudio' })).toBe('Context sizes reported by the server')
   })
 })
 
