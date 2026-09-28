@@ -15,8 +15,9 @@ interface ConfirmState {
   answer: (ok: boolean) => void
 }
 
-/** A single pending confirmation, rendered by the one `ConfirmDialog` mounted near the app root. Used only for
- *  the history an Edit or a Retry would lose (see historyLoss) — keep it that narrow. */
+/** A single pending confirmation, rendered by the one `ConfirmDialog` mounted near the app root. Used only where an
+ *  action loses something: the history an Edit or a Retry would drop (see historyLoss), or what removing an endpoint
+ *  deletes (see removalText). Keep it that narrow. */
 export const useConfirm = create<ConfirmState>((set, get) => ({
   request: null,
   ask: (request) =>

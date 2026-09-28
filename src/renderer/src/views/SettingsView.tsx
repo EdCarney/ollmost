@@ -1,19 +1,20 @@
-import { Cloud, Download, HardDrive, Monitor, Moon, Palette, Pencil, RefreshCw, Sun, Trash2, Upload } from 'lucide-react'
+import { Download, Monitor, Moon, Palette, Pencil, RefreshCw, Sun, Trash2, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { usesDark } from '@shared/themes'
-import { resolveThinkProfile } from '@shared/thinking'
-import { labelForKey, modelLabel, shortModelName } from '@shared/modelLabel'
-import type { ModelInfo, ModelOverrides, PriceTable, Settings, ThemeDef, UsageSummary } from '@shared/types'
+import { labelForKey, shortModelName } from '@shared/modelLabel'
+import type { PriceTable, Settings, ThemeDef, UsageSummary } from '@shared/types'
 import { creditPool, formatDollars, formatPercent, spendPeriod } from '@shared/usage'
 import { ThemeEditor } from '@/components/ThemeEditor'
 import { TopBar } from '@/components/TopBar'
-import { Badge, Button, Field, Spinner, Switch, TextArea, TextField } from '@/components/ui'
+import { Badge, Button, Field, Spinner, Switch } from '@/components/ui'
 import { api } from '@/lib/api'
-import { cn, formatContext, formatTokens } from '@/lib/format'
+import { cn, formatTokens } from '@/lib/format'
 import { reportError, type SettingsTab, useApp } from '@/stores/app'
 import { useUsage } from '@/stores/usage'
 import { useSystemDark } from '@/theme/useTheme'
-import { Row, Section, Segmented } from './settingsParts'
+import { ApiKeyField } from './settings/ApiKeyField'
+import { EndpointsPane } from './settings/EndpointsPane'
+import { BlurField, Row, Section, Segmented } from './settingsParts'
 import { ToolsTab } from './ToolsSettings'
 
 const TABS: Array<{ id: SettingsTab; label: string }> = [
@@ -25,36 +26,6 @@ const TABS: Array<{ id: SettingsTab; label: string }> = [
   { id: 'tools', label: 'Tools' },
   { id: 'data', label: 'Data' }
 ]
-
-/** Text input that saves on blur, so typing doesn't write settings on every keystroke. */
-function BlurField({
-  value,
-  onSave,
-  multiline,
-  ...rest
-}: {
-  value: string
-  onSave: (v: string) => void
-  multiline?: boolean
-  placeholder?: string
-  type?: string
-  rows?: number
-}) {
-  const [local, setLocal] = useState(value)
-  useEffect(() => setLocal(value), [value])
-  const commit = () => local !== value && onSave(local)
-  return multiline ? (
-    <TextArea value={local} onChange={(e) => setLocal(e.target.value)} onBlur={commit} {...rest} />
-  ) : (
-    <TextField
-      value={local}
-      onChange={(e) => setLocal(e.target.value)}
-      onBlur={commit}
-      onKeyDown={(e) => e.key === 'Enter' && commit()}
-      {...rest}
-    />
-  )
-}
 
 export function SettingsView({ tab = 'general' }: { tab?: SettingsTab }) {
   const { settings, navigate } = useApp()
@@ -68,7 +39,7 @@ export function SettingsView({ tab = 'general' }: { tab?: SettingsTab }) {
     <div className="flex h-full flex-col">
       <TopBar />
       <div className="flex min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto flex w-full max-w-4xl gap-10 px-8 pb-16 pt-4">
+        <div className={cn('mx-auto flex w-full gap-10 px-8 pb-16 pt-4', tab === 'models' ? 'max-w-5xl' : 'max-w-4xl')}>
           <nav className="w-44 shrink-0">
             <h1 className="mb-4 px-2 font-reading text-2xl font-medium tracking-tight">Settings</h1>
             {TABS.map((t) => (
@@ -87,7 +58,7 @@ export function SettingsView({ tab = 'general' }: { tab?: SettingsTab }) {
           <div className="min-w-0 flex-1 pt-12">
             {tab === 'general' && <GeneralTab settings={settings} />}
             {tab === 'appearance' && <AppearanceTab settings={settings} />}
-            {tab === 'models' && <ModelsTab settings={settings} />}
+            {tab === 'models' && <EndpointsPane settings={settings} />}
             {tab === 'usage' && <UsageTab settings={settings} />}
             {tab === 'features' && <FeaturesTab settings={settings} />}
             {tab === 'tools' && <ToolsTab />}
@@ -291,67 +262,6 @@ function AppearanceTab({ settings }: { settings: Settings }) {
 
       {editing && <ThemeEditor base={editing} open={!!editing} onClose={() => setEditing(null)} />}
     </>
-  )
-}
-
-function ApiKeyField({ hasKey, onSaved }: { hasKey: boolean; onSaved?: () => void }) {
-  const [apiKey, setApiKey] = useState('')
-  const refresh = async () => {
-    await useApp.getState().loadSettings()
-    await useUsage.getState().load(true)
-    onSaved?.()
-  }
-  return (
-    <Field
-      label="ollama.com API key"
-      hint={
-        hasKey ? (
-          'A key is saved, encrypted with your macOS keychain.'
-        ) : (
-          <>
-            Create one at{' '}
-            <button className="text-accent hover:underline" onClick={() => api.app.openExternal('https://ollama.com/settings/keys')}>
-              ollama.com/settings/keys
-            </button>
-            . It's stored encrypted and only ever sent to ollama.com.
-          </>
-        )
-      }
-    >
-      <div className="flex gap-2">
-        <TextField
-          type="password"
-          value={apiKey}
-          onChange={(e) => setApiKey(e.target.value)}
-          placeholder={hasKey ? '••••••••••••' : 'Paste your API key'}
-        />
-        <Button
-          disabled={!apiKey.trim()}
-          onClick={async () => {
-            try {
-              await api.settings.setApiKey(apiKey.trim())
-              setApiKey('')
-              await refresh()
-            } catch (err) {
-              reportError(err)
-            }
-          }}
-        >
-          Save
-        </Button>
-        {hasKey && (
-          <Button
-            variant="ghost"
-            onClick={async () => {
-              await api.settings.setApiKey(null)
-              await refresh()
-            }}
-          >
-            Remove
-          </Button>
-        )}
-      </div>
-    </Field>
   )
 }
 
@@ -628,141 +538,6 @@ function UsageTab({ settings }: { settings: Settings }) {
             </tbody>
           </table>
         )}
-      </Section>
-    </>
-  )
-}
-
-const THINK_OPTIONS: Array<{ value: ModelOverrides['think'] | 'auto'; label: string }> = [
-  { value: 'auto', label: 'Automatic' },
-  { value: 'toggle', label: 'On / off' },
-  { value: 'levels', label: 'Effort levels' },
-  { value: 'always', label: 'Always on' },
-  { value: 'none', label: 'Hidden' }
-]
-
-function ModelRow({ model, onChange }: { model: ModelInfo; onChange: (m: ModelInfo) => void }) {
-  const auto = resolveThinkProfile(model.name, model.capabilities)
-  const set = async (patch: ModelOverrides) => {
-    try {
-      onChange(await api.models.setOverrides(model.key, { ...model.overrides, ...patch }))
-    } catch (err) {
-      reportError(err)
-    }
-  }
-  return (
-    <tr className="border-t border-line align-middle">
-      <td className="py-2.5 pr-3">
-        <div className="flex items-center gap-1.5 text-[13px] font-medium">
-          {model.where === 'cloud' ? <Cloud className="size-3.5 text-subtle" /> : <HardDrive className="size-3.5 text-subtle" />}
-          {modelLabel(model)}
-        </div>
-        <div className="mt-0.5 flex gap-1">
-          {model.capabilities
-            .filter((c) => c !== 'completion')
-            .map((c) => (
-              <Badge key={c}>{c}</Badge>
-            ))}
-          {model.contextLength && <Badge>{formatContext(model.contextLength)}</Badge>}
-        </div>
-      </td>
-      <td className="py-2.5 pr-3">
-        {model.capabilities.includes('thinking') ? (
-          <select
-            value={model.overrides.think ?? 'auto'}
-            onChange={(e) => set({ think: e.target.value === 'auto' ? undefined : (e.target.value as ModelOverrides['think']) })}
-            className="h-8 rounded-md border border-line bg-canvas px-1.5 text-xs outline-none"
-          >
-            {THINK_OPTIONS.map((o) => (
-              <option key={o.value} value={o.value}>
-                {o.value === 'auto' ? `Automatic (${THINK_OPTIONS.find((x) => x.value === auto.kind)?.label ?? auto.kind})` : o.label}
-              </option>
-            ))}
-          </select>
-        ) : (
-          <span className="text-xs text-subtle">n/a</span>
-        )}
-      </td>
-      <td className="py-2.5 pr-3 text-center">
-        <Switch label="Artifacts" checked={model.overrides.artifacts !== false} onChange={(v) => set({ artifacts: v })} />
-      </td>
-      <td className="py-2.5 text-center">
-        {model.capabilities.includes('tools') ? (
-          <Switch label="Auto skills" checked={model.overrides.autoSkills !== false} onChange={(v) => set({ autoSkills: v })} />
-        ) : (
-          <span className="text-xs text-subtle">n/a</span>
-        )}
-      </td>
-    </tr>
-  )
-}
-
-function ModelsTab({ settings }: { settings: Settings }) {
-  const { models, modelsLoading, modelErrors, loadModels, updateSettings } = useApp()
-  const [list, setList] = useState(models)
-  useEffect(() => setList(models), [models])
-
-  const modelSelect = (value: string | null, onChange: (v: string | null) => void, emptyLabel: string) => (
-    <select
-      value={value ?? ''}
-      onChange={(e) => onChange(e.target.value || null)}
-      className="h-9 w-64 rounded-ollmost border border-line bg-canvas px-2 text-sm outline-none"
-    >
-      <option value="">{emptyLabel}</option>
-      {models.map((m) => (
-        <option key={m.key} value={m.key}>
-          {modelLabel(m)}
-          {m.where === 'cloud' ? ' (cloud)' : ''}
-        </option>
-      ))}
-    </select>
-  )
-
-  return (
-    <>
-      <Section title="Defaults">
-        <Row label="Default model" hint="Used for new chats.">
-          {modelSelect(settings.defaultModel, (defaultModel) => updateSettings({ defaultModel }), 'Last used')}
-        </Row>
-        <Row label="Title model" hint="Names new chats. A small, fast model works well.">
-          {modelSelect(settings.titleModel, (titleModel) => updateSettings({ titleModel }), 'Same as the chat')}
-        </Row>
-      </Section>
-
-      <Section
-        title="Per-model behaviour"
-        description="Thinking controls adapt to each model. Turn off artifacts or automatic skills for models that handle them poorly."
-      >
-        <div className="flex items-center gap-2">
-          <Button size="sm" onClick={() => loadModels(true)} loading={modelsLoading}>
-            {!modelsLoading && <RefreshCw className="size-3.5" />} Refresh models
-          </Button>
-          {modelErrors.length > 0 && <span className="text-xs text-danger">{modelErrors.map((e) => e.message).join(' ')}</span>}
-        </div>
-        <table className="w-full text-left">
-          <thead>
-            <tr className="text-xs text-subtle">
-              <th className="pb-2 font-medium">Model</th>
-              <th className="pb-2 font-medium">Thinking</th>
-              <th className="pb-2 text-center font-medium">Artifacts</th>
-              <th className="pb-2 text-center font-medium">Auto skills</th>
-            </tr>
-          </thead>
-          <tbody>
-            {list.map((m) => (
-              <ModelRow
-                key={m.key}
-                model={m}
-                onChange={(updated) => {
-                  setList((l) => l.map((x) => (x.key === updated.key ? { ...updated, installed: x.installed } : x)))
-                  useApp.setState((s) => ({
-                    models: s.models.map((x) => (x.key === updated.key ? { ...updated, installed: x.installed } : x))
-                  }))
-                }}
-              />
-            ))}
-          </tbody>
-        </table>
       </Section>
     </>
   )
