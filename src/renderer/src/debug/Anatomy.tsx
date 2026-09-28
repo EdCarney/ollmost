@@ -38,7 +38,11 @@ export function Anatomy({
   const numCtx = request.options?.num_ctx ?? null
   const [modelContext, setModelContext] = useState<number | null>(null)
   useEffect(() => {
-    if (model && numCtx === null) void api.models.info(model).then((m) => setModelContext(m.contextLength))
+    if (model && numCtx === null)
+      void api.models
+        .info(model)
+        .then((m) => setModelContext(m.contextLength))
+        .catch(() => setModelContext(null))
   }, [model, numCtx])
   const contextLength = numCtx ?? modelContext
 

@@ -3,6 +3,7 @@ import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState }
 import { type Command, COMMANDS, parseCommand } from '@shared/commands'
 import { normalizeThinkSetting } from '@shared/thinking'
 import type { Conversation, FileSource, McpServer, McpStatus, Skill, ThinkSetting } from '@shared/types'
+import { modelLabel } from '@shared/modelLabel'
 import { api } from '@/lib/api'
 import { toSources } from '@/lib/sources'
 import { cn, formatTokens } from '@/lib/format'
@@ -586,8 +587,8 @@ export function Composer({
       {visionMissing && (
         <p className="mt-2 flex items-center gap-1.5 px-2 text-xs text-muted">
           <TriangleAlert className="size-3.5 text-danger" />
-          {model ? `${model.name.replace(/(:|-)cloud$/, '')} can't see images.` : ''} Only the file name will be sent. Pick a model with the
-          eye icon to include them.
+          {model ? `${modelLabel(model)} can't see images.` : ''} Only the file name will be sent. Pick a model with the eye icon to include
+          them.
         </p>
       )}
     </div>

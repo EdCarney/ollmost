@@ -1,5 +1,6 @@
 import { ChevronLeft, Ellipsis, FileText, Pencil, Pin, Plus, Trash2, X } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { labelForKey } from '@shared/modelLabel'
 import type { ProjectFile } from '@shared/types'
 import { Composer } from '@/components/Composer'
 import { ConversationMenu } from '@/components/ConversationMenu'
@@ -7,13 +8,14 @@ import { TopBar } from '@/components/TopBar'
 import { Button, Field, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Spinner, TextArea, TextField } from '@/components/ui'
 import { api } from '@/lib/api'
 import { sendMessage } from '@/lib/chatActions'
-import { cn, displayModelName, formatBytes, formatTokens, relativeTime } from '@/lib/format'
-import { contextWindowFor, findModel, reportError, useApp } from '@/stores/app'
+import { cn, formatBytes, formatTokens, relativeTime } from '@/lib/format'
+import { contextWindowFor, findModel, reportError, selectEndpoints, useApp } from '@/stores/app'
 import { useDrafts } from '@/stores/drafts'
 
 export function ProjectView({ id }: { id: string }) {
   const { projects, conversations, loadProjects, loadConversations, navigate, models, draftModel, projectFilesVersion, touchProjectFiles } =
     useApp()
+  const endpoints = useApp(selectEndpoints)
   const project = projects.find((p) => p.id === id)
   const [files, setFiles] = useState<ProjectFile[]>([])
   const [uploading, setUploading] = useState(false)
@@ -184,7 +186,7 @@ export function ProjectView({ id }: { id: string }) {
                 </div>
                 <div className="mt-1.5 text-xs text-subtle">
                   {capacity
-                    ? `${Math.round(usage * 100)}% of ${displayModelName(draftModel)}'s context (${formatTokens(knowledgeTokens)} tokens)`
+                    ? `${Math.round(usage * 100)}% of ${labelForKey(draftModel, endpoints)}'s context (${formatTokens(knowledgeTokens)} tokens)`
                     : `${formatTokens(knowledgeTokens)} tokens`}
                 </div>
                 {usage > 0.8 && (

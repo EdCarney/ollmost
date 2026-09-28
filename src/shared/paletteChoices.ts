@@ -1,6 +1,7 @@
 // The settings the command palette offers choices for, as data: each choice carries the patch that saves it, and
 // each list knows the value in force, so it opens there. Pure, so it can be tested without the app.
 import type { DeepPartial } from './ipc'
+import { labelForKey, modelLabel } from './modelLabel'
 import type { Rankable } from './palette'
 import type { ModelInfo, Settings, ThemeDef } from './types'
 
@@ -21,8 +22,8 @@ export interface SettingsCommand extends Rankable {
 const range = (from: number, to: number, step: number) =>
   Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, i) => from + i * step)
 
-/** "gpt-oss:120b-cloud" → "gpt-oss:120b", as the model picker shows it, with cloud models marked. */
-const modelLabel = (m: ModelInfo) => `${m.name.replace(/(:|-)cloud$/, '').replace(/:latest$/, '')}${m.where === 'cloud' ? ' (cloud)' : ''}`
+/** As the picker names it, with cloud models marked (the palette lists every endpoint's models together). */
+const choiceLabel = (m: ModelInfo) => `${modelLabel(m)}${m.where === 'cloud' ? ' (cloud)' : ''}`
 
 /**
  * Every list opens on the value in force with a check, so a saved value off a list (a width off the slider's grid,
@@ -42,8 +43,10 @@ export function settingsCommands(settings: Settings, themes: ThemeDef[], models:
   const saved = settings.defaultModel
   const modelChoices: Choice[] = [
     { value: '', label: 'Last used', patch: { defaultModel: null } },
-    ...(saved && !models.some((m) => m.name === saved) ? [{ value: saved, label: saved, patch: { defaultModel: saved } }] : []),
-    ...models.map((m) => ({ value: m.name, label: modelLabel(m), patch: { defaultModel: m.name } }))
+    ...(saved && !models.some((m) => m.key === saved)
+      ? [{ value: saved, label: labelForKey(saved, settings.endpoints ?? []), patch: { defaultModel: saved } }]
+      : []),
+    ...models.map((m) => ({ value: m.key, label: choiceLabel(m), patch: { defaultModel: m.key } }))
   ]
   return [
     { id: 'theme', title: 'Theme', group: 'Settings', keywords: ['colors', 'appearance'], current: a.themeId, choices: themeChoices },

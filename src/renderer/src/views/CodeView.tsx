@@ -1,17 +1,19 @@
 import { FolderClosed, FolderOpen, Hand, Pin, SquareTerminal } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
+import { labelForKey } from '@shared/modelLabel'
 import type { Conversation } from '@shared/types'
 import { ConversationMenu } from '@/components/ConversationMenu'
 import { PageHeader, TopBar } from '@/components/TopBar'
 import { Button, EmptyState, Tooltip } from '@/components/ui'
 import { api } from '@/lib/api'
 import { displayPath, folderName, openFolder } from '@/lib/codeActions'
-import { displayModelName, relativeTime } from '@/lib/format'
-import { reportError, useApp } from '@/stores/app'
+import { relativeTime } from '@/lib/format'
+import { reportError, selectEndpoints, useApp } from '@/stores/app'
 import { useChat } from '@/stores/chat'
 
 export function CodeView() {
   const { sessions, navigate } = useApp()
+  const endpoints = useApp(selectEndpoints)
   const streams = useChat((s) => s.streams)
   const [recent, setRecent] = useState<string[]>([])
   const [home, setHome] = useState<string | null>(null)
@@ -97,7 +99,7 @@ export function CodeView() {
                               )}
                             </div>
                             <div className="mt-0.5 text-xs text-subtle">
-                              {displayModelName(c.model)} · {relativeTime(c.updatedAt)}
+                              {labelForKey(c.model, endpoints)} · {relativeTime(c.updatedAt)}
                             </div>
                           </button>
                           <span className="opacity-0 group-hover:opacity-100 has-[[data-state=open]]:opacity-100">

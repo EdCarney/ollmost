@@ -22,12 +22,13 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { parseMessage, parseMessageRanges, typeForCodeLanguage } from '@shared/artifactParser'
 import { diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
-import type { Artifact, Compaction, Message, ThinkingSegment, ToolDecision, ToolEvent } from '@shared/types'
+import type { Artifact, Compaction, Endpoint, Message, ThinkingSegment, ToolDecision, ToolEvent } from '@shared/types'
 import { IMAGE_FILE, openWith } from '@shared/workspace'
 import { formatCost } from '@shared/usage'
+import { labelForKey } from '@shared/modelLabel'
 import { api } from '@/lib/api'
-import { cn, displayModelName, formatBytes, formatDuration, formatTokens } from '@/lib/format'
-import { reportError } from '@/stores/app'
+import { cn, formatBytes, formatDuration, formatTokens } from '@/lib/format'
+import { reportError, selectEndpoints, useApp } from '@/stores/app'
 import { useArtifactPanel } from '@/stores/artifactPanel'
 import type { ContinueReason } from '@/lib/chatActions'
 import { type StreamState, useChat } from '@/stores/chat'
@@ -540,11 +541,11 @@ export function ToolGroup({
   )
 }
 
-function statsLine(message: Message): string {
+function statsLine(message: Message, endpoints: readonly Endpoint[]): string {
   const s = message.stats
-  if (!s) return displayModelName(message.model)
+  if (!s) return labelForKey(message.model, endpoints)
   return [
-    displayModelName(message.model),
+    labelForKey(message.model, endpoints),
     s.tokensPerSecond && `${s.tokensPerSecond.toFixed(0)} tok/s`,
     s.completionTokens && `${formatTokens(s.completionTokens)} output tokens`,
     s.durationMs && formatDuration(s.durationMs),
@@ -583,6 +584,7 @@ export const AssistantMessage = memo(function AssistantMessage({
   disabled = false,
   scope = 'chat'
 }: AssistantProps) {
+  const endpoints = useApp(selectEndpoints)
   const streaming = !!stream
   const content = stream ? stream.content : message.content
   const toolEvents = stream ? stream.toolEvents : message.toolEvents
@@ -743,8 +745,8 @@ export const AssistantMessage = memo(function AssistantMessage({
               <RotateCcw className="size-3.5" />
             </IconButton>
           )}
-          <Tooltip content={statsLine(message)}>
-            <span className="ml-1 cursor-default text-xs text-subtle">{displayModelName(message.model)}</span>
+          <Tooltip content={statsLine(message, endpoints)}>
+            <span className="ml-1 cursor-default text-xs text-subtle">{labelForKey(message.model, endpoints)}</span>
           </Tooltip>
           {message.stats?.truncatedHistory ? (
             <Tooltip content={`${message.stats.truncatedHistory} older messages were left out to fit the model's context window.`}>

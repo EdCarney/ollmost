@@ -1,10 +1,5 @@
 export { formatContext, formatTokens } from '@shared/format'
 
-export function displayModelName(name: string | null | undefined): string {
-  if (!name) return 'Choose a model'
-  return name.replace(/(:|-)cloud$/, '').replace(/:latest$/, '')
-}
-
 /** Ollama reports cloud models' sizes as raw parameter counts ("304180418494"); local ones as "20.9B". */
 export function formatParams(size: string | null): string | null {
   if (!size) return null

@@ -2,13 +2,14 @@ import { Cloud, Download, HardDrive, Monitor, Moon, Palette, Pencil, RefreshCw, 
 import { useEffect, useState } from 'react'
 import { usesDark } from '@shared/themes'
 import { resolveThinkProfile } from '@shared/thinking'
+import { labelForKey, modelLabel, shortModelName } from '@shared/modelLabel'
 import type { ModelInfo, ModelOverrides, PriceTable, Settings, ThemeDef, UsageSummary } from '@shared/types'
 import { creditPool, formatDollars, formatPercent, spendPeriod } from '@shared/usage'
 import { ThemeEditor } from '@/components/ThemeEditor'
 import { TopBar } from '@/components/TopBar'
 import { Badge, Button, Field, Spinner, Switch, TextArea, TextField } from '@/components/ui'
 import { api } from '@/lib/api'
-import { cn, displayModelName, formatContext, formatTokens } from '@/lib/format'
+import { cn, formatContext, formatTokens } from '@/lib/format'
 import { reportError, type SettingsTab, useApp } from '@/stores/app'
 import { useUsage } from '@/stores/usage'
 import { useSystemDark } from '@/theme/useTheme'
@@ -527,7 +528,7 @@ function UsageTab({ settings }: { settings: Settings }) {
               <tbody>
                 {w.models.map((m) => (
                   <tr key={m.name} className="border-t border-line">
-                    <td className="py-1.5">{displayModelName(m.name)}</td>
+                    <td className="py-1.5">{shortModelName(m.name)}</td>
                     <td className="py-1.5 text-right">{m.requests.toLocaleString()}</td>
                   </tr>
                 ))}
@@ -559,7 +560,7 @@ function UsageTab({ settings }: { settings: Settings }) {
             <tbody>
               {summary.byModel.map((m) => (
                 <tr key={m.model} className="border-t border-line">
-                  <td className="py-1.5">{displayModelName(m.model)}</td>
+                  <td className="py-1.5">{labelForKey(m.model, settings.endpoints)}</td>
                   <td className="py-1.5 text-right">{m.requests}</td>
                   <td className="py-1.5 text-right">{formatTokens(m.promptTokens)}</td>
                   <td className="py-1.5 text-right">{formatTokens(m.completionTokens)}</td>
@@ -654,7 +655,7 @@ function ModelRow({ model, onChange }: { model: ModelInfo; onChange: (m: ModelIn
       <td className="py-2.5 pr-3">
         <div className="flex items-center gap-1.5 text-[13px] font-medium">
           {model.where === 'cloud' ? <Cloud className="size-3.5 text-subtle" /> : <HardDrive className="size-3.5 text-subtle" />}
-          {displayModelName(model.name)}
+          {modelLabel(model)}
         </div>
         <div className="mt-0.5 flex gap-1">
           {model.capabilities
@@ -697,7 +698,7 @@ function ModelRow({ model, onChange }: { model: ModelInfo; onChange: (m: ModelIn
 }
 
 function ModelsTab({ settings }: { settings: Settings }) {
-  const { models, modelsLoading, modelsError, loadModels, updateSettings } = useApp()
+  const { models, modelsLoading, modelErrors, loadModels, updateSettings } = useApp()
   const [list, setList] = useState(models)
   useEffect(() => setList(models), [models])
 
@@ -710,7 +711,7 @@ function ModelsTab({ settings }: { settings: Settings }) {
       <option value="">{emptyLabel}</option>
       {models.map((m) => (
         <option key={m.key} value={m.key}>
-          {displayModelName(m.name)}
+          {modelLabel(m)}
           {m.where === 'cloud' ? ' (cloud)' : ''}
         </option>
       ))}
@@ -736,7 +737,7 @@ function ModelsTab({ settings }: { settings: Settings }) {
           <Button size="sm" onClick={() => loadModels(true)} loading={modelsLoading}>
             {!modelsLoading && <RefreshCw className="size-3.5" />} Refresh models
           </Button>
-          {modelsError && <span className="text-xs text-danger">{modelsError}</span>}
+          {modelErrors.length > 0 && <span className="text-xs text-danger">{modelErrors.map((e) => e.message).join(' ')}</span>}
         </div>
         <table className="w-full text-left">
           <thead>

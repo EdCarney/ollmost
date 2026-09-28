@@ -3,14 +3,15 @@ import { settingsCommands } from '../src/shared/paletteChoices'
 import type { ModelInfo, Settings, ThemeDef } from '../src/shared/types'
 
 const appearance: Settings['appearance'] = { themeId: 'clay', mode: 'system', fontSize: 15, chatWidth: 768, responseFont: 'reading' }
-const settings = { appearance, defaultModel: null, usage: { showInHeader: true } } as Settings
+const settings = { appearance, defaultModel: null, endpoints: [], usage: { showInHeader: true } } as unknown as Settings
 const themes = [
   { id: 'clay', name: 'Clay' },
   { id: 'nord', name: 'Nord' }
 ] as ThemeDef[]
+const ollama = { id: 'ollama', name: 'Ollama', kind: 'ollama', flavor: 'ollama' } as const
 const models = [
-  { name: 'gpt-oss:120b-cloud', where: 'cloud' },
-  { name: 'gemma4:e4b', where: 'this-mac' }
+  { key: 'ollama/gpt-oss:120b-cloud', name: 'gpt-oss:120b-cloud', endpoint: ollama, where: 'cloud' },
+  { key: 'ollama/gemma4:e4b', name: 'gemma4:e4b', endpoint: ollama, where: 'this-mac' }
 ] as ModelInfo[]
 
 describe('the settings the palette offers choices for', () => {
@@ -21,18 +22,18 @@ describe('the settings the palette offers choices for', () => {
     }
     // A saved value off the list (a width off the grid, a theme or model no longer there) is added with its own patch.
     const odd = settingsCommands(
-      { ...settings, appearance: { ...appearance, chatWidth: 768, themeId: 'gone' }, defaultModel: 'old-model:7b' } as Settings,
+      { ...settings, appearance: { ...appearance, chatWidth: 768, themeId: 'gone' }, defaultModel: 'ollama/old-model:7b' } as Settings,
       themes,
       models
     )
     const byId = Object.fromEntries(odd.map((c) => [c.id, c]))
     expect(byId['chat-width'].choices.find((x) => x.value === '768')?.patch).toEqual({ appearance: { chatWidth: 768 } })
     expect(byId['theme'].choices.find((x) => x.value === 'gone')?.patch).toEqual({ appearance: { themeId: 'gone' } })
-    expect(byId['default-model'].choices.find((x) => x.value === 'old-model:7b')).toMatchObject({
+    expect(byId['default-model'].choices.find((x) => x.value === 'ollama/old-model:7b')).toMatchObject({
       label: 'old-model:7b',
-      patch: { defaultModel: 'old-model:7b' }
+      patch: { defaultModel: 'ollama/old-model:7b' }
     })
-    expect(byId['default-model'].current).toBe('old-model:7b')
+    expect(byId['default-model'].current).toBe('ollama/old-model:7b')
   })
 
   it('offers "Last used" for the default model, marks cloud models, and steps the chat width like the slider', () => {

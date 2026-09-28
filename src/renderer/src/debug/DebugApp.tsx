@@ -1,11 +1,12 @@
 import { Bug, Download, Search, Trash2, Wrench } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { formatCost } from '@shared/usage'
+import { labelForKey } from '@shared/modelLabel'
 import type { TraceDetail, TraceKind, TraceSummary } from '@shared/types'
 import { chosenOption, IconButton, Switch, Tooltip, TooltipProvider } from '@/components/ui'
 import { api } from '@/lib/api'
-import { cn, displayModelName, formatTokens } from '@/lib/format'
-import { useApp } from '@/stores/app'
+import { cn, formatTokens } from '@/lib/format'
+import { selectEndpoints, useApp } from '@/stores/app'
 import { useTheme } from '@/theme/useTheme'
 import { kindLabel, ms, StatusIcon } from './bits'
 import { TraceView } from './TraceView'
@@ -20,6 +21,7 @@ function initialConversation(): string | null {
 export function DebugApp() {
   useTheme()
   const { settings, conversations, sessions, loadSettings, loadThemes, loadConversations, updateSettings } = useApp()
+  const endpoints = useApp(selectEndpoints)
   const [conversationId, setConversationId] = useState<string | null>(initialConversation)
   const [traces, setTraces] = useState<TraceSummary[]>([])
   const [selectedId, setSelectedId] = useState<string | null>(null)
@@ -213,7 +215,7 @@ export function DebugApp() {
                       <span className="min-w-0 flex-1">
                         <span className="flex items-center gap-2 text-xs">
                           <span className="rounded bg-hover px-1.5 py-px font-mono text-[11px] text-muted">{kindLabel(t)}</span>
-                          {t.model && <span className="truncate text-subtle">{displayModelName(t.model)}</span>}
+                          {t.model && <span className="truncate text-subtle">{labelForKey(t.model, endpoints)}</span>}
                         </span>
                         <span className="mt-0.5 block truncate text-[13px]">{t.summary}</span>
                       </span>

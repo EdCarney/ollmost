@@ -2,10 +2,12 @@ import { Play, Terminal } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
 import { promptAnatomy, toCurl } from '@shared/debug'
 import { formatCost } from '@shared/usage'
+import { labelForKey } from '@shared/modelLabel'
 import type { TraceDetail } from '@shared/types'
 import { Button } from '@/components/ui'
 import { api } from '@/lib/api'
-import { cn, displayModelName } from '@/lib/format'
+import { cn } from '@/lib/format'
+import { selectEndpoints, useApp } from '@/stores/app'
 import { Anatomy } from './Anatomy'
 import { CopyButton, JsonBlock, kindLabel, ms, StatusIcon } from './bits'
 import { Replay } from './Replay'
@@ -65,6 +67,7 @@ const perSecond = (tokens: number | null, msValue: number | null) =>
   tokens && msValue ? `${((tokens / msValue) * 1000).toFixed(0)} tok/s` : '—'
 
 export function TraceView({ trace, conversationId }: { trace: TraceDetail; conversationId: string | null }) {
+  const endpoints = useApp(selectEndpoints)
   const isModelCall = trace.kind !== 'tool'
   const [tab, setTab] = useState<Tab>('overview')
   const [target, setTarget] = useState<{ chatEndpoint: string; needsKey: boolean } | null>(null)
@@ -102,7 +105,7 @@ export function TraceView({ trace, conversationId }: { trace: TraceDetail; conve
         <div className="flex items-center gap-2 text-sm">
           <StatusIcon status={trace.status} />
           <span className="font-mono text-xs text-muted">{kindLabel(trace)}</span>
-          {trace.model && <span className="font-medium">{displayModelName(trace.model)}</span>}
+          {trace.model && <span className="font-medium">{labelForKey(trace.model, endpoints)}</span>}
           <span className="text-xs text-subtle">{new Date(trace.startedAt).toLocaleTimeString()}</span>
           <span className="ml-auto font-mono text-xs text-subtle">{trace.endpoint}</span>
         </div>
