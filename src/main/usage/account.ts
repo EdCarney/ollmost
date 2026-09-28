@@ -2,7 +2,7 @@ import { creditPool, describeWindows, detectReset, effectiveSpend, parseUsageRes
 import type { AccountUsage } from '@shared/types'
 import { readSetting, writeSetting } from '../db/kv'
 import { OLLAMA_CLOUD } from '../providers/ollama/wire'
-import { getApiKey, getSettings, updateSettings } from '../settings'
+import { getApiKey, getSettings, ollamaConnection, updateSettings } from '../settings'
 import { errorMessage } from '../util'
 
 const CACHE_MS = 30_000
@@ -15,10 +15,10 @@ let plan: string | null = null
 /** The signed-in daemon knows the plan name (POST /api/me), even without an API key. */
 async function fetchPlan(): Promise<string | null> {
   if (plan) return plan
-  const s = getSettings()
-  if (s.connection.mode !== 'local') return null
+  const c = ollamaConnection()
+  if (c.mode !== 'local') return null
   try {
-    const res = await fetch(`${s.connection.host.replace(/\/+$/, '')}/api/me`, { method: 'POST', signal: AbortSignal.timeout(5000) })
+    const res = await fetch(`${c.host.replace(/\/+$/, '')}/api/me`, { method: 'POST', signal: AbortSignal.timeout(5000) })
     if (!res.ok) return null
     plan = ((await res.json()) as { plan?: string }).plan ?? null
     return plan

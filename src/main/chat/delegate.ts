@@ -7,7 +7,7 @@ import { childId } from '@shared/toolEvents'
 import type { MessageStats, Settings, ToolEvent } from '@shared/types'
 import { modelInfo, resolve } from '../providers/registry'
 import type { ChatRequest, ToolDef } from '../providers/types'
-import { DEFAULT_SUB_AGENT_REPLY_CHARS, DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
+import { DEFAULT_SUB_AGENT_REPLY_CHARS, DEFAULT_SUB_AGENTS_AT_ONCE, getSettings, ollamaConnection } from '../settings'
 import { assemble, promptBudget } from './assemble'
 import { runRounds, toolsTokens } from './rounds'
 import { type ResolvedCall, type RunContext, type ToolContext, toolGrants, type ToolProvider, type ToolResult, toolsFor } from './tools'
@@ -118,7 +118,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   const { provider, model: serverName } = resolve(reply.model)
   const model = await modelInfo(reply.model)
   const profile = resolveThinkProfile(reply.model, model.capabilities, model.overrides.think)
-  const numCtx = effectiveContext(model, settings.localNumCtx)
+  const numCtx = effectiveContext(model, ollamaConnection().numCtx)
   // The child's context is the parent's, less what only the parent may do (its grants are worked out again).
   const { grants: _grants, ...parent } = ctx
   const childCtx: ToolContext = {

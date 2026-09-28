@@ -3,7 +3,8 @@ import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMo
 
 const conn = vi.hoisted(() => ({ host: '' }))
 vi.mock('../src/main/settings', () => ({
-  getSettings: () => ({ connection: { mode: 'local', host: conn.host } }),
+  getSettings: () => ({ connection: { mode: 'local' as const, host: conn.host } }),
+  ollamaConnection: () => ({ mode: 'local' as const, host: conn.host, showCloudCatalog: false, numCtx: 32768 }),
   getApiKey: () => null
 }))
 

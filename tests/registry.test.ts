@@ -6,15 +6,17 @@ vi.mock('electron', () => ({
 }))
 
 const { openDatabase } = await import('../src/main/db/index')
-const { updateSettings } = await import('../src/main/settings')
+const { DEFAULT_OLLAMA, setEndpoints } = await import('../src/main/settings')
 const { listAllModels, modelInfo, resolve } = await import('../src/main/providers/registry')
+
+const at = (host: string) => setEndpoints([{ ...DEFAULT_OLLAMA, baseUrl: host, showCloudCatalog: false }])
 
 let ollama: MockOllama
 beforeAll(async () => {
   openDatabase(':memory:')
   ollama = await startMockOllama()
   // The cloud catalog would reach ollama.com; these tests list only what the mock app has.
-  updateSettings({ connection: { mode: 'local', host: ollama.url }, showCloudCatalog: false })
+  at(ollama.url)
   ollama.handler = (req, res) => {
     if (req.url === '/api/tags')
       return void res
@@ -56,14 +58,14 @@ describe('registry (Ollama only)', () => {
   })
 
   it('reports an app it can’t reach as the list’s error, with no models', async () => {
-    updateSettings({ connection: { mode: 'local', host: 'http://127.0.0.1:1' } })
+    at('http://127.0.0.1:1')
     try {
       expect(await listAllModels(true)).toEqual({
         models: [],
         error: expect.stringMatching(/^Can't reach Ollama at http:\/\/127\.0\.0\.1:1\./)
       })
     } finally {
-      updateSettings({ connection: { mode: 'local', host: ollama.url } })
+      at(ollama.url)
     }
   })
 })

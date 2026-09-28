@@ -1,6 +1,8 @@
 import { create } from 'zustand'
 import { effectiveContext } from '@shared/context'
+import { DEFAULT_NUM_CTX } from '@shared/endpoints'
 import type { DeepPartial } from '@shared/ipc'
+import { MIGRATED_ENDPOINT_ID } from '@shared/modelKey'
 import { defaultThinkSetting, resolveThinkProfile } from '@shared/thinking'
 import type {
   Conversation,
@@ -192,10 +194,11 @@ export function findModel(models: ModelInfo[], name: string | null): ModelInfo |
   return name ? models.find((m) => m.name === name) : undefined
 }
 
-/** The window a chat with this model actually gets (local models are capped at the num_ctx setting). */
+/** The window a chat with this model actually gets (local models are capped at the endpoint's num_ctx). */
 export function contextWindowFor(model: ModelInfo | undefined, settings: Settings | null): number | null {
   if (!model) return null
-  return settings ? effectiveContext(model, settings.localNumCtx) : model.contextLength
+  const numCtx = settings?.endpoints.find((e) => e.id === MIGRATED_ENDPOINT_ID)?.numCtx ?? DEFAULT_NUM_CTX
+  return settings ? effectiveContext(model, numCtx) : model.contextLength
 }
 
 export function thinkProfileFor(models: ModelInfo[], name: string | null): ThinkProfile {

@@ -1,6 +1,6 @@
 // Ollama's HTTP API: /api/chat as NDJSON, /api/tags and /api/show. Only the adapter (adapter.ts) and the model list
 // (models.ts) call it; everything else speaks the neutral types in ../types.ts.
-import { getApiKey, getSettings } from '../../settings'
+import { getApiKey, ollamaConnection } from '../../settings'
 import type { ToolDef } from '../types'
 
 export const OLLAMA_CLOUD = 'https://ollama.com'
@@ -53,12 +53,12 @@ export class OllamaError extends Error {
 }
 
 function target(): { base: string; headers: Record<string, string> } {
-  const s = getSettings()
-  if (s.connection.mode === 'direct') {
+  const c = ollamaConnection()
+  if (c.mode === 'direct') {
     const key = getApiKey()
     return { base: OLLAMA_CLOUD, headers: key ? { Authorization: `Bearer ${key}` } : {} }
   }
-  return { base: s.connection.host.replace(/\/+$/, ''), headers: {} }
+  return { base: c.host.replace(/\/+$/, ''), headers: {} }
 }
 
 const NOT_ENOUGH_MEMORY_RE = /model requires more system memory/i
@@ -80,7 +80,7 @@ function friendly(status: number, body: string, model?: string): OllamaError {
   }
   if (status === 401 || status === 403)
     return new OllamaError(
-      getSettings().connection.mode === 'direct'
+      ollamaConnection().mode === 'direct'
         ? 'Ollama cloud rejected the API key. Check it in Settings → Models.'
         : 'Ollama cloud needs you to sign in. Run `ollama signin` in a terminal, then retry.',
       status
@@ -108,7 +108,7 @@ async function request(path: string, init: RequestInit & { model?: string; base?
     if ((err as Error).name === 'AbortError') throw err
     if ((err as Error).name === 'TimeoutError') throw new OllamaError('Ollama took too long to respond. Try again in a moment.')
     throw new OllamaError(
-      getSettings().connection.mode === 'direct'
+      ollamaConnection().mode === 'direct'
         ? `Can't reach ${OLLAMA_CLOUD}. Check your internet connection.`
         : `Can't reach Ollama at ${base}. Is the Ollama app running?`
     )
@@ -266,5 +266,5 @@ export function endpointFor(path: string): string {
 }
 
 export function connectionMode(): 'local' | 'direct' {
-  return getSettings().connection.mode
+  return ollamaConnection().mode
 }

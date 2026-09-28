@@ -1,6 +1,6 @@
 import type { ModelInfo, ModelListResult, ModelOverrides } from '@shared/types'
 import { type CachedModelInfo, readModelProfile, writeModelInfo, writeModelOverrides } from '../../db/kv'
-import { getSettings } from '../../settings'
+import { ollamaConnection } from '../../settings'
 import { errorMessage } from '../../util'
 import { modelPrice } from '../../usage/pricing'
 import { connectionMode, isCloudName, listTags, showModel } from './wire'
@@ -95,7 +95,7 @@ export async function listModels(refresh = false): Promise<ModelListResult> {
     } catch (err) {
       errors.push(errorMessage(err))
     }
-    if (getSettings().showCloudCatalog) {
+    if (ollamaConnection().showCloudCatalog) {
       try {
         for (const n of await cloudCatalog(refresh)) {
           const daemonName = toDaemonCloudName(n)

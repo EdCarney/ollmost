@@ -39,7 +39,7 @@ import { modelInfo, resolve } from '../providers/registry'
 import type { ChatRequest, Provider } from '../providers/types'
 import { webAvailable } from '../ollama/web'
 import { startTrace, type Trace } from '../debug/traces'
-import { getSettings } from '../settings'
+import { getSettings, ollamaConnection } from '../settings'
 import { getSkill, listSkills } from '../skills/library'
 import { ensure as ensureServers, readyTools } from '../mcp/manager'
 import { MCP_SOURCE } from '../mcp/provider'
@@ -297,7 +297,7 @@ async function generate(
     const profile = resolveThinkProfile(modelName, model.capabilities, model.overrides.think)
     const vision = model.capabilities.includes('vision')
     const toolsCapable = model.capabilities.includes('tools')
-    const numCtx = effectiveContext(model, settings.localNumCtx)
+    const numCtx = effectiveContext(model, ollamaConnection().numCtx)
     const budget = promptBudget(numCtx)
     const autoSkills = settings.skills.autoLoad && toolsCapable && model.overrides.autoSkills !== false
     const web: WebStatus = !settings.web.enabled ? 'off' : !toolsCapable ? 'unsupported' : webAvailable() ? 'on' : 'no-key'
@@ -680,8 +680,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
     const { provider, model: serverName } = resolve(opts.model)
     const info = await modelInfo(opts.model)
     const profile = resolveThinkProfile(opts.model, info.capabilities, info.overrides.think)
-    const settings = getSettings()
-    const contextWindow = effectiveContext(info, settings.localNumCtx)
+    const contextWindow = effectiveContext(info, ollamaConnection().numCtx)
     const focus = opts.focus.trim()
     const system = focus ? `${COMPACT_PROMPT}\n\nAbove all, keep what the user asked for: ${focus}` : COMPACT_PROMPT
     const request = (transcript: string): ChatRequest => ({
@@ -813,7 +812,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       think: leastThinking(profile),
       profile,
       // Same window as the chat: a different num_ctx makes Ollama reload a local model just for the title.
-      contextWindow: effectiveContext(info, getSettings().localNumCtx),
+      contextWindow: effectiveContext(info, ollamaConnection().numCtx),
       temperature: 0.3
     }
     const wire = provider.wire(request, false)

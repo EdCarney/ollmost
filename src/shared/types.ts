@@ -300,6 +300,52 @@ export interface ModelListResult {
   error: string | null
 }
 
+// ---- Endpoints ------------------------------------------------------------
+
+export type EndpointKind = 'ollama' | 'openai'
+export type EndpointFlavor = 'ollama' | 'lmstudio' | 'llamacpp' | 'vllm' | 'generic'
+
+/** A model server Ollmost talks to. Its key is in the keychain; `hasKey` only says there is one. */
+export interface Endpoint {
+  /** [a-z0-9-], made from the name when added. It never changes: model keys start with it. */
+  id: string
+  name: string
+  kind: EndpointKind
+  flavor: EndpointFlavor
+  /** Ollama: the server's root. OpenAI: the base URL as the server's docs give it (usually …/v1). */
+  baseUrl: string
+  enabled: boolean
+  hasKey: boolean
+  /** Ollama: list ollama.com's whole cloud catalog through this server, not only pulled models. */
+  showCloudCatalog?: boolean
+  /** Ollama: the num_ctx Ollmost sends for the models this server runs (capped at each model's own length). */
+  numCtx?: number
+  /** OpenAI: the window assumed when nothing reports one. */
+  defaultContext?: number
+  /** OpenAI: false once the server has rejected `stream_options`. */
+  streamOptions?: boolean
+}
+
+/** What checking an address found, before it's added. */
+export interface EndpointProbe {
+  kind: EndpointKind
+  flavor: EndpointFlavor
+  /** The address to store: Ollama's root, or the OpenAI base the probe confirmed. */
+  baseUrl: string
+  version: string | null
+  models: number
+  withTools: number
+  withVision: number
+  canThink: number
+  reportsCapabilities: boolean
+  reportsContext: boolean
+}
+
+/** Where a model runs: Ollama's cloud, this Mac (a loopback address), or another machine. */
+export type ModelWhere = 'cloud' | 'this-mac' | 'network'
+/** Whether Ollmost can price a model's requests. Only Ollama's cloud models are priced. */
+export type ModelBilling = 'priced' | 'local' | 'untracked'
+
 // ---- Usage & cost ---------------------------------------------------------
 
 export interface UsageWindow {
@@ -574,11 +620,13 @@ export interface ThemeDef {
 export interface Settings {
   userName: string
   preferences: string
-  connection: { mode: 'local' | 'direct'; host: string; hasApiKey: boolean }
+  /** Where models come from. Changed only through the endpoints calls, never through a settings update. */
+  endpoints: Endpoint[]
+  /** The ollama.com API key: web tools for every model, quota, and an Ollama endpoint on ollama.com. */
+  ollamaAccount: { hasKey: boolean }
+  /** Model keys (endpointId/model). */
   defaultModel: string | null
   titleModel: string | null
-  showCloudCatalog: boolean
-  localNumCtx: number
   appearance: {
     themeId: string
     mode: 'system' | 'light' | 'dark'

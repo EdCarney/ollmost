@@ -33,7 +33,7 @@ const ollama: MockOllama = await startMockOllama()
 process.env.OLLMOST_WEB_URL = ollama.url
 
 const { all, openDatabase } = await import('../src/main/db/index')
-const { updateSettings, setApiKey, getSettings } = await import('../src/main/settings')
+const { updateSettings, setApiKey, setEndpoints, getSettings } = await import('../src/main/settings')
 const service = await import('../src/main/chat/service')
 const { getTrace, listTraces } = await import('../src/main/debug/traces')
 const {
@@ -67,7 +67,20 @@ let titleCalls: Array<Record<string, unknown>>
 
 beforeAll(() => {
   openDatabase(':memory:')
-  updateSettings({ connection: { mode: 'local', host: ollama.url }, skills: { autoLoad: false }, web: { enabled: true } })
+  // The one Ollama endpoint, pointed at the mock.
+  setEndpoints([
+    {
+      id: 'ollama',
+      name: 'Ollama',
+      kind: 'ollama',
+      flavor: 'ollama',
+      baseUrl: ollama.url,
+      enabled: true,
+      showCloudCatalog: true,
+      numCtx: 32768
+    }
+  ])
+  updateSettings({ skills: { autoLoad: false }, web: { enabled: true } })
   ollama.handler = (req, res) => {
     if (req.url === '/api/show')
       return res.writeHead(200).end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'llama.context_length': 8192 } }))

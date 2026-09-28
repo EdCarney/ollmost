@@ -413,7 +413,7 @@ function UsageTab({ settings }: { settings: Settings }) {
         title="Ollama account"
         description="Quota numbers come from ollama.com and need an API key. Token counts and cost estimates for your chats work without one."
       >
-        <ApiKeyField hasKey={settings.connection.hasApiKey} />
+        <ApiKeyField hasKey={settings.ollamaAccount.hasKey} />
         <div className="flex items-center gap-2 text-xs text-subtle">
           <Button size="sm" variant="ghost" loading={loading} onClick={() => load(true)}>
             {!loading && <RefreshCw className="size-3.5" />} Check now
@@ -700,12 +700,6 @@ function ModelsTab({ settings }: { settings: Settings }) {
   const { models, modelsLoading, modelsError, loadModels, updateSettings } = useApp()
   const [list, setList] = useState(models)
   useEffect(() => setList(models), [models])
-  const conn = settings.connection
-
-  const saveConnection = async (patch: Partial<Settings['connection']>) => {
-    await updateSettings({ connection: { mode: conn.mode, host: conn.host, ...patch } })
-    await loadModels(true)
-  }
 
   const modelSelect = (value: string | null, onChange: (v: string | null) => void, emptyLabel: string) => (
     <select
@@ -725,57 +719,12 @@ function ModelsTab({ settings }: { settings: Settings }) {
 
   return (
     <>
-      <Section
-        title="Connection"
-        description="Ollmost talks to Ollama. Cloud models work through the Ollama app once you've run `ollama signin`."
-      >
-        <Segmented
-          value={conn.mode}
-          onChange={(mode) => saveConnection({ mode })}
-          options={[
-            { value: 'local', label: 'Ollama app', icon: <HardDrive className="size-3.5" /> },
-            { value: 'direct', label: 'Ollama cloud API', icon: <Cloud className="size-3.5" /> }
-          ]}
-        />
-        {conn.mode === 'local' ? (
-          <Field label="Ollama address">
-            <BlurField value={conn.host} onSave={(host) => saveConnection({ host })} placeholder="http://127.0.0.1:11434" />
-          </Field>
-        ) : (
-          <ApiKeyField hasKey={conn.hasApiKey} onSaved={() => loadModels(true)} />
-        )}
-        {conn.mode === 'local' && (
-          <Row label="Show the Ollama cloud catalog" hint="List every cloud model, not only ones you've pulled.">
-            <Switch
-              checked={settings.showCloudCatalog}
-              onChange={async (v) => {
-                await updateSettings({ showCloudCatalog: v })
-                await loadModels(true)
-              }}
-            />
-          </Row>
-        )}
-      </Section>
-
       <Section title="Defaults">
         <Row label="Default model" hint="Used for new chats.">
           {modelSelect(settings.defaultModel, (defaultModel) => updateSettings({ defaultModel }), 'Last used')}
         </Row>
         <Row label="Title model" hint="Names new chats. A small, fast model works well.">
           {modelSelect(settings.titleModel, (titleModel) => updateSettings({ titleModel }), 'Same as the chat')}
-        </Row>
-        <Row label="Context window for local models" hint="Ollama's num_ctx. Bigger remembers more but uses more memory.">
-          <select
-            value={settings.localNumCtx}
-            onChange={(e) => updateSettings({ localNumCtx: Number(e.target.value) })}
-            className="h-9 rounded-ollmost border border-line bg-canvas px-2 text-sm outline-none"
-          >
-            {[8192, 16384, 32768, 65536, 131072].map((n) => (
-              <option key={n} value={n}>
-                {formatContext(n)}
-              </option>
-            ))}
-          </select>
         </Row>
       </Section>
 
@@ -840,7 +789,7 @@ function FeaturesTab({ settings }: { settings: Settings }) {
         <Row
           label="Let models search the web and read pages"
           hint={
-            settings.connection.hasApiKey ? (
+            settings.ollamaAccount.hasKey ? (
               'Uses your saved ollama.com API key.'
             ) : (
               <>
