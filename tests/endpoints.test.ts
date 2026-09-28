@@ -60,20 +60,17 @@ describe('adding an endpoint', () => {
     )
   })
 
-  it('refuses a nameless endpoint, and an OpenAI-compatible one until its adapter exists', () => {
+  it('refuses a nameless endpoint', () => {
     expect(() => endpoints.addEndpoint({ name: '  ', baseUrl: 'http://10.0.0.3:11434', kind: 'ollama', flavor: 'ollama' })).toThrow(
       'Give the endpoint a name.'
     )
-    expect(() =>
-      endpoints.addEndpoint({ name: 'LM Studio', baseUrl: 'http://localhost:1234/v1', kind: 'openai', flavor: 'lmstudio' })
-    ).toThrow(/next update/)
   })
 })
 
 describe('changing an endpoint', () => {
-  it('keeps its id when its name, address and settings change', () => {
+  it('keeps its id when its name, address and settings change', async () => {
     gpu()
-    expect(
+    await expect(
       endpoints.updateEndpoint('gpu-box', {
         name: 'Studio',
         baseUrl: 'http://192.168.1.21:11434/',
@@ -81,7 +78,7 @@ describe('changing an endpoint', () => {
         showCloudCatalog: true,
         enabled: false
       })
-    ).toMatchObject({
+    ).resolves.toMatchObject({
       id: 'gpu-box',
       name: 'Studio',
       baseUrl: 'http://192.168.1.21:11434',
@@ -91,12 +88,12 @@ describe('changing an endpoint', () => {
     })
   })
 
-  it('refuses a taken address, a blank name and a nonsense window', () => {
+  it('refuses a taken address, a blank name and a nonsense window', async () => {
     gpu()
-    expect(() => endpoints.updateEndpoint('gpu-box', { baseUrl: 'localhost:11434' })).toThrow('Ollama already uses this address.')
-    expect(() => endpoints.updateEndpoint('gpu-box', { name: '' })).toThrow('Give the endpoint a name.')
-    expect(() => endpoints.updateEndpoint('gpu-box', { numCtx: -1 })).toThrow('whole number of tokens')
-    expect(() => endpoints.updateEndpoint('nope', { name: 'x' })).toThrow('That endpoint no longer exists.')
+    await expect(endpoints.updateEndpoint('gpu-box', { baseUrl: 'localhost:11434' })).rejects.toThrow('Ollama already uses this address.')
+    await expect(endpoints.updateEndpoint('gpu-box', { name: '' })).rejects.toThrow('Give the endpoint a name.')
+    await expect(endpoints.updateEndpoint('gpu-box', { numCtx: -1 })).rejects.toThrow('whole number of tokens')
+    await expect(endpoints.updateEndpoint('nope', { name: 'x' })).rejects.toThrow('That endpoint no longer exists.')
   })
 
   it('sets and clears its key, but never one for ollama.com', () => {

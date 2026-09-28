@@ -1,4 +1,4 @@
-import type { ModelDetected, ModelOverrides, ThemeDef } from '@shared/types'
+import type { ModelDetected, ModelOverrides, ThemeDef, ThinkProfile } from '@shared/types'
 import { now, parseJson } from '../util'
 import { all, get, getDb, run } from './index'
 
@@ -23,6 +23,8 @@ export interface CachedModelInfo {
   contextLength: number | null
   family: string | null
   parameterSize: string | null
+  /** OpenAI-compatible servers: the thinking profile the server reported (LM Studio). */
+  thinkPreset?: ThinkProfile['kind'] | null
 }
 
 // Profiles are keyed by model key (endpointId/model), so the same name on two endpoints never shares a row.

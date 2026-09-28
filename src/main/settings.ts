@@ -128,6 +128,11 @@ export function setEndpoints(list: Array<StoredEndpoint | Endpoint>): void {
   writeSetting('app', cache)
 }
 
+/** A server rejected `stream_options`: stop sending it to this endpoint, across restarts too. */
+export function setEndpointStreamOptions(id: string, supported: boolean): void {
+  setEndpoints(stored().endpoints.map((e) => (e.id === id ? { ...e, streamOptions: supported } : e)))
+}
+
 // The ollama.com API key never leaves the main process; see providers/secrets.ts.
 export function setApiKey(key: string | null): void {
   setSecret(OLLAMA_ACCOUNT_SECRET, key)

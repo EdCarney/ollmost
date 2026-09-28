@@ -21,6 +21,18 @@ export function normalizeBaseUrl(input: string): string {
   return `${url.protocol}//${url.host}${url.pathname.replace(/\/+$/, '').replace(/\/v1$/i, '')}`
 }
 
+/**
+ * An address as typed, cleaned up (a scheme added, trailing slashes dropped) but with its path whole:
+ * "localhost:1234/v1/" → "http://localhost:1234/v1". An OpenAI-compatible endpoint stores this, its API base;
+ * addresses are still compared by normalizeBaseUrl's root.
+ */
+export function apiBaseUrl(input: string): string {
+  const root = normalizeBaseUrl(input)
+  const raw = input.trim()
+  const path = new URL(/^[a-z][a-z0-9+.-]*:\/\//i.test(raw) ? raw : `http://${raw}`).pathname.replace(/\/+$/, '')
+  return /\/v1$/i.test(path) ? `${root}/v1` : root
+}
+
 /** Whether two addresses are one server: localhost, 127.0.0.1 and [::1] are all this Mac. */
 export function sameServer(a: string, b: string): boolean {
   try {

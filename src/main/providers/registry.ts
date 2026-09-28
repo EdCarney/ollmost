@@ -3,6 +3,7 @@ import type { Endpoint, ModelInfo, ModelListResult } from '@shared/types'
 import { getSettings } from '../settings'
 import { errorMessage } from '../util'
 import { OllamaProvider } from './ollama/adapter'
+import { OpenAIProvider } from './openai/adapter'
 import type { Provider } from './types'
 
 /** A key names an endpoint that's been removed: its chats keep their history and need another model picked. */
@@ -16,10 +17,14 @@ export class EndpointGoneError extends Error {
 // One provider per enabled endpoint, made on first use and again after any endpoint change.
 let providers: Map<string, Provider> | null = null
 
+/** The adapter for an endpoint's kind of server. */
+export function createProvider(endpoint: Endpoint): Provider {
+  return endpoint.kind === 'openai' ? new OpenAIProvider(endpoint) : new OllamaProvider(endpoint)
+}
+
 function build(): Map<string, Provider> {
   const map = new Map<string, Provider>()
-  for (const endpoint of getSettings().endpoints)
-    if (endpoint.enabled && endpoint.kind === 'ollama') map.set(endpoint.id, new OllamaProvider(endpoint))
+  for (const endpoint of getSettings().endpoints) if (endpoint.enabled) map.set(endpoint.id, createProvider(endpoint))
   return map
 }
 
