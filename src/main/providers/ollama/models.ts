@@ -127,9 +127,9 @@ export async function listModels(refresh = false): Promise<ModelListResult> {
   return { models, error: models.length ? null : (errors[0] ?? 'No models found.') }
 }
 
-export async function getModelInfo(name: string): Promise<ModelInfo> {
+export async function getModelInfo(name: string, refresh = false): Promise<ModelInfo> {
   try {
-    return toModelInfo(name, await fetchInfo(name, false), true)
+    return toModelInfo(name, await fetchInfo(name, refresh), true)
   } catch {
     return toModelInfo(name, { capabilities: ['completion'], contextLength: null, family: null, parameterSize: null }, false)
   }
