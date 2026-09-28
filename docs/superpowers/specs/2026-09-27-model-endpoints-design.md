@@ -1,11 +1,13 @@
 # Model endpoints: Ollmost talks to Ollama, LM Studio, llama.cpp, vLLM and other OpenAI-compatible servers
 
 Design written 2026-09-27 with the user, section by section, on the state of `main` at d0fb62b (after #122 and
-#123). The round loop is described as it will be once #125 and `claude/sub-agents-2` land: `src/main/chat/rounds.ts`
-(`runRounds`) and `src/main/chat/delegate.ts`. The codebase review behind it is
-`docs/superpowers/specs/2026-09-27-model-endpoints-review.md`. Mockups are in
-`docs/superpowers/specs/2026-09-27-model-endpoints-mockups/`. This file moves to
-`docs/superpowers/specs/` with the first PR; until then nothing in the repo changes.
+#123), and approved the same day. The round loop is described as it is since #125 and #131 (`claude/sub-agents-2`):
+`src/main/chat/rounds.ts` (`runRounds`) and `src/main/chat/delegate.ts`. #175 has since run a round's sub-agents at
+the same time, up to a limit set in Settings; the seam keeps that. The codebase review behind it is
+`docs/superpowers/specs/2026-09-27-model-endpoints-review.md`, the mockups are in
+`docs/superpowers/specs/2026-09-27-model-endpoints-mockups/`, and the plan is
+`docs/superpowers/plans/2026-09-27-model-endpoints.md`. All of them came into the repo with the first PR (the
+provider seam).
 
 ## What this is for
 
@@ -107,7 +109,7 @@ type ChatEvent =
       timing?: { loadMs?: number; promptMs?: number; genMs?: number }; raw: unknown }
 
 interface ChatResult { content: string; thinking: string; toolCalls: ToolCallOut[];
-  usage: { prompt?: number; completion?: number }; finishReason?: string; raw: unknown }
+  usage: { prompt?: number; completion?: number }; finishReason?: string; timing?: ChatTiming; raw: unknown }
 
 interface Provider {
   endpoint: Endpoint
@@ -115,15 +117,17 @@ interface Provider {
   modelInfo(model: string, refresh?: boolean): Promise<ModelInfo>
   chatStream(req: ChatRequest, signal: AbortSignal): AsyncGenerator<ChatEvent>
   chatOnce(req: ChatRequest, opts: { signal?: AbortSignal; timeoutMs: number }): Promise<ChatResult>
-  wire(req: ChatRequest): { endpoint: string; body: unknown }              // exactly what is sent (traces, curl)
-  sendWire(body: unknown, opts: { timeoutMs: number }): Promise<ChatResult> // replay of an edited body
+  wire(req: ChatRequest, stream: boolean): { endpoint: string; body: unknown }   // exactly what is sent (traces, curl)
+  wireEndpoint(): string                                                         // where wire bodies go (replay)
+  sendWire(body: unknown, opts: { signal?: AbortSignal; timeoutMs: number }): Promise<ChatResult> // replay of an edited body
 }
 ```
 
 Rules:
 
 1. **The shared format follows OpenAI's.** Tool calls carry ids and tool results carry `toolCallId`. The Ollama
-   adapter drops the ids and sends `tool_name`.
+   adapter drops the ids Ollmost made up and sends `tool_name`; a call Ollama sent goes back exactly as Ollama sent
+   it, with its own id and index.
 2. **Adapters deliver a tool call only when it's complete.** The loop keeps its "calls arrive whole" assumption.
 3. **Adapters translate `think`/`profile`, `contextWindow` and `temperature` into their server's parameters.**
    No Ollama-only field reaches shared code.
@@ -501,8 +505,9 @@ Preconditions:
 0. **Capture spike.** A throwaway script outside the repo records SSE from LM Studio and Ollama. Not merged; its
    output becomes fixtures in PR 3.
 1. **The seam.** `providers/types.ts`, `registry.ts` and `secrets.ts`. Ollama moves under `providers/ollama/`. Every
-   caller switches to neutral types. **No behaviour change**: the existing tests pass with only their imports
-   changed. This spec moves to `docs/superpowers/specs/`.
+   caller switches to neutral types. **No behaviour change**: every body Ollama receives is byte-identical. Existing
+   tests change only their imports, or where they build or read a type that changed (assembled messages, the round
+   loop's input). This spec, its review, the mockups and the plan come into the repo with it.
 2. **Endpoints and identity.**
    - The migration (backup, SQL, settings) and `ModelKey`.
    - The `ModelInfo` split (`where`, `billing`, `contextControl`, `contextWindow`), IPC, and the renderer lookups by
