@@ -13,6 +13,7 @@ import { endpointSecretName, getSecret, setSecret } from './secrets'
 
 type EndpointPatch = Partial<Pick<Endpoint, 'name' | 'baseUrl' | 'enabled' | 'flavor' | 'showCloudCatalog' | 'numCtx' | 'defaultContext'>>
 
+const KINDS: readonly EndpointKind[] = ['ollama', 'openai']
 const FLAVORS: readonly EndpointFlavor[] = ['ollama', 'lmstudio', 'llamacpp', 'vllm', 'generic']
 
 const stored = (): StoredEndpoint[] =>
@@ -64,6 +65,7 @@ export function addEndpoint(input: {
   flavor: EndpointFlavor
   apiKey?: string
 }): Endpoint {
+  if (!KINDS.includes(input.kind)) throw new Error('Ollmost talks to Ollama and OpenAI-compatible servers only.')
   const name = cleanName(input.name)
   const openai = input.kind === 'openai'
   // Ollama is kept by its root. An OpenAI-compatible server by its API base, as its probe confirmed it (usually …/v1,
@@ -89,25 +91,33 @@ export function addEndpoint(input: {
 /**
  * Change an endpoint. Its id never changes, so a server that moves keeps its chats. An OpenAI-compatible endpoint's
  * new address is probed first and what the probe confirmed is stored, as when it was added: its API base isn't
- * always the root plus /v1, and the server found there may be another flavour.
+ * always the root plus /v1, and the server found there may be another flavour. The list is read after the probe, so
+ * a change made to any endpoint while it ran is kept.
  */
 export async function updateEndpoint(id: string, patch: EndpointPatch): Promise<Endpoint> {
+  const typed = patch.baseUrl !== undefined ? String(patch.baseUrl) : undefined
+  let probed: EndpointProbe | undefined
+  if (typed !== undefined && find(id).kind === 'openai') {
+    // Refused at once if it's taken, before asking what answers there.
+    assertAddressFree(normalizeBaseUrl(typed), id)
+    const found = await probeEndpoint(typed, getSecret(endpointSecretName(id)) ?? undefined)
+    if (found.kind !== 'openai')
+      throw new Error(
+        `${FLAVOR_LABELS[found.flavor]} answers at that address, not an OpenAI-compatible server. Add it as an endpoint of its own.`
+      )
+    probed = found
+  }
   const list = stored()
   const i = list.findIndex((e) => e.id === id)
   if (i < 0) throw new Error('That endpoint no longer exists.')
   const next: StoredEndpoint = { ...list[i] }
   if (patch.name !== undefined) next.name = cleanName(patch.name)
-  if (patch.baseUrl !== undefined) {
-    const typed = String(patch.baseUrl)
+  if (typed !== undefined) {
+    // Checked against the list as it is now: another endpoint may have taken the address while a probe ran.
     assertAddressFree(normalizeBaseUrl(typed), id)
-    if (next.kind === 'openai') {
-      const found = await probeEndpoint(typed, getSecret(endpointSecretName(id)) ?? undefined)
-      if (found.kind !== 'openai')
-        throw new Error(
-          `${FLAVOR_LABELS[found.flavor]} answers at that address, not an OpenAI-compatible server. Add it as an endpoint of its own.`
-        )
-      next.baseUrl = found.baseUrl
-      next.flavor = found.flavor
+    if (probed) {
+      next.baseUrl = probed.baseUrl
+      next.flavor = probed.flavor
     } else next.baseUrl = normalizeBaseUrl(typed)
   }
   if (patch.enabled !== undefined) next.enabled = patch.enabled === true

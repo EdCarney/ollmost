@@ -17,12 +17,26 @@ vi.mock('electron', () => ({
 const server: MockOllama = await startMockOllama()
 const { openDatabase } = await import('../src/main/db/index')
 const { getSettings, setEndpointStreamOptions } = await import('../src/main/settings')
-const { addEndpoint, updateEndpoint } = await import('../src/main/providers/endpoints')
+const { addEndpoint, removeEndpoint, updateEndpoint } = await import('../src/main/providers/endpoints')
 const registry = await import('../src/main/providers/registry')
 const { OpenAIProvider } = await import('../src/main/providers/openai/adapter')
 
 beforeAll(() => openDatabase(':memory:'))
 afterAll(() => server.close())
+
+/** An OpenAI-compatible server that holds its model list until `answer()`; `asked` settles once the probe is waiting on it. */
+async function slowOpenAI(): Promise<{ mock: MockOllama; asked: Promise<void>; answer: () => void }> {
+  const mock = await startMockOllama()
+  let answer = () => undefined as void
+  const asked = new Promise<void>((resolve) => {
+    mock.handler = (r, res) => {
+      if (r.url !== '/v1/models') return void res.writeHead(404).end()
+      answer = () => void res.writeHead(200).end(JSON.stringify({ data: [{ id: 'm' }] }))
+      resolve()
+    }
+  })
+  return { mock, asked, answer: () => answer() }
+}
 
 const request = {
   model: 'x',
@@ -91,6 +105,52 @@ describe('an OpenAI-compatible endpoint', () => {
       expect(getSettings().endpoints.find((e) => e.id === id)).toEqual(before)
     } finally {
       await ollama.close()
+    }
+  })
+
+  it('keeps a change made to another endpoint while an edited address was being probed', async () => {
+    const slow = await slowOpenAI()
+    try {
+      const box = addEndpoint({ name: 'Slow box', baseUrl: 'http://10.0.0.9:8000/v1', kind: 'openai', flavor: 'vllm' })
+      const edit = updateEndpoint(box.id, { baseUrl: slow.mock.url })
+      await slow.asked
+      await updateEndpoint(id, { name: 'Renamed meanwhile', enabled: false })
+      slow.answer()
+      expect(await edit).toMatchObject({ id: box.id, baseUrl: `${slow.mock.url}/v1`, flavor: 'generic' })
+      expect(getSettings().endpoints.find((e) => e.id === id)).toMatchObject({ name: 'Renamed meanwhile', enabled: false })
+      expect(getSettings().endpoints.find((e) => e.id === box.id)?.baseUrl).toBe(`${slow.mock.url}/v1`)
+    } finally {
+      await slow.mock.close()
+    }
+  })
+
+  it('refuses an edited address another endpoint took while it was being probed', async () => {
+    const slow = await slowOpenAI()
+    try {
+      const box = addEndpoint({ name: 'Late box', baseUrl: 'http://10.0.0.11:8000/v1', kind: 'openai', flavor: 'vllm' })
+      const edit = updateEndpoint(box.id, { baseUrl: slow.mock.url })
+      await slow.asked
+      addEndpoint({ name: 'Quick', baseUrl: `${slow.mock.url}/v1`, kind: 'openai', flavor: 'generic' })
+      slow.answer()
+      await expect(edit).rejects.toThrow('Quick already uses this address.')
+      expect(getSettings().endpoints.find((e) => e.id === box.id)?.baseUrl).toBe('http://10.0.0.11:8000/v1')
+    } finally {
+      await slow.mock.close()
+    }
+  })
+
+  it('refuses an edit to an endpoint removed while its address was being probed, and doesn’t bring it back', async () => {
+    const slow = await slowOpenAI()
+    try {
+      const box = addEndpoint({ name: 'Short-lived', baseUrl: 'http://10.0.0.10:8000/v1', kind: 'openai', flavor: 'vllm' })
+      const edit = updateEndpoint(box.id, { baseUrl: slow.mock.url })
+      await slow.asked
+      removeEndpoint(box.id)
+      slow.answer()
+      await expect(edit).rejects.toThrow('That endpoint no longer exists.')
+      expect(getSettings().endpoints.map((e) => e.id)).not.toContain(box.id)
+    } finally {
+      await slow.mock.close()
     }
   })
 })

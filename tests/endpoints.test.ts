@@ -65,6 +65,13 @@ describe('adding an endpoint', () => {
       'Give the endpoint a name.'
     )
   })
+
+  it('refuses a kind of server it can’t talk to', () => {
+    expect(() =>
+      endpoints.addEndpoint({ name: 'Mystery', baseUrl: 'http://10.0.0.4:8000', kind: 'anthropic' as never, flavor: 'generic' })
+    ).toThrow('Ollmost talks to Ollama and OpenAI-compatible servers only.')
+    expect(getSettings().endpoints.map((e) => e.id)).toEqual(['ollama'])
+  })
 })
 
 describe('changing an endpoint', () => {
