@@ -1,5 +1,7 @@
-import { displayAddress, isLoopbackHost, isOllamaCloudUrl, OLLAMA_CLOUD_URL } from '@shared/endpoints'
-import type { EndpointProbe } from '@shared/types'
+import { displayAddress, FLAVOR_LABELS, isLoopbackHost, isOllamaCloudUrl, OLLAMA_CLOUD_URL } from '@shared/endpoints'
+import type { Endpoint, EndpointFlavor, EndpointProbe } from '@shared/types'
+import { isRecord } from './json'
+import { discoverModels } from './openai/discovery'
 import { listCloudCatalog } from './ollama/wire'
 
 const PROBE_MS = 5_000
@@ -63,52 +65,91 @@ async function json(res: Response): Promise<Record<string, unknown>> {
   return typeof body === 'object' && body !== null ? (body as Record<string, unknown>) : {}
 }
 
+/** Ollama's cloud catalog, or a local server's /api/tags count, with the version probeEndpoint already read. */
+async function probeOllama(baseUrl: string, apiKey: string | undefined, version: string | null): Promise<EndpointProbe> {
+  // ollama.com is the cloud API, not an Ollama app: it has no /api/version, and its catalog needs no key.
+  if (isOllamaCloudUrl(baseUrl)) return ollamaFound(OLLAMA_CLOUD_URL, null, (await listCloudCatalog()).length)
+  const headers: Record<string, string> = apiKey ? { Authorization: `Bearer ${apiKey}` } : {}
+  const tags = await fetch(`${baseUrl}/api/tags`, { headers, signal: AbortSignal.timeout(PROBE_MS) })
+    .then(json)
+    .catch(() => ({}) as Record<string, unknown>)
+  return ollamaFound(baseUrl, version, Array.isArray(tags.models) ? tags.models.length : 0)
+}
+
 /**
- * What answers at an address. Ollama says so at /api/version; an OpenAI-compatible server lists its models at
- * /v1/models (PR 3 tells LM Studio, llama.cpp and vLLM apart). The key, if given, is sent only there.
+ * One probe step: the JSON at `url`, or null when that path isn't there (any other answer, or not JSON). Nothing
+ * answering, or a demand for a key, ends the probe: no later step would do better.
+ */
+async function probeJson(url: string, apiKey: string | undefined, address: string): Promise<unknown> {
+  let res: Response
+  try {
+    res = await fetch(url, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}, signal: AbortSignal.timeout(PROBE_MS) })
+  } catch {
+    throw new Error(`Can't reach ${address}. Is the server started?`)
+  }
+  if (res.status === 401 || res.status === 403)
+    throw new Error(apiKey ? `The server at ${address} rejected the API key.` : `The server at ${address} needs an API key.`)
+  if (!res.ok) return null
+  try {
+    return (await res.json()) as unknown
+  } catch {
+    return null
+  }
+}
+
+/** Read an OpenAI-compatible server's models, and count what the Add endpoint dialog reports. */
+async function probeOpenAI(
+  flavor: Exclude<EndpointFlavor, 'ollama'>,
+  baseUrl: string,
+  apiKey: string | undefined,
+  version: string | null
+): Promise<EndpointProbe> {
+  const endpoint: Endpoint = { id: 'probe', name: FLAVOR_LABELS[flavor], kind: 'openai', flavor, baseUrl, enabled: true, hasKey: !!apiKey }
+  const models = await discoverModels(endpoint, apiKey ?? null)
+  const count = (capability: string) => models.filter((m) => m.capabilities.includes(capability)).length
+  return {
+    kind: 'openai',
+    flavor,
+    baseUrl,
+    version,
+    models: models.length,
+    withTools: count('tools'),
+    withVision: count('vision'),
+    canThink: models.filter((m) => m.thinkPreset !== null).length,
+    reportsCapabilities: models.some((m) => m.reportsCapabilities),
+    reportsContext: models.some((m) => m.contextLength !== null)
+  }
+}
+
+/**
+ * What kind of server is at an address, tried in the spec's order (each check is particular to one server; the last
+ * only needs /models to answer). Returns the address to store: Ollama's root, or the OpenAI API base that answered.
  */
 export async function probeEndpoint(baseUrl: string, apiKey?: string): Promise<EndpointProbe> {
   const root = normalizeBaseUrl(baseUrl)
-  const where = displayAddress(root)
-  // ollama.com is the cloud API, not an Ollama app: it has no /api/version, and its catalog needs no key.
-  if (isOllamaCloudUrl(root)) return ollamaFound(OLLAMA_CLOUD_URL, null, (await listCloudCatalog()).length)
-  const headers: Record<string, string> = apiKey?.trim() ? { Authorization: `Bearer ${apiKey.trim()}` } : {}
-  const get = (path: string) => fetch(`${root}${path}`, { headers, signal: AbortSignal.timeout(PROBE_MS) })
-  let version: Response
-  try {
-    version = await get('/api/version')
-  } catch (err) {
-    throw new Error(
-      (err as Error).name === 'TimeoutError'
-        ? `${where} didn’t answer within 5 seconds.`
-        : `Nothing answered at ${where}. Is the server started?`,
-      { cause: err }
-    )
-  }
-  if (version.status === 401 || version.status === 403) throw new Error(`The server at ${where} wants an API key, or rejected this one.`)
-  // LM Studio answers any path with an error object, so only a version string says Ollama.
-  const v = version.ok ? (await json(version)).version : undefined
-  if (typeof v === 'string') {
-    const tags = await get('/api/tags')
-      .then(json)
-      .catch(() => ({}) as Record<string, unknown>)
-    return ollamaFound(root, v, Array.isArray(tags.models) ? tags.models.length : 0)
-  }
-  const models = await get('/v1/models').catch(() => null)
-  if (models?.ok) {
-    const data = (await json(models)).data
-    return {
-      kind: 'openai',
-      flavor: 'generic',
-      baseUrl: `${root}/v1`,
-      version: null,
-      models: Array.isArray(data) ? data.length : 0,
-      withTools: 0,
-      withVision: 0,
-      canThink: 0,
-      reportsCapabilities: false,
-      reportsContext: false
+  const key = apiKey?.trim() || undefined
+  const address = displayAddress(root)
+  if (isOllamaCloudUrl(root)) return probeOllama(root, key, null)
+  const version = await probeJson(`${root}/api/version`, key, address)
+  if (isRecord(version) && typeof version.version === 'string') return probeOllama(root, key, version.version)
+  const lmStudio = await probeJson(`${root}/api/v1/models`, key, address)
+  if (isRecord(lmStudio) && Array.isArray(lmStudio.models)) return probeOpenAI('lmstudio', `${root}/v1`, key, null)
+  const props = await probeJson(`${root}/props`, key, address)
+  if (isRecord(props) && ('default_generation_settings' in props || 'chat_template_caps' in props || 'n_ctx' in props))
+    return probeOpenAI('llamacpp', `${root}/v1`, key, typeof props.build_info === 'string' ? props.build_info : null)
+  // Almost every server's API base is {root}/v1, and one that serves /models at its root is taken as it is. An address
+  // typed with a path of its own (https://example.com/v1beta/openai) is asked there first and kept if it answers;
+  // else {root}/v1.
+  const typed = apiBaseUrl(baseUrl)
+  const bases = new URL(root).pathname === '/' ? [`${root}/v1`, root] : [typed, `${root}/v1`]
+  for (const base of new Set(bases)) {
+    const list = await probeJson(`${base}/models`, key, address)
+    if (!isRecord(list) || !Array.isArray(list.data)) continue
+    if (list.data.some((m) => isRecord(m) && typeof m.max_model_len === 'number')) {
+      const v = await probeJson(`${root}/version`, key, address)
+      return probeOpenAI('vllm', base, key, isRecord(v) && typeof v.version === 'string' ? v.version : null)
     }
+    return probeOpenAI('generic', base, key, null)
   }
-  throw new Error(`The server at ${where} doesn’t look like Ollama or an OpenAI-compatible server.`)
+  throw new Error(`Couldn't find a model server at ${address}. Check the address, and that the server is running.`)
 }

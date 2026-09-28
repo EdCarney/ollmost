@@ -72,8 +72,8 @@ describe('probeEndpoint', () => {
   })
 
   it('says when nothing answers, or the server wants a key', async () => {
-    await expect(probeEndpoint('http://127.0.0.1:9')).rejects.toThrow('Nothing answered at 127.0.0.1:9. Is the server started?')
+    await expect(probeEndpoint('http://127.0.0.1:9')).rejects.toThrow("Can't reach 127.0.0.1:9. Is the server started?")
     server.handler = (_req, res) => void res.writeHead(401).end()
-    await expect(probeEndpoint(server.url)).rejects.toThrow('wants an API key, or rejected this one')
+    await expect(probeEndpoint(server.url)).rejects.toThrow('needs an API key')
   })
 })

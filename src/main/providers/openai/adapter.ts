@@ -149,7 +149,15 @@ export class OpenAIProvider implements Provider {
   async modelInfo(model: string, refresh = false): Promise<ModelInfo> {
     const profile = readModelProfile(this.keyOf(model))
     const cached = profile.info
-    if (!refresh && cached && Date.now() - profile.fetchedAt < INFO_TTL) return this.toModelInfo(model, cached, true)
+    // LM Studio loads a model just-in-time: a cached null window (FINDINGS Q6) isn't the real one yet, so it's read
+    // again on every call until the model has actually loaded.
+    if (
+      !refresh &&
+      cached &&
+      Date.now() - profile.fetchedAt < INFO_TTL &&
+      !(this.endpoint.flavor === 'lmstudio' && cached.contextLength === null)
+    )
+      return this.toModelInfo(model, cached, true)
     let listed: DiscoveredModel[] | null = null
     try {
       listed = await discoverModels(this.endpoint, this.apiKey())

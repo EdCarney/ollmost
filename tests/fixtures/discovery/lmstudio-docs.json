@@ -1,0 +1,25 @@
+# unverified: written from docs
+{
+  "models": [
+    {
+      "type": "llm", "publisher": "qwen", "key": "qwen/qwen3-8b", "display_name": "Qwen3 8B", "architecture": "qwen3", "params_string": "8B",
+      "loaded_instances": [{ "id": "qwen/qwen3-8b", "config": { "context_length": 16384, "eval_batch_size": 512 } }],
+      "max_context_length": 40960, "format": "gguf",
+      "capabilities": { "vision": false, "trained_for_tool_use": true, "reasoning": { "allowed_options": ["off", "on"], "default": "on" } }
+    },
+    {
+      "type": "llm", "publisher": "google", "key": "google/gemma-3-12b", "display_name": "Gemma 3 12B", "architecture": "gemma3", "params_string": "12B",
+      "loaded_instances": [], "max_context_length": 131072, "format": "gguf",
+      "capabilities": { "vision": true, "trained_for_tool_use": false }
+    },
+    {
+      "type": "llm", "publisher": "openai", "key": "openai/gpt-oss-20b", "display_name": "gpt-oss 20B", "architecture": "gpt-oss", "params_string": "20B",
+      "loaded_instances": [], "max_context_length": 131072, "format": "gguf",
+      "capabilities": { "vision": false, "trained_for_tool_use": true, "reasoning": { "allowed_options": ["low", "medium", "high"], "default": "medium" } }
+    },
+    {
+      "type": "embedding", "publisher": "nomic-ai", "key": "text-embedding-nomic-embed-text-v1.5", "display_name": "Nomic Embed Text v1.5",
+      "loaded_instances": [], "max_context_length": 2048, "capabilities": {}
+    }
+  ]
+}

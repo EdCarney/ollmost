@@ -573,6 +573,31 @@ describe('models', () => {
     })
   })
 
+  it('rereads an LM Studio model whose cached window is still null, but trusts one that has loaded', async () => {
+    const hits = { n: 0 }
+    server.handler = (r, res) => {
+      if (r.url !== '/api/v1/models') return void res.writeHead(404).end()
+      hits.n++
+      res.writeHead(200, { 'content-type': 'application/json' }).end(fixtureText('discovery/lmstudio-docs.json'))
+    }
+    const p = provider() // the default endpoint is LM Studio (id 'lm')
+    const cached = (contextLength: number | null) => ({
+      info: { capabilities: ['completion'], contextLength, family: null, parameterSize: null, thinkPreset: null },
+      fetchedAt: Date.now(),
+      overrides: {},
+      detected: {}
+    })
+    // Not yet loaded: every call re-reads, since the fixture never loads it either.
+    fake.rows.set('lm/google/gemma-3-12b', cached(null))
+    await p.modelInfo('google/gemma-3-12b')
+    await p.modelInfo('google/gemma-3-12b')
+    expect(hits.n).toBe(2)
+    // Loaded, within the TTL: the cache is trusted, no re-read.
+    fake.rows.set('lm/qwen/qwen3-8b', cached(16384))
+    await p.modelInfo('qwen/qwen3-8b')
+    expect(hits.n).toBe(2)
+  })
+
   it('says why it can’t list when the server is down, and still describes a model it knew', async () => {
     const down = provider({ id: 'gen', name: 'Box', flavor: 'generic', baseUrl: 'http://127.0.0.1:9/v1' })
     await expect(down.listModels(false)).rejects.toThrow("Can't reach Box at 127.0.0.1:9. Is its server started?")

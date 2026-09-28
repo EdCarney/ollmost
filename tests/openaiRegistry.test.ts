@@ -24,18 +24,24 @@ const { OpenAIProvider } = await import('../src/main/providers/openai/adapter')
 beforeAll(() => openDatabase(':memory:'))
 afterAll(() => server.close())
 
-/** An OpenAI-compatible server that holds its model list until `answer()`; `asked` settles once the probe is waiting on it. */
+/**
+ * An OpenAI-compatible server that holds its first request for /v1/models until `answer()`; `asked` settles once the
+ * probe is waiting on it. Discovery reads the list again once the probe has told the flavour apart (Task 3.7), so any
+ * later /v1/models request answers at once.
+ */
 async function slowOpenAI(): Promise<{ mock: MockOllama; asked: Promise<void>; answer: () => void }> {
   const mock = await startMockOllama()
-  let answer = () => undefined as void
+  const send = (res: Parameters<MockOllama['handler']>[1]) => void res.writeHead(200).end(JSON.stringify({ data: [{ id: 'm' }] }))
+  let held: (() => void) | null = null
   const asked = new Promise<void>((resolve) => {
     mock.handler = (r, res) => {
       if (r.url !== '/v1/models') return void res.writeHead(404).end()
-      answer = () => void res.writeHead(200).end(JSON.stringify({ data: [{ id: 'm' }] }))
+      if (held) return send(res)
+      held = () => send(res)
       resolve()
     }
   })
-  return { mock, asked, answer: () => answer() }
+  return { mock, asked, answer: () => held?.() }
 }
 
 const request = {
