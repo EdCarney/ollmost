@@ -495,6 +495,21 @@ await second.win.screenshot({ path: join(SHOTS, 'home-nord-dark.png') })
     latte.dangerFg === '#ffffff' && mocha.dangerFg === '#1e1e2e',
     `${latte.dangerFg} / ${mocha.dangerFg}`
   )
+  // The chosen option in a row of options is an accent chip, not a panel one that vanished on its track.
+  const chosen = await w.getByRole('button', { name: 'Dark', exact: true }).evaluate((b) => {
+    const n = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--o-accent').trim().slice(1), 16)
+    return {
+      pressed: b.getAttribute('aria-pressed'),
+      bg: getComputedStyle(b).backgroundColor,
+      accent: `rgb(${n >> 16}, ${(n >> 8) & 255}, ${n & 255})`
+    }
+  })
+  check(
+    'the chosen option stands out in the accent colour',
+    chosen.pressed === 'true' && chosen.bg === chosen.accent,
+    `${chosen.bg} vs ${chosen.accent}`
+  )
+  await w.screenshot({ path: join(SHOTS, 'settings-chosen-option.png') })
 }
 // 9c. The command palette: commands beside search, and a setting's choices previewed live
 {
@@ -580,6 +595,8 @@ await second.app.close()
 // explanation, lose its tools and still answer; with an API key, web_search/web_fetch work end to
 // end, including gpt-oss-style aliases like browser.open.
 const mockChats = []
+// A reply to "Think it over" thinks, then waits here until the test lets it answer (so it can toggle live thinking).
+const liveThinking = { sent: null, release: null }
 const fakeOllama = createServer(async (req, res) => {
   let raw = ''
   for await (const chunk of req) raw += chunk
@@ -605,6 +622,16 @@ const fakeOllama = createServer(async (req, res) => {
   const toolNames = (body.tools ?? []).map((t) => t.function.name)
   const toolResults = body.messages.filter((m) => m.role === 'tool').map((m) => m.content)
   const lastUser = body.messages.filter((m) => m.role === 'user').at(-1)?.content ?? ''
+  if (lastUser.startsWith('Think it over')) {
+    res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+    res.write(JSON.stringify({ message: { role: 'assistant', content: '', thinking: 'Weighing it up.' }, done: false }) + '\n')
+    await new Promise((resolve) => {
+      liveThinking.release = resolve
+      liveThinking.sent?.()
+    })
+    res.write(JSON.stringify({ message: { role: 'assistant', content: 'Thought it over.' }, done: false }) + '\n')
+    return res.end(JSON.stringify({ done: true, prompt_eval_count: 100, eval_count: 12, eval_duration: 1e8 }) + '\n')
+  }
   const isChild = String(body.messages[0].content).includes('<sub_agent>')
   mockChats.push({ toolNames, toolResults, system: body.messages[0].content })
   let message
@@ -942,6 +969,46 @@ writeFileSync(
         .isVisible()
     )
     await dbg2.close()
+
+    // 15. Live thinking opens by itself until the reader closes it; then the chat's later thinking stays closed, after a
+    // reload too, and reading back a finished round's doesn't change that. Another chat's still opens.
+    const pane = win.getByRole('button', { name: 'Thinking…' })
+    const opensLive = async (text) => {
+      const sent = new Promise((resolve) => (liveThinking.sent = resolve))
+      await win.fill('textarea', text)
+      await win.click('button[aria-label="Send"]')
+      await sent
+      await pane.waitFor()
+      // The mock has sent its thinking: give the pane a moment to open by itself, if it's going to.
+      await win.waitForTimeout(1000)
+      return (await pane.getAttribute('aria-expanded')) === 'true'
+    }
+    const answer = async () => {
+      liveThinking.release()
+      await win.waitForFunction(() => !document.querySelector('button[aria-label="Stop"]'), null, { timeout: 10000 })
+      await win.waitForTimeout(300)
+    }
+    await newChat(win)
+    check('live thinking opens by itself', await opensLive('Think it over: one'))
+    await pane.click()
+    const closedNow = (await pane.getAttribute('aria-expanded')) === 'false'
+    await answer()
+    check('closing live thinking keeps the chat’s next thinking closed', closedNow && !(await opensLive('Think it over: two')))
+    await win.screenshot({ path: join(SHOTS, 'thinking-kept-closed.png') })
+    await answer()
+    await win
+      .getByRole('button', { name: /^Thought/ })
+      .last()
+      .click()
+    await win.reload()
+    await win.waitForSelector('textarea')
+    await win.locator('aside [role="button"]').first().click()
+    await win.waitForSelector('text=Think it over: two')
+    check('it stays closed after a reload and after reading back a finished round', !(await opensLive('Think it over: three')))
+    await answer()
+    await newChat(win)
+    check('another chat’s live thinking still opens by itself', await opensLive('Think it over: four'))
+    await answer()
   } catch (err) {
     check('tool runs completed without errors', false, err.message.split('\n')[0])
     await win.screenshot({ path: join(SHOTS, 'tools-failure.png') }).catch(() => {})

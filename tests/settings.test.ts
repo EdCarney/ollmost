@@ -7,11 +7,19 @@ const { writeSetting } = await import('../src/main/db/kv')
 const { getSettings } = await import('../src/main/settings')
 
 describe('settings saved by an earlier version', () => {
-  it('read what they lack from the defaults: sub-agents run 3 at once', () => {
+  it('read what they lack from the defaults: sub-agents run 3 at once, and 24,000 characters of a reply come back', () => {
     openDatabase(':memory:')
-    // Saved before sub-agents could run at once, and read for the first time since.
+    // Saved before sub-agents could run at once or their reply length was a setting, and read for the first time since.
     writeSetting('app', { userName: 'Ed', delegate: { enabled: false, maxRounds: 10 } })
-    expect(getSettings().delegate).toEqual({ enabled: false, maxRounds: 10, parallel: 3 })
+    expect(getSettings().delegate).toEqual({ enabled: false, maxRounds: 10, parallel: 3, resultChars: 24_000 })
+    expect(getSettings().userName).toBe('Ed')
+  })
+
+  it('read what they lack from the defaults: a chat’s reply gets up to 20 tool calls', () => {
+    openDatabase(':memory:')
+    // Saved before chats had their own tool-call limit.
+    writeSetting('app', { userName: 'Ed' })
+    expect(getSettings().chat).toEqual({ maxRounds: 20 })
     expect(getSettings().userName).toBe('Ed')
   })
 })

@@ -124,7 +124,7 @@ describe('assemble', () => {
     expect(buildSystemPrompt(base)).not.toContain('<sub_agents>')
     const child = buildSystemPrompt({
       ...base,
-      child: { task: 'Find the release date.' },
+      child: { task: 'Find the release date.', replyChars: 24_000 },
       preferences: 'Be brief.',
       project: { name: 'P', instructions: 'Use tabs.' },
       knowledge: [{ name: 'k.md', text: 'secret' }],
@@ -137,6 +137,22 @@ describe('assemble', () => {
     expect(child).not.toContain('secret')
     expect(child).not.toContain('<artifacts')
     expect(child).not.toContain('<sub_agents>')
+  })
+
+  it('tells a child where its reply will be cut, and a reply that delegates what reaches it, in words', () => {
+    const child = (replyChars: number) => buildSystemPrompt({ ...base, child: { task: 'Survey the files.', replyChars } })
+    expect(child(24_000)).toContain(
+      'Your reply is cut after about 4,000 words, so fit the result in that: put what matters most first, and summarize rather than stop mid-way.'
+    )
+    expect(child(48_000)).toContain('cut after about 8,000 words,')
+    expect(child(12_000)).toContain('cut after about 2,000 words,')
+    // A smaller share of the parent's room, rounded down.
+    expect(child(11_000)).toContain('cut after about 1,500 words,')
+    expect(child(5_960)).toContain('cut after about 900 words,')
+    expect(child(1_460)).toContain('cut after about 200 words,')
+    const parent = buildSystemPrompt({ ...base, subAgents: true, subAgentReplyChars: 24_000 })
+    expect(parent).toContain("A sub-agent's reply reaches you cut at about 4,000 words (fewer when this conversation is short of room)")
+    expect(buildSystemPrompt({ ...base, subAgents: true })).not.toContain('reaches you cut')
   })
 
   it('tells a reply that may delegate whether its sub-agents run at the same time', () => {

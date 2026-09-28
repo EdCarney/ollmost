@@ -596,16 +596,19 @@ export interface Settings {
    * whether code may download Python packages from PyPI, and how long a run may take.
    */
   runner: { mode: 'off' | 'ask' | 'allow'; defaultOn: boolean; pypi: boolean; timeoutSec: number }
+  /** A chat's reply: how many tool calls it may make before it stops and offers Continue. */
+  chat: { maxRounds: number }
   /**
    * Code sessions (a model working in a folder of the user's): whether its edits and its commands ask first, how long
    * a command may run, how many tool calls a reply may make, and the network preset new sessions start with.
    */
   code: { edits: 'ask' | 'allow'; commands: 'ask' | 'allow'; timeoutSec: number; maxRounds: number; defaultNetwork: CodeNetwork }
   /**
-   * Whether a model may delegate to a sub-agent (the delegate tool), how many requests one may make, and how many one
-   * reply may run at the same time (1 to 5; 1 runs them one after another).
+   * Whether a model may delegate to a sub-agent (the delegate tool), how many requests one may make, how many one
+   * reply may run at the same time (1 to 5; 1 runs them one after another), and how many characters of a sub-agent's
+   * reply come back to the chat (1,500 to 48,000; the rest is cut, and less comes back when the chat is short of room).
    */
-  delegate: { enabled: boolean; maxRounds: number; parallel: number }
+  delegate: { enabled: boolean; maxRounds: number; parallel: number; resultChars: number }
   /** Record every request for the debugger window. */
   debug: { record: boolean }
   /** Hover cards on links; `previews` fetches page title/image from this Mac (off by default for privacy). */

@@ -489,6 +489,28 @@ function RunnerSection() {
   )
 }
 
+const CHAT_ROUNDS = [10, 20, 40, 60].map((n) => ({ value: String(n), label: String(n) }))
+
+function ChatsSection() {
+  const { settings, updateSettings } = useApp()
+  if (!settings) return null
+  const c = settings.chat
+  const update = (patch: Partial<Settings['chat']>) => void updateSettings({ chat: patch })
+
+  return (
+    <Section title="Chats">
+      <Row label="Tool calls per reply" hint="A chat's reply stops after this many and offers Continue.">
+        <Segmented
+          label="Tool calls per chat reply"
+          value={String(c.maxRounds)}
+          options={CHAT_ROUNDS}
+          onChange={(v) => update({ maxRounds: Number(v) })}
+        />
+      </Row>
+    </Section>
+  )
+}
+
 const ASK_ALLOW: Array<{ value: 'ask' | 'allow'; label: string }> = [
   { value: 'ask', label: 'Ask each time' },
   { value: 'allow', label: 'Always allow' }
@@ -583,6 +605,13 @@ const DELEGATE_AT_ONCE = [
   { value: '5', label: '5' }
 ]
 
+// In characters, shown in words (about 6 characters a word).
+const DELEGATE_REPLY_LENGTHS = [
+  { value: '12000', label: '~2,000 words' },
+  { value: '24000', label: '~4,000 words' },
+  { value: '48000', label: '~8,000 words' }
+]
+
 function SubAgentsSection() {
   const { settings, updateSettings } = useApp()
   if (!settings) return null
@@ -597,10 +626,7 @@ function SubAgentsSection() {
       <Row label="Sub-agents">
         <Switch label="Sub-agents" checked={d.enabled} onChange={(enabled) => updateDelegate({ enabled })} />
       </Row>
-      <Row
-        label="Requests per task"
-        hint="The most a sub-agent may make before it stops and returns what it has; it never gets more than the chat's own reply may make."
-      >
+      <Row label="Requests per task" hint="The most a sub-agent may make before it stops and returns what it has.">
         <Segmented
           label="Requests per task"
           value={String(d.maxRounds)}
@@ -619,6 +645,17 @@ function SubAgentsSection() {
           onChange={(v) => updateDelegate({ parallel: Number(v) })}
         />
       </Row>
+      <Row
+        label="Reply length"
+        hint="How much of a sub-agent's reply comes back to the chat; the rest is cut. A reply never takes more than the chat has room for."
+      >
+        <Segmented
+          label="Reply length"
+          value={String(d.resultChars)}
+          options={DELEGATE_REPLY_LENGTHS}
+          onChange={(v) => updateDelegate({ resultChars: Number(v) })}
+        />
+      </Row>
     </Section>
   )
 }
@@ -635,6 +672,7 @@ export function ToolsTab() {
 
   return (
     <>
+      <ChatsSection />
       <RunnerSection />
       <CodeSessionsSection />
       <SubAgentsSection />

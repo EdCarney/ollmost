@@ -524,10 +524,10 @@ describe('reply loop', () => {
     const r = start('research this')
     const done = await doneEvent(r.conversation.id)
     expect(done.message.content).toBe('Final answer')
-    expect(chatCalls.length).toBe(6)
+    expect(chatCalls.length).toBe(20)
     expect(chatCalls.at(-1)!.tools).toBeUndefined()
     // It was still calling tools, so the reply says it ran out of rounds (and offers Continue).
-    expect(done.message.stats?.toolRoundLimit).toBe(6)
+    expect(done.message.stats?.toolRoundLimit).toBe(20)
   })
 
   it('takes the round limit from the reply options', async () => {
@@ -2052,8 +2052,8 @@ describe('markInterruptedReplies', () => {
 })
 
 describe('sub-agent settings and usage', () => {
-  it('defaults sub-agents to on, capped at 20 rounds, 3 at once', () => {
-    expect(getSettings().delegate).toEqual({ enabled: true, maxRounds: 20, parallel: 3 })
+  it('defaults sub-agents to on, capped at 20 rounds, 3 at once, replies of 24,000 characters', () => {
+    expect(getSettings().delegate).toEqual({ enabled: true, maxRounds: 20, parallel: 3, resultChars: 24_000 })
   })
 
   it('runs 1 to 5 sub-agents at once, and 3 when the setting is missing or not a number', async () => {
@@ -2069,6 +2069,22 @@ describe('sub-agent settings and usage', () => {
     expect(atOnce(undefined)).toBe(3)
     expect(atOnce(Number.NaN)).toBe(3)
     expect(atOnce('4')).toBe(3)
+  })
+
+  it('gives back 1,500 to 48,000 characters of a sub-agent’s reply, and 24,000 when the setting is missing or not a number', async () => {
+    const { subAgentReplyChars } = await import('../src/main/chat/delegate')
+    const replyChars = (resultChars: unknown) =>
+      subAgentReplyChars({ enabled: true, maxRounds: 20, parallel: 3, resultChars } as Settings['delegate'])
+    expect(replyChars(12_000)).toBe(12_000)
+    expect(replyChars(48_000)).toBe(48_000)
+    expect(replyChars(1e9)).toBe(48_000)
+    expect(replyChars(0)).toBe(1_500)
+    expect(replyChars(-5)).toBe(1_500)
+    expect(replyChars(20_000.9)).toBe(20_000)
+    expect(replyChars(undefined)).toBe(24_000)
+    expect(replyChars(Number.NaN)).toBe(24_000)
+    expect(replyChars(Number.POSITIVE_INFINITY)).toBe(24_000)
+    expect(replyChars('48000')).toBe(24_000)
   })
 
   it('counts a sub-agent’s rows in the chat’s totals but not as its context', () => {
@@ -2370,6 +2386,7 @@ describe('runRounds', () => {
 })
 
 describe('sub-agents', () => {
+  const CUT_MARK = '\n\n[… the sub-agent’s reply was cut here]'
   const isChild = (b: Record<string, unknown>) => String((b.messages as Array<{ content: string }>)[0].content).includes('<sub_agent>')
   const hasToolResult = (b: Record<string, unknown>) => (b.messages as Array<{ role: string }>).some((m) => m.role === 'tool')
   const toolResults = (b: Record<string, unknown>) => (b.messages as Array<{ role: string }>).filter((m) => m.role === 'tool').length
@@ -2415,7 +2432,6 @@ describe('sub-agents', () => {
     messageId,
     model: 'llama3.2',
     think: null,
-    maxRounds: 10,
     prompt: { userName: '', model: 'llama3.2', contextLength: 8192, web: 'on', skillIndex: [] }
   })
   /** A tool that acts on this Mac: it asks first, and can be allowed for the chat. */
@@ -2597,6 +2613,29 @@ describe('sub-agents', () => {
     }
   })
 
+  it('a sub-agent gets its own Requests-per-task limit, even above the chat reply’s own', async () => {
+    // The chat's own reply may make only 2 requests; the sub-agent's task budget is much higher.
+    updateSettings({ chat: { maxRounds: 2 }, delegate: { enabled: true, maxRounds: 10 } })
+    try {
+      chat = (b, res, n) => {
+        if (isChild(b))
+          return b.tools ? void res.writeHead(200).end(toolCall('web_search', { query: 'x' })) : reply('Still going.')(b, res, n)
+        return hasToolResult(b) ? reply('ok')(b, res, n) : void res.writeHead(200).end(delegateCall('Keep going.'))
+      }
+      web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] }))
+      const r = start('go')
+      const done = await doneEvent(r.conversation.id)
+      // The child ran to the delegate limit, well past what the chat's own reply may make.
+      expect(done.message.toolEvents[0].child?.rounds).toBe(10)
+      expect(done.message.content).toBe('ok')
+      expect(done.message.stats?.toolRoundLimit).toBe(2) // the parent's own limit, from Settings → Chats
+      expect(chatCalls.filter(isChild)).toHaveLength(10)
+      expect(done.message.toolEvents[0].child?.result).toContain('stopped at its limit of 10 requests')
+    } finally {
+      updateSettings({ chat: { maxRounds: 20 }, delegate: { enabled: true, maxRounds: 20 } })
+    }
+  })
+
   it('an approval inside the child is keyed by the child’s id and stored on the chat', async () => {
     const { childId } = await import('../src/shared/toolEvents')
     const { runs, off } = registerWipe()
@@ -2710,20 +2749,102 @@ describe('sub-agents', () => {
     expect(chatCalls).toHaveLength(0)
   })
 
-  it('cuts a child’s long reply, with a mark, before the parent gets it', async () => {
-    const { DELEGATE_RESULT_CHARS } = await import('../src/main/chat/delegate')
+  it('cuts a child’s long reply at the reply length set, with a mark, before the parent gets it', async () => {
     const long = 'word '.repeat(3_000).trim()
+    updateSettings({ delegate: { resultChars: 12_000 } })
+    try {
+      chat = (b, res, n) =>
+        isChild(b)
+          ? reply(long)(b, res, n)
+          : hasToolResult(b)
+            ? reply('ok')(b, res, n)
+            : void res.writeHead(200).end(delegateCall('Write at length.'))
+      const r = start('long')
+      const done = await doneEvent(r.conversation.id)
+      const result = done.message.toolEvents[0].child!.result
+      expect(result).toBe(`${long.slice(0, 12_000)}${CUT_MARK}`)
+      expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
+      // The child was told where it would be cut, and the parent what reaches it.
+      expect(systemOf(chatCalls.find(isChild)!)).toContain('Your reply is cut after about 2,000 words')
+      expect(systemOf(chatCalls.find((b) => !isChild(b))!)).toContain("A sub-agent's reply reaches you cut at about 2,000 words")
+    } finally {
+      updateSettings({ delegate: { resultChars: 24_000 } })
+    }
+  })
+
+  it('gives the parent as much of a child’s reply as the setting allows when the call has room, past other tools’ limit', async () => {
+    // A model name never fetched before, so its info isn't the 8192-token one other tests cached for llama3.2: its
+    // window (Ollmost's 32K local cap) has room for the longest reply.
+    const base = ollama.handler
+    ollama.handler = (req, res) => {
+      if (req.url === '/api/show' && req.json.model === 'wide-window')
+        return res
+          .writeHead(200)
+          .end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'llama.context_length': 131_072 } }))
+      return base!(req, res)
+    }
+    try {
+      for (const [resultChars, length, words] of [
+        [24_000, 30_000, '4,000'],
+        [48_000, 50_000, '8,000']
+      ] as const) {
+        updateSettings({ delegate: { resultChars } })
+        chatCalls = []
+        const long = 'word '.repeat(length / 5)
+        chat = (b, res, n) =>
+          isChild(b)
+            ? reply(long)(b, res, n)
+            : hasToolResult(b)
+              ? reply('ok')(b, res, n)
+              : void res.writeHead(200).end(delegateCall('Write at length.'))
+        const r = service.send({ ...sendBody(''), conversationId: null, content: 'long', model: 'wide-window' })
+        const done = await doneEvent(r.conversation.id)
+        const result = done.message.toolEvents[0].child!.result
+        expect(result).toBe(`${long.slice(0, resultChars)}${CUT_MARK}`)
+        expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
+        expect(systemOf(chatCalls.find(isChild)!)).toContain(`Your reply is cut after about ${words} words`)
+        expect(systemOf(chatCalls.find((b) => !isChild(b))!)).toContain(`A sub-agent's reply reaches you cut at about ${words} words`)
+      }
+    } finally {
+      ollama.handler = base
+      updateSettings({ delegate: { resultChars: 24_000 } })
+    }
+  })
+
+  it('cuts sub-agents run together to their shares of a small room, and tells each the limit it is cut at', async () => {
+    const { wordsIn } = await import('../src/main/chat/prompts')
+    const long = 'word '.repeat(6_000).trim()
     chat = (b, res, n) =>
       isChild(b)
         ? reply(long)(b, res, n)
         : hasToolResult(b)
           ? reply('ok')(b, res, n)
-          : void res.writeHead(200).end(delegateCall('Write at length.'))
-    const r = start('long')
+          : void res
+              .writeHead(200)
+              .end(
+                callsTogether(
+                  ['delegate', { task: 'Part one.' }],
+                  ['delegate', { task: 'Part two.' }],
+                  ['delegate', { task: 'Part three.' }]
+                )
+              )
+    const r = start('three parts')
     const done = await doneEvent(r.conversation.id)
-    const result = done.message.toolEvents[0].child!.result
-    expect(result).toBe(`${long.slice(0, DELEGATE_RESULT_CHARS)}\n\n[… the sub-agent’s reply was cut here]`)
-    expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
+    const results = done.message.toolEvents.map((e) => e.child!.result)
+    expect(results).toHaveLength(3)
+    // Each got the same share of the room, well short of the setting, and was cut to it, mark and all.
+    const share = results[0].length
+    expect(share).toBeLessThan(24_000 / 3)
+    for (const result of results) expect(result).toBe(`${long.slice(0, share - CUT_MARK.length)}${CUT_MARK}`)
+    // Together they fit the parent's room: an 8192-token window leaves 6144 for the request, at 4 characters a
+    // token, and no more than 90% of it for results.
+    expect(share * 3).toBeLessThanOrEqual(6_144 * 4 * 0.9)
+    expect(toolMessagesIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toEqual(results)
+    // Each child was told the limit its reply was cut at.
+    const children = chatCalls.filter(isChild)
+    expect(children).toHaveLength(3)
+    const words = wordsIn(share - CUT_MARK.length).toLocaleString('en-US')
+    for (const b of children) expect(systemOf(b)).toContain(`Your reply is cut after about ${words} words,`)
   })
 
   it('cuts a child’s reply to the room its call has, so the card shows what the parent got', async () => {

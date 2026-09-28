@@ -4,10 +4,8 @@
 
 export type TurnMode = 'chat' | 'code'
 
-/** Requests a chat reply may make: room for a search, a few page reads and a skill load. The last is tool-free. */
-export const DEFAULT_TOOL_ROUNDS = 6
-/** Requests a reply may make in a chat with tool sources on (MCP servers), whose tasks take more steps. */
-export const TOOL_SOURCE_ROUNDS = 12
+/** Requests a chat's reply may make: searching, reading and running a little, then answering. */
+export const CHAT_TOOL_ROUNDS = 20
 /** Requests a code session's reply may make: reading, editing and running until the work is done. */
 export const CODE_TOOL_ROUNDS = 60
 
@@ -20,18 +18,18 @@ export interface TurnPolicy {
 }
 
 /**
- * The policy for one reply. `artifacts` is whether the settings and the model allow them at all; `codeRounds` is the
- * Settings value for a code session (CODE_TOOL_ROUNDS when there's none).
+ * The policy for one reply. `artifacts` is whether the settings and the model allow them at all; `chatRounds` and
+ * `codeRounds` are the Settings values for a chat and a code session (CHAT_TOOL_ROUNDS and CODE_TOOL_ROUNDS when
+ * there's none).
  */
 export function turnPolicy(input: {
   mode: TurnMode
-  sources: readonly string[]
   artifacts: boolean
   maxToolRounds?: number
+  chatRounds?: number
   codeRounds?: number
 }): TurnPolicy {
-  const usual =
-    input.mode === 'code' ? (input.codeRounds ?? CODE_TOOL_ROUNDS) : input.sources.length ? TOOL_SOURCE_ROUNDS : DEFAULT_TOOL_ROUNDS
+  const usual = input.mode === 'code' ? (input.codeRounds ?? CODE_TOOL_ROUNDS) : (input.chatRounds ?? CHAT_TOOL_ROUNDS)
   return {
     mode: input.mode,
     maxRounds: Math.max(1, input.maxToolRounds ?? usual),

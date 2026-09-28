@@ -7,14 +7,14 @@ import { childId } from '@shared/toolEvents'
 import type { MessageStats, Settings, ToolEvent } from '@shared/types'
 import { modelInfo, resolve } from '../providers/registry'
 import type { ChatRequest, ToolDef } from '../providers/types'
-import { DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
+import { DEFAULT_SUB_AGENT_REPLY_CHARS, DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
 import { assemble, promptBudget } from './assemble'
-import { TOOL_RESULT_CHARS } from './results'
 import { runRounds, toolsTokens } from './rounds'
 import { type ResolvedCall, type RunContext, type ToolContext, toolGrants, type ToolProvider, type ToolResult, toolsFor } from './tools'
 
-/** As much of a child's reply as the parent gets (less when its call has less room); a longer one is cut with a mark. */
-export const DELEGATE_RESULT_CHARS = 12_000
+/** The least and most of a child's reply the parent may get, whatever the setting says (about 250 to 8,000 words). */
+const MIN_REPLY_CHARS = 1_500
+const MAX_REPLY_CHARS = 48_000
 const SUMMARY_CHARS = 60
 const RECORD_CHARS = 500
 const CUT_MARK = '\n\n[… the sub-agent’s reply was cut here]'
@@ -60,6 +60,18 @@ export function subAgentsAtOnce(settings: Settings['delegate']): number {
   return typeof n === 'number' && Number.isFinite(n) ? Math.min(MAX_AT_ONCE, Math.max(1, Math.floor(n))) : DEFAULT_SUB_AGENTS_AT_ONCE
 }
 
+/**
+ * As much of a child's reply as the parent gets, when its call has the room (a longer one is cut with a mark): the
+ * setting as a whole number from 1,500 to 48,000 (settings aren't checked over IPC), or the default when there's no
+ * number (a settings file saved before the setting existed).
+ */
+export function subAgentReplyChars(settings: Settings['delegate']): number {
+  const n: unknown = settings.resultChars
+  return typeof n === 'number' && Number.isFinite(n)
+    ? Math.min(MAX_REPLY_CHARS, Math.max(MIN_REPLY_CHARS, Math.floor(n)))
+    : DEFAULT_SUB_AGENT_REPLY_CHARS
+}
+
 const optional = (v: unknown): string | undefined => (typeof v === 'string' && v.trim() ? v.trim() : undefined)
 const summaryOf = (task: string): string => {
   const line = task.trim().split('\n')[0]
@@ -79,6 +91,8 @@ export const delegateTools: ToolProvider = {
   approval: () => 'auto',
   // Several delegated together run at the same time, each on its own card, asking there for what it needs.
   parallel: true,
+  // A reply may be longer than other tools' results: as long as the setting allows, mark and all, when there's room.
+  maxResultChars: () => subAgentReplyChars(getSettings().delegate) + CUT_MARK.length,
   run: (call, ctx) => runChild(call, ctx),
   replay: (e) =>
     e.tool === 'delegate' && e.child?.result
@@ -116,6 +130,11 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
     maxResultChars: undefined
   }
   const tools = toolsFor(childCtx)
+  // Where the child's reply is cut: the setting, or less when this call's share of the parent's room is smaller (the
+  // parent's value, not the child's cleared one), mark and all, so runTool doesn't cut it again and the card shows
+  // exactly what the parent got. The child is told, so it can fit its reply to it.
+  const setting = subAgentReplyChars(settings.delegate)
+  const replyChars = ctx.maxResultChars === undefined ? setting : Math.min(setting, ctx.maxResultChars - CUT_MARK.length)
   const content = context ? `<task>\n${task}\n</task>\n\n<context>\n${context}\n</context>` : `<task>\n${task}\n</task>`
   const assembled = assemble({
     ...reply.prompt,
@@ -134,7 +153,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
     loadedSkills: [],
     history: [{ role: 'user', content, documents: [], images: [], hiddenImages: [] }],
     compaction: null,
-    child: { task }
+    child: { task, replyChars }
   })
   const body: ChatRequest = {
     model: serverName,
@@ -169,7 +188,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
     provider,
     body,
     budget: promptBudget(numCtx),
-    maxRounds: Math.max(1, Math.min(settings.delegate.maxRounds, reply.maxRounds)),
+    maxRounds: Math.max(1, settings.delegate.maxRounds),
     // A child has no delegate of its own, so nothing of its runs beside anything else.
     parallel: 1,
     toolContext: childCtx,
@@ -211,9 +230,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   if (stats.toolRoundLimit)
     text = `${text}\n\n[The sub-agent stopped at its limit of ${stats.toolRoundLimit} requests; this is what it had so far.]`.trim()
   if (!text) text = '[The sub-agent gave no answer.]'
-  // No longer than this call's share of the parent's room (the parent's value, not the child's cleared one), mark and
-  // all, so runTool doesn't cut it again and the card shows exactly what the parent got.
-  const result = cut(text, Math.min(DELEGATE_RESULT_CHARS, (ctx.maxResultChars ?? TOOL_RESULT_CHARS) - CUT_MARK.length))
+  const result = cut(text, replyChars)
   const calls = out.toolEvents.length
   return {
     content: result,

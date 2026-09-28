@@ -53,7 +53,7 @@ import { errorMessage, estimateTokens, now } from '../util'
 import { hasPrivateFiles } from './exposure'
 import { assemble, type HistoryTurn, promptBudget } from './assemble'
 import { TITLE_PROMPT } from './prompts'
-import { delegateTools, subAgentsAtOnce } from './delegate'
+import { delegateTools, subAgentReplyChars, subAgentsAtOnce } from './delegate'
 import { CHARS_PER_TOKEN, runRounds, toolsTokens } from './rounds'
 import { missingAbilities, registerToolProvider, replayCalls, settleToolEvent, type ToolContext, toolGrants, toolsFor } from './tools'
 import type { WebStatus } from './prompts'
@@ -317,9 +317,9 @@ async function generate(
     // What this reply may do, by the kind of conversation: a code session's row says so (#78).
     const policy = turnPolicy({
       mode: conversation.mode,
-      sources,
       artifacts: settings.artifacts.enabled && model.overrides.artifacts !== false,
       maxToolRounds: reply.maxToolRounds,
+      chatRounds: settings.chat.maxRounds,
       codeRounds: settings.code.maxRounds
     })
     const serverIds = sources.filter((s) => s.startsWith(MCP_SOURCE)).map((s) => s.slice(MCP_SOURCE.length))
@@ -396,7 +396,6 @@ async function generate(
         messageId,
         model: modelName,
         think,
-        maxRounds: policy.maxRounds,
         prompt: {
           userName: settings.userName,
           model: modelName,
@@ -440,6 +439,7 @@ async function generate(
       pastTools: toolsCapable,
       subAgents: tools?.some((t) => t.function.name === 'delegate') ?? false,
       subAgentsAtOnce: atOnce,
+      subAgentReplyChars: subAgentReplyChars(settings.delegate),
       project: project ? { name: project.name, instructions: project.instructions } : null,
       chatInstructions: conversation.instructions,
       knowledge: project ? projectKnowledge(project.id) : [],

@@ -32,7 +32,7 @@ export interface ToolContext {
   signal?: AbortSignal
   /**
    * The most this call's result may add to the request, when the reply's room is shared between several calls.
-   * Defaults to TOOL_RESULT_CHARS.
+   * Defaults to the provider's maximum (TOOL_RESULT_CHARS unless it gives its own).
    */
   maxResultChars?: number
   /**
@@ -44,7 +44,6 @@ export interface ToolContext {
     messageId: string
     model: string
     think: ThinkSetting | null
-    maxRounds: number
     /** The parts of the parent's prompt input a child's prompt is built from. */
     prompt: Pick<AssembleInput, 'userName' | 'model' | 'contextLength' | 'web' | 'mcpServers' | 'codeRunner' | 'codeSession' | 'skillIndex'>
     /** Tell the chat its usage moved: called on a child's own requests too, not only the parent's rounds. */
@@ -114,10 +113,15 @@ export interface ToolProvider {
    */
   approval?(call: ResolvedCall, ctx: ToolContext): Approval
   /**
-   * Results that only make sense whole (a skill's instructions): capped at TOOL_RESULT_CHARS, but not cut to the
+   * Results that only make sense whole (a skill's instructions): capped at the provider's maximum, but not cut to the
    * call's share of a round's room.
    */
   wholeResults?: boolean
+  /**
+   * The most one call's result may add to the request, when that isn't TOOL_RESULT_CHARS (a sub-agent's reply, as
+   * long as the user lets it be). A call still gets no more than its share of a round's room.
+   */
+  maxResultChars?(): number
   /**
    * What "Allow for this chat" and a denial cover for this call (see src/shared/toolAllow.ts). Defaults to the tool's
    * name. MCP tools use their server and own name; web_fetch uses the site.
@@ -272,6 +276,11 @@ export function runsInParallel(call: ToolCall, ctx: ToolContext): boolean {
   return !!resolveCall(call, ctx)?.provider.parallel && approvalFor(call, ctx) === 'auto'
 }
 
+/** The most a call's result may add to the request, however much room there is: its provider's maximum. */
+export function maxResultCharsFor(call: ToolCall, ctx: ToolContext): number {
+  return resolveCall(call, ctx)?.provider.maxResultChars?.() ?? TOOL_RESULT_CHARS
+}
+
 /** Tell a call's provider that the user allowed it for the chat. */
 export function noteAllowedForChat(call: ToolCall, ctx: ToolContext): void {
   const resolved = resolveCall(call, ctx)
@@ -312,7 +321,8 @@ export async function runTool(call: ToolCall, ctx: ToolContext): Promise<ToolRes
     const message = errorMessage(err)
     result = { content: `Error: ${message}`, event: { tool: resolved.name, args: resolved.args, ok: false, summary: message } }
   }
-  const max = resolved.provider.wholeResults ? TOOL_RESULT_CHARS : Math.min(ctx.maxResultChars ?? TOOL_RESULT_CHARS, TOOL_RESULT_CHARS)
+  const cap = resolved.provider.maxResultChars?.() ?? TOOL_RESULT_CHARS
+  const max = resolved.provider.wholeResults ? cap : Math.min(ctx.maxResultChars ?? cap, cap)
   return { ...result, content: capText(result.content, max), event: { preview: preview(result.content), ...result.event } }
 }
 
