@@ -764,6 +764,38 @@ describe('model keys', () => {
   })
 })
 
+describe('the title model', () => {
+  afterEach(() => {
+    updateSettings({ titleModel: null })
+    setEndpoints(getSettings().endpoints.filter((e) => e.id !== 'off'))
+    invalidateProviders()
+  })
+
+  it('titles with the model set in Settings', async () => {
+    updateSettings({ titleModel: 'ollama/tiny-title' })
+    chat = reply('Hi')
+    start()
+    await waitFor(() => titleCalls.length > 0)
+    expect(titleCalls[0].model).toBe('tiny-title')
+  })
+
+  it('falls back to the chat’s model when the title model’s endpoint is gone or turned off', async () => {
+    setEndpoints([
+      ...getSettings().endpoints,
+      { id: 'off', name: 'Off box', kind: 'ollama', flavor: 'ollama', baseUrl: 'http://10.0.0.9:11434', enabled: false }
+    ])
+    invalidateProviders()
+    for (const titleModel of ['lm-studio/qwen/qwen3-8b', 'off/tiny-title']) {
+      updateSettings({ titleModel })
+      titleCalls = []
+      chat = reply('Hi')
+      start()
+      await waitFor(() => titleCalls.length > 0)
+      expect(titleCalls[0].model).toBe('llama3.2')
+    }
+  })
+})
+
 describe('/compact', () => {
   it('summarizes every message with the chat’s model and replays the summary instead of them', async () => {
     chat = reply('an answer')

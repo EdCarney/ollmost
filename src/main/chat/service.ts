@@ -791,6 +791,18 @@ async function summarizeOnce(
   }
 }
 
+/** The model that titles a chat: the one set in Settings, unless its endpoint is gone or turned off; then the chat's own. */
+export function titleModelFor(chatModel: string): string {
+  const titleModel = getSettings().titleModel
+  if (!titleModel) return chatModel
+  try {
+    resolve(titleModel)
+    return titleModel
+  } catch {
+    return chatModel
+  }
+}
+
 async function generateTitle(conversationId: string, chatModel: string): Promise<void> {
   const messages = listMessages(conversationId)
   const firstUser = messages.find((m) => m.role === 'user')
@@ -802,7 +814,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
   let title = ''
   let titleTrace: Trace | null = null
   try {
-    const modelName = getSettings().titleModel || chatModel
+    const modelName = titleModelFor(chatModel)
     const { provider, model: serverName } = resolve(modelName)
     const info = await modelInfo(modelName)
     const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think)
