@@ -19,12 +19,11 @@ export interface TurnPolicy {
 
 /**
  * The policy for one reply. `artifacts` is whether the settings and the model allow them at all; `chatRounds` and
- * `codeRounds` are the Settings value for a chat and a code session (CHAT_TOOL_ROUNDS and CODE_TOOL_ROUNDS when
+ * `codeRounds` are the Settings values for a chat and a code session (CHAT_TOOL_ROUNDS and CODE_TOOL_ROUNDS when
  * there's none).
  */
 export function turnPolicy(input: {
   mode: TurnMode
-  sources: readonly string[]
   artifacts: boolean
   maxToolRounds?: number
   chatRounds?: number

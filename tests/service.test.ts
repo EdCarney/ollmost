@@ -2451,7 +2451,10 @@ describe('sub-agents', () => {
       const done = await doneEvent(r.conversation.id)
       // The child ran to the delegate limit, well past what the chat's own reply may make.
       expect(done.message.toolEvents[0].child?.rounds).toBe(10)
-      expect(done.message.toolEvents[0].child?.rounds).toBeGreaterThan(2)
+      expect(done.message.content).toBe('ok')
+      expect(done.message.stats?.toolRoundLimit).toBe(2) // the parent's own limit, from Settings → Chats
+      expect(chatCalls.filter(isChild)).toHaveLength(10)
+      expect(done.message.toolEvents[0].child?.result).toContain('stopped at its limit of 10 requests')
     } finally {
       updateSettings({ chat: { maxRounds: 20 }, delegate: { enabled: true, maxRounds: 20 } })
     }

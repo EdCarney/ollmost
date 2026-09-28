@@ -501,7 +501,7 @@ function ChatsSection() {
     <Section title="Chats">
       <Row label="Tool calls per reply" hint="A chat's reply stops after this many and offers Continue.">
         <Segmented
-          label="Tool calls per reply"
+          label="Tool calls per chat reply"
           value={String(c.maxRounds)}
           options={CHAT_ROUNDS}
           onChange={(v) => update({ maxRounds: Number(v) })}
