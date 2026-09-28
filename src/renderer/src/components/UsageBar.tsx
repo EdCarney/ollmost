@@ -3,9 +3,10 @@ import { useEffect, useState } from 'react'
 import { formatCost, formatDollars, formatPercent, formatTimeLeft, type Pace, type PaceStatus, paceOf, spendPeriod } from '@shared/usage'
 import type { AccountUsage, ChatUsage, UsageSummary, UsageWindow } from '@shared/types'
 import { withPreview } from '@shared/settingsPreview'
+import { labelForKey, shortModelName } from '@shared/modelLabel'
 import { api } from '@/lib/api'
-import { cn, displayModelName, formatContext, formatTokens, relativeTime } from '@/lib/format'
-import { contextWindowFor, findModel, useApp } from '@/stores/app'
+import { cn, formatContext, formatTokens, relativeTime } from '@/lib/format'
+import { contextWindowFor, findModel, selectEndpoints, useApp } from '@/stores/app'
 import { useUsage } from '@/stores/usage'
 import { PopoverContent, PopoverRoot, PopoverTrigger, Spinner } from './ui'
 
@@ -253,7 +254,7 @@ export function AccountQuota() {
                   <div className="mt-0.5 truncate text-xs text-subtle">
                     {activityWindow.models
                       .slice(0, 3)
-                      .map((m) => `${displayModelName(m.name)} ${m.requests.toLocaleString()}`)
+                      .map((m) => `${shortModelName(m.name)} ${m.requests.toLocaleString()}`)
                       .join(' · ')}
                   </div>
                 </div>
@@ -308,6 +309,7 @@ export function ChatCost({ usage, model: modelName }: { usage: ChatUsage | null;
   const models = useApp((s) => s.models)
   const settings = useApp((s) => s.settings)
   const previewSettings = useApp((s) => s.previewSettings)
+  const endpoints = useApp(selectEndpoints)
   // The palette previews the header toggle live, before it's saved.
   if (
     !settings ||
@@ -318,7 +320,7 @@ export function ChatCost({ usage, model: modelName }: { usage: ChatUsage | null;
     return null
   const model = findModel(models, modelName)
   const total = usage.promptTokens + usage.completionTokens
-  const contextWindow = contextWindowFor(model, settings)
+  const contextWindow = contextWindowFor(model)
   const context = contextWindow && usage.lastContextTokens ? usage.lastContextTokens / contextWindow : null
   const allLocal = usage.byModel.every((m) => m.costUsd === 0)
   const cost = allLocal ? 'local' : usage.costUsd === null ? 'cost unknown' : `${usage.estimated ? '≈' : ''}${formatCost(usage.costUsd)}`
@@ -347,7 +349,7 @@ export function ChatCost({ usage, model: modelName }: { usage: ChatUsage | null;
             <tbody>
               {usage.byModel.map((m) => (
                 <tr key={m.model}>
-                  <td className="max-w-[120px] truncate py-0.5">{displayModelName(m.model)}</td>
+                  <td className="max-w-[120px] truncate py-0.5">{labelForKey(m.model, endpoints)}</td>
                   <td className="py-0.5 text-right">{formatTokens(m.promptTokens)}</td>
                   <td className="py-0.5 text-right">{formatTokens(m.completionTokens)}</td>
                   <td className="py-0.5 text-right">{m.costUsd === 0 ? 'local' : formatCost(m.costUsd)}</td>

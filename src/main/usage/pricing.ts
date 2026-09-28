@@ -1,7 +1,6 @@
 import { costOf, parsePricingHtml, priceFor } from '@shared/usage'
-import type { ModelPrice, PriceTable } from '@shared/types'
+import type { ModelInfo, ModelPrice, PriceTable } from '@shared/types'
 import { readSetting, writeSetting } from '../db/kv'
-import { connectionMode, isCloudName } from '../providers/ollama/wire'
 
 // Snapshot of ollama.com/pricing (USD per million tokens), used until the first live refresh.
 const BUNDLED: PriceTable = {
@@ -65,11 +64,7 @@ export function modelPrice(model: string): ModelPrice | null {
   return priceFor(getPriceTable(), model)
 }
 
-export function isBilled(model: string): boolean {
-  return connectionMode() === 'direct' || isCloudName(model)
-}
-
-export function requestCost(model: string, promptTokens: number, completionTokens: number): number | null {
-  if (!isBilled(model)) return 0
-  return costOf(modelPrice(model), promptTokens, completionTokens)
+/** USD for one request: only Ollama's cloud models have published rates. A priced model with no known price is null. */
+export function requestCost(info: Pick<ModelInfo, 'billing' | 'price'>, promptTokens: number, completionTokens: number): number | null {
+  return info.billing === 'priced' ? costOf(info.price, promptTokens, completionTokens) : 0
 }

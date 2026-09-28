@@ -1,12 +1,13 @@
 import { create } from 'zustand'
-import { effectiveContext } from '@shared/context'
 import type { DeepPartial } from '@shared/ipc'
 import { defaultThinkSetting, resolveThinkProfile } from '@shared/thinking'
 import type {
   Conversation,
+  Endpoint,
   McpServer,
   McpStatus,
   ModelInfo,
+  ModelListResult,
   Project,
   Settings,
   Skill,
@@ -52,14 +53,19 @@ export interface AppState {
   updateSettings: (patch: DeepPartial<Settings>) => Promise<void>
 
   models: ModelInfo[]
-  modelsError: string | null
+  /** Endpoints that couldn't list their models this time, and why. */
+  modelErrors: ModelListResult['errors']
   modelsLoading: boolean
+  /** The first listing has finished: before it, a chat's model can't be told from a missing one. */
+  modelsReady: boolean
   loadModels: (refresh?: boolean) => Promise<void>
+  /** An endpoint was added, changed or removed: the endpoint list (in settings) and the models again. */
+  endpointsChanged: () => Promise<void>
 
-  /** Model + thinking choice for chats that don't exist yet. */
+  /** Model (a key) + thinking choice for chats that don't exist yet. */
   draftModel: string | null
   draftThink: ThinkSetting | null
-  setDraftModel: (name: string) => void
+  setDraftModel: (key: string) => void
   setDraftThink: (think: ThinkSetting | null) => void
 
   projects: Project[]
@@ -114,31 +120,36 @@ export const useApp = create<AppState>((set, get) => ({
   updateSettings: async (patch) => set({ settings: await api.settings.update(patch) }),
 
   models: [],
-  modelsError: null,
+  modelErrors: [],
   modelsLoading: false,
+  modelsReady: false,
   loadModels: async (refresh = false) => {
     set({ modelsLoading: true })
     try {
-      const { models, error } = await api.models.list(refresh)
-      set({ models, modelsError: error })
+      const { models, errors } = await api.models.list(refresh)
+      set({ models, modelErrors: errors })
       const { draftModel, settings } = get()
-      if (!draftModel || !models.some((m) => m.name === draftModel)) {
-        const preferred = settings?.defaultModel && models.find((m) => m.name === settings.defaultModel)
+      if (!draftModel || !models.some((m) => m.key === draftModel)) {
+        const preferred = settings?.defaultModel && models.find((m) => m.key === settings.defaultModel)
         const pick = preferred || models.find((m) => m.installed) || models[0]
-        if (pick) get().setDraftModel(pick.name)
+        if (pick) get().setDraftModel(pick.key)
       }
     } catch (err) {
-      set({ modelsError: (err as Error).message })
+      set({ modelErrors: [{ endpointId: '', message: (err as Error).message }] })
     } finally {
-      set({ modelsLoading: false })
+      set({ modelsLoading: false, modelsReady: true })
     }
+  },
+  endpointsChanged: async () => {
+    await get().loadSettings()
+    await get().loadModels(true)
   },
 
   draftModel: null,
   draftThink: null,
-  setDraftModel: (name) => {
-    const profile = thinkProfileFor(get().models, name)
-    set({ draftModel: name, draftThink: defaultThinkSetting(profile) })
+  setDraftModel: (key) => {
+    const profile = thinkProfileFor(get().models, key)
+    set({ draftModel: key, draftThink: defaultThinkSetting(profile) })
   },
   setDraftThink: (draftThink) => set({ draftThink }),
 
@@ -188,20 +199,24 @@ export const useApp = create<AppState>((set, get) => ({
   dismissToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) }))
 }))
 
-export function findModel(models: ModelInfo[], name: string | null): ModelInfo | undefined {
-  return name ? models.find((m) => m.name === name) : undefined
+export function findModel(models: ModelInfo[], key: string | null): ModelInfo | undefined {
+  return key ? models.find((m) => m.key === key) : undefined
 }
 
-/** The window a chat with this model actually gets (local models are capped at the num_ctx setting). */
-export function contextWindowFor(model: ModelInfo | undefined, settings: Settings | null): number | null {
-  if (!model) return null
-  return settings ? effectiveContext(model, settings.localNumCtx) : model.contextLength
+/** The window a chat with this model actually gets, as main worked it out. */
+export function contextWindowFor(model: ModelInfo | undefined): number | null {
+  return model?.contextWindow ?? null
 }
 
-export function thinkProfileFor(models: ModelInfo[], name: string | null): ThinkProfile {
-  const model = findModel(models, name)
+export function thinkProfileFor(models: ModelInfo[], key: string | null): ThinkProfile {
+  const model = findModel(models, key)
+  // Family rules match the name the server knows ("gpt-oss…"), never the key.
   return model ? resolveThinkProfile(model.name, model.capabilities, model.overrides.think) : { kind: 'none' }
 }
+
+const NO_ENDPOINTS: Endpoint[] = []
+/** The configured endpoints, for `useApp(selectEndpoints)`: one empty list until settings load, so nothing re-renders for it. */
+export const selectEndpoints = (s: AppState): Endpoint[] => s.settings?.endpoints ?? NO_ENDPOINTS
 
 /** Whether `route` is showing this conversation's chat UI (inline approvals, etc.): a chat, or a code session. */
 export function showsConversation(route: Route, conversationId: string): boolean {

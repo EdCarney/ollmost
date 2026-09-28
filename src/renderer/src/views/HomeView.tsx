@@ -9,8 +9,9 @@ import { greeting } from '@/lib/format'
 import { useApp } from '@/stores/app'
 
 export function HomeView() {
-  const { settings, models, modelsError, modelsLoading, loadModels, navigate, skills } = useApp()
-  const noModels = !modelsLoading && models.length === 0
+  const { settings, models, modelErrors, modelsLoading, modelsReady, loadModels, navigate, skills } = useApp()
+  // Not before the first listing has finished: on the first render nothing has been asked yet.
+  const noModels = modelsReady && !modelsLoading && models.length === 0
 
   return (
     <div className="flex h-full flex-col">
@@ -28,7 +29,11 @@ export function HomeView() {
               <TriangleAlert className="mt-0.5 size-4 shrink-0 text-danger" />
               <div className="flex-1">
                 <div className="font-medium">Ollmost can't find any models.</div>
-                <div className="mt-1 text-muted">{modelsError ?? 'Make sure the Ollama app is running.'}</div>
+                <div className="mt-1 text-muted">
+                  {modelErrors.length
+                    ? modelErrors.map((e) => <div key={e.endpointId}>{e.message}</div>)
+                    : 'Make sure the Ollama app is running.'}
+                </div>
               </div>
               <div className="flex gap-2">
                 <Button size="sm" onClick={() => loadModels(true)}>

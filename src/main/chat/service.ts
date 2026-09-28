@@ -1,7 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { parseMessage } from '@shared/artifactParser'
 import { normalizeSpaces } from '@shared/text'
-import { effectiveContext } from '@shared/context'
 import { EVENT_CHANNELS } from '@shared/ipc'
 import { resolveThinkProfile } from '@shared/thinking'
 import type {
@@ -10,6 +9,7 @@ import type {
   Conversation,
   Message,
   MessageStats,
+  ModelInfo,
   SendRequest,
   SendResult,
   ThinkingSegment,
@@ -97,8 +97,11 @@ function assertIdle(conversationId: string): void {
   if (compacting.has(conversationId)) throw new Error('Ollmost is still compacting this chat.')
 }
 
+// send, regenerate and edit refuse a model whose endpoint was removed or turned off before they change the chat, so
+// Retry and Edit don't delete what they would replace. An offline endpoint still resolves; its reply fails as it streams.
 export function send(req: SendRequest, reply: ReplyOptions = {}): SendResult {
   if (!req.content.trim() && !req.attachmentIds.length) throw new Error('Message is empty')
+  resolve(req.model)
   let conversation: Conversation | null
   if (req.conversationId) {
     conversation = getConversation(req.conversationId)
@@ -136,6 +139,7 @@ export async function regenerate(
   const messages = listMessages(conversationId)
   const lastUserIndex = messages.findLastIndex((m) => m.role === 'user')
   if (lastUserIndex < 0) throw new Error('Nothing to retry')
+  resolve(opts.model)
   await dropAfter(conversationId, messages, lastUserIndex)
   uncompactFrom(conversationId, messages[lastUserIndex])
   const conversation = updateConversation(conversationId, { model: opts.model, think: opts.think, touch: true })
@@ -151,6 +155,7 @@ export async function edit(
   const original = getMessage(messageId)
   if (!original || original.role !== 'user') throw new Error('Only your own messages can be edited')
   assertIdle(original.conversationId)
+  resolve(opts.model)
   const messages = listMessages(original.conversationId)
   await dropAfter(
     original.conversationId,
@@ -294,10 +299,11 @@ async function generate(
     const settings = getSettings()
     const { provider, model: serverName } = resolve(modelName)
     const model = await modelInfo(modelName)
-    const profile = resolveThinkProfile(modelName, model.capabilities, model.overrides.think)
+    stats.billing = model.billing
+    const profile = resolveThinkProfile(model.name, model.capabilities, model.overrides.think)
     const vision = model.capabilities.includes('vision')
     const toolsCapable = model.capabilities.includes('tools')
-    const numCtx = effectiveContext(model, settings.localNumCtx)
+    const numCtx = model.contextWindow
     const budget = promptBudget(numCtx)
     const autoSkills = settings.skills.autoLoad && toolsCapable && model.overrides.autoSkills !== false
     const web: WebStatus = !settings.web.enabled ? 'off' : !toolsCapable ? 'unsupported' : webAvailable() ? 'on' : 'no-key'
@@ -325,7 +331,7 @@ async function generate(
     const serverIds = sources.filter((s) => s.startsWith(MCP_SOURCE)).map((s) => s.slice(MCP_SOURCE.length))
     const unavailable = serverIds.length ? await ensureServers(serverIds, SERVER_WAIT_MS) : []
     if (!toolsCapable && conversation.toolSources.length)
-      unavailable.push(`${modelName} can't use tools, so this chat's tools weren't used.`)
+      unavailable.push(`${model.name} can't use tools, so this chat's tools weren't used.`)
 
     // The folder code runs in. A chat's is readied (its attachments copied in) only when the code runner is on; a code
     // session's is the user's, readied for its own tools (#88). Either fails when code an earlier run left can't be
@@ -398,7 +404,7 @@ async function generate(
         think,
         prompt: {
           userName: settings.userName,
-          model: modelName,
+          model: model.name,
           contextLength: numCtx,
           web,
           mcpServers: servers,
@@ -424,7 +430,7 @@ async function generate(
     )
 
     const assembled = assemble({
-      model: modelName,
+      model: model.name,
       contextLength: numCtx,
       userName: settings.userName,
       preferences: settings.preferences,
@@ -679,9 +685,8 @@ export async function compact(conversationId: string, opts: { focus: string; mod
   try {
     const { provider, model: serverName } = resolve(opts.model)
     const info = await modelInfo(opts.model)
-    const profile = resolveThinkProfile(opts.model, info.capabilities, info.overrides.think)
-    const settings = getSettings()
-    const contextWindow = effectiveContext(info, settings.localNumCtx)
+    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think)
+    const contextWindow = info.contextWindow
     const focus = opts.focus.trim()
     const system = focus ? `${COMPACT_PROMPT}\n\nAbove all, keep what the user asked for: ${focus}` : COMPACT_PROMPT
     const request = (transcript: string): ChatRequest => ({
@@ -716,7 +721,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
         i++
       }
       const transcript = `${head}<conversation>\n${piece.join('\n\n')}\n</conversation>\n\n${COMPACT_INSTRUCTION}`
-      summary = await summarizeOnce(conversationId, opts.model, provider, request(transcript), transcript, piece.length)
+      summary = await summarizeOnce(conversationId, opts.model, provider, request(transcript), transcript, piece.length, info)
     }
     if (!getConversation(conversationId)) throw new Error('The chat was deleted while it was being compacted.')
     const compaction: Compaction = {
@@ -740,7 +745,8 @@ async function summarizeOnce(
   provider: Provider,
   request: ChatRequest,
   transcript: string,
-  count: number
+  count: number,
+  info: ModelInfo
 ): Promise<string> {
   const wire = provider.wire(request, false)
   const trace = startTrace({
@@ -758,7 +764,7 @@ async function summarizeOnce(
     const summary = res.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
     const promptTokens = res.usage.prompt ?? estimateTokens(transcript)
     const completionTokens = res.usage.completion ?? estimateTokens(summary)
-    const costUsd = requestCost(modelName, promptTokens, completionTokens)
+    const costUsd = requestCost(info, promptTokens, completionTokens)
     // Spent tokens are kept even for a chat deleted meanwhile (with no chat to bill them to), and the chat's usage
     // chip moves after each piece, so a later failure leaves it right.
     const chat = getConversation(conversationId)
@@ -770,6 +776,7 @@ async function summarizeOnce(
       promptTokens,
       completionTokens,
       costUsd,
+      billing: info.billing,
       estimated: res.usage.completion === undefined
     })
     if (chat) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
@@ -789,6 +796,18 @@ async function summarizeOnce(
   }
 }
 
+/** The model that titles a chat: the one set in Settings, unless its endpoint is gone or turned off; then the chat's own. */
+export function titleModelFor(chatModel: string): string {
+  const titleModel = getSettings().titleModel
+  if (!titleModel) return chatModel
+  try {
+    resolve(titleModel)
+    return titleModel
+  } catch {
+    return chatModel
+  }
+}
+
 async function generateTitle(conversationId: string, chatModel: string): Promise<void> {
   const messages = listMessages(conversationId)
   const firstUser = messages.find((m) => m.role === 'user')
@@ -800,10 +819,10 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
   let title = ''
   let titleTrace: Trace | null = null
   try {
-    const modelName = getSettings().titleModel || chatModel
+    const modelName = titleModelFor(chatModel)
     const { provider, model: serverName } = resolve(modelName)
     const info = await modelInfo(modelName)
-    const profile = resolveThinkProfile(modelName, info.capabilities, info.overrides.think)
+    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think)
     const request: ChatRequest = {
       model: serverName,
       messages: [
@@ -813,7 +832,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       think: leastThinking(profile),
       profile,
       // Same window as the chat: a different num_ctx makes Ollama reload a local model just for the title.
-      contextWindow: effectiveContext(info, getSettings().localNumCtx),
+      contextWindow: info.contextWindow,
       temperature: 0.3
     }
     const wire = provider.wire(request, false)
@@ -832,7 +851,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
     title = cleanTitle(res.content)
     const promptTokens = res.usage.prompt ?? estimateTokens(transcript)
     const completionTokens = res.usage.completion ?? estimateTokens(res.content)
-    const costUsd = requestCost(modelName, promptTokens, completionTokens)
+    const costUsd = requestCost(info, promptTokens, completionTokens)
     insertUsageEvent({
       conversationId,
       messageId: null,
@@ -841,6 +860,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       promptTokens,
       completionTokens,
       costUsd,
+      billing: info.billing,
       estimated: res.usage.completion === undefined
     })
     emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })

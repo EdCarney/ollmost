@@ -1,13 +1,16 @@
-import type { ModelInfo, ModelListResult, ModelOverrides } from '@shared/types'
-import { type CachedModelInfo, readModelProfile, writeModelInfo, writeModelOverrides } from '../../db/kv'
-import { getSettings } from '../../settings'
-import { errorMessage } from '../../util'
+import { isOllamaCloudUrl } from '@shared/endpoints'
+import { toModelKey } from '@shared/modelKey'
+import type { Endpoint, ModelInfo, ModelWhere } from '@shared/types'
+import { type CachedModelInfo, readModelProfile, writeModelInfo } from '../../db/kv'
 import { modelPrice } from '../../usage/pricing'
-import { connectionMode, isCloudName, listTags, showModel } from './wire'
+import { contextWindowFor } from '../context'
+import { billingOf, whereOf } from '../where'
+import { isCloudName, listCloudCatalog, listTags, type OllamaTarget, showModel } from './wire'
 
 const INFO_TTL = 24 * 60 * 60 * 1000
 const CATALOG_TTL = 60 * 60 * 1000
 
+// ollama.com's catalog is the same for every endpoint, so one cache serves them all.
 let catalogCache: { at: number; names: string[] } | null = null
 
 /**
@@ -22,7 +25,7 @@ export { isCloudName }
 
 async function cloudCatalog(refresh: boolean): Promise<string[]> {
   if (!refresh && catalogCache && Date.now() - catalogCache.at < CATALOG_TTL) return catalogCache.names
-  const names = (await listTags(true)).map((m) => m.name)
+  const names = (await listCloudCatalog()).map((m) => m.name)
   catalogCache = { at: Date.now(), names }
   return names
 }
@@ -33,18 +36,20 @@ function contextLengthOf(info: Record<string, unknown> | undefined): number | nu
   return null
 }
 
-async function fetchInfo(name: string, refresh: boolean): Promise<CachedModelInfo> {
-  const cached = readModelProfile(name)
+const UNKNOWN: CachedModelInfo = { capabilities: ['completion'], contextLength: null, family: null, parameterSize: null }
+
+async function fetchInfo(t: OllamaTarget, key: string, name: string, refresh: boolean): Promise<CachedModelInfo> {
+  const cached = readModelProfile(key)
   if (!refresh && cached.info && Date.now() - cached.fetchedAt < INFO_TTL) return cached.info
   try {
-    const show = await showModel(name)
+    const show = await showModel(t, name)
     const info: CachedModelInfo = {
       capabilities: show.capabilities ?? ['completion'],
       contextLength: contextLengthOf(show.model_info),
       family: show.details?.family || null,
       parameterSize: show.details?.parameter_size || null
     }
-    writeModelInfo(name, info)
+    writeModelInfo(key, info)
     return info
   } catch (err) {
     if (cached.info) return cached.info
@@ -52,17 +57,34 @@ async function fetchInfo(name: string, refresh: boolean): Promise<CachedModelInf
   }
 }
 
-function toModelInfo(name: string, info: CachedModelInfo, installed: boolean): ModelInfo {
+/** Where an Ollama model runs: everything on ollama.com, and the app's cloud names, in Ollama's cloud; the rest where the server is. */
+export function ollamaWhere(endpoint: Pick<Endpoint, 'baseUrl'>, name: string): ModelWhere {
+  return isOllamaCloudUrl(endpoint.baseUrl) || isCloudName(name) ? 'cloud' : whereOf(endpoint.baseUrl)
+}
+
+function toModelInfo(endpoint: Endpoint, name: string, info: CachedModelInfo, installed: boolean): ModelInfo {
+  const key = toModelKey(endpoint.id, name)
+  const { overrides, detected } = readModelProfile(key)
+  const where = ollamaWhere(endpoint, name)
+  const billing = billingOf(where)
+  // Ollmost sets num_ctx for the models an Ollama app runs; ollama.com sizes its cloud models itself.
+  const contextControl: ModelInfo['contextControl'] = where === 'cloud' ? 'server' : 'client'
   return {
+    key,
     name,
-    location: connectionMode() === 'direct' || isCloudName(name) ? 'cloud' : 'local',
+    endpoint: { id: endpoint.id, name: endpoint.name, kind: endpoint.kind, flavor: endpoint.flavor },
+    where,
+    billing,
+    contextControl,
+    contextWindow: contextWindowFor({ contextControl, contextLength: info.contextLength, overrides, detected }, endpoint),
     installed,
     capabilities: info.capabilities,
     contextLength: info.contextLength,
     family: info.family,
     parameterSize: info.parameterSize,
-    overrides: readModelProfile(name).overrides,
-    price: connectionMode() === 'direct' || isCloudName(name) ? modelPrice(name) : null
+    overrides,
+    detected,
+    price: billing === 'priced' ? modelPrice(name) : null
   }
 }
 
@@ -79,23 +101,16 @@ async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promis
   return out
 }
 
-export async function listModels(refresh = false): Promise<ModelListResult> {
-  const errors: string[] = []
+/**
+ * Every chat model an Ollama endpoint offers. Throws when the server can't be reached, so the picker shows it offline:
+ * the catalog's cloud names need the Ollama app running too.
+ */
+export async function listOllamaModels(endpoint: Endpoint, t: OllamaTarget, refresh: boolean): Promise<ModelInfo[]> {
   const names = new Map<string, boolean>() // name -> installed
-
-  if (connectionMode() === 'direct') {
-    try {
-      for (const n of await cloudCatalog(refresh)) names.set(n, true)
-    } catch (err) {
-      errors.push(errorMessage(err))
-    }
-  } else {
-    try {
-      for (const m of await listTags()) names.set(m.name, true)
-    } catch (err) {
-      errors.push(errorMessage(err))
-    }
-    if (getSettings().showCloudCatalog) {
+  if (t.cloud) for (const n of await cloudCatalog(refresh)) names.set(n, true)
+  else {
+    for (const m of await listTags(t)) names.set(m.name, true)
+    if (endpoint.showCloudCatalog) {
       try {
         for (const n of await cloudCatalog(refresh)) {
           const daemonName = toDaemonCloudName(n)
@@ -106,36 +121,26 @@ export async function listModels(refresh = false): Promise<ModelListResult> {
       }
     }
   }
-
-  const entries = [...names.entries()]
-  const models = (
-    await mapLimit(entries, 6, async ([name, installed]) => {
-      try {
-        return toModelInfo(name, await fetchInfo(name, refresh), installed)
-      } catch {
-        return installed
-          ? toModelInfo(name, { capabilities: ['completion'], contextLength: null, family: null, parameterSize: null }, true)
-          : null
-      }
-    })
+  const models = await mapLimit([...names.entries()], 6, async ([name, installed]) => {
+    try {
+      return toModelInfo(endpoint, name, await fetchInfo(t, toModelKey(endpoint.id, name), name, refresh), installed)
+    } catch {
+      return installed ? toModelInfo(endpoint, name, UNKNOWN, true) : null
+    }
+  })
+  return (
+    models
+      .filter((m): m is ModelInfo => !!m)
+      // Embedding-only models can't chat.
+      .filter((m) => m.capabilities.includes('completion'))
+      .sort((x, y) => (x.where === y.where ? x.name.localeCompare(y.name) : x.where === 'cloud' ? -1 : 1))
   )
-    .filter((m): m is ModelInfo => !!m)
-    // Embedding-only models can't chat.
-    .filter((m) => m.capabilities.includes('completion'))
-    .sort((a, b) => (a.location === b.location ? a.name.localeCompare(b.name) : a.location === 'cloud' ? -1 : 1))
-
-  return { models, error: models.length ? null : (errors[0] ?? 'No models found.') }
 }
 
-export async function getModelInfo(name: string, refresh = false): Promise<ModelInfo> {
+export async function getModelInfo(endpoint: Endpoint, t: OllamaTarget, name: string, refresh = false): Promise<ModelInfo> {
   try {
-    return toModelInfo(name, await fetchInfo(name, refresh), true)
+    return toModelInfo(endpoint, name, await fetchInfo(t, toModelKey(endpoint.id, name), name, refresh), true)
   } catch {
-    return toModelInfo(name, { capabilities: ['completion'], contextLength: null, family: null, parameterSize: null }, false)
+    return toModelInfo(endpoint, name, UNKNOWN, false)
   }
-}
-
-export async function setModelOverrides(name: string, overrides: ModelOverrides): Promise<ModelInfo> {
-  writeModelOverrides(name, overrides)
-  return getModelInfo(name)
 }

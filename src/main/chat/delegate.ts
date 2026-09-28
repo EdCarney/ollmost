@@ -1,7 +1,6 @@
 // A sub-agent: a fresh reply loop on one task the model describes, with the parent's model, tools and approvals,
 // whose reply is the tool result. Only that result enters the parent's context; the child's reading stays here,
 // on the parent's tool event, for the transcript (#97).
-import { effectiveContext } from '@shared/context'
 import { resolveThinkProfile } from '@shared/thinking'
 import { childId } from '@shared/toolEvents'
 import type { MessageStats, Settings, ToolEvent } from '@shared/types'
@@ -117,8 +116,8 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   const settings = getSettings()
   const { provider, model: serverName } = resolve(reply.model)
   const model = await modelInfo(reply.model)
-  const profile = resolveThinkProfile(reply.model, model.capabilities, model.overrides.think)
-  const numCtx = effectiveContext(model, settings.localNumCtx)
+  const profile = resolveThinkProfile(model.name, model.capabilities, model.overrides.think)
+  const numCtx = model.contextWindow
   // The child's context is the parent's, less what only the parent may do (its grants are worked out again).
   const { grants: _grants, ...parent } = ctx
   const childCtx: ToolContext = {

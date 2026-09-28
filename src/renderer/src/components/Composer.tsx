@@ -3,10 +3,12 @@ import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState }
 import { type Command, COMMANDS, parseCommand } from '@shared/commands'
 import { normalizeThinkSetting } from '@shared/thinking'
 import type { Conversation, FileSource, McpServer, McpStatus, Skill, ThinkSetting } from '@shared/types'
+import { modelAvailability, unavailableText } from '@shared/availability'
+import { modelLabel } from '@shared/modelLabel'
 import { api } from '@/lib/api'
 import { toSources } from '@/lib/sources'
 import { cn, formatTokens } from '@/lib/format'
-import { findModel, reportError, thinkProfileFor, useApp } from '@/stores/app'
+import { findModel, reportError, selectEndpoints, thinkProfileFor, useApp } from '@/stores/app'
 import { useChat } from '@/stores/chat'
 import { EMPTY_DRAFT, type PendingFile, useDrafts } from '@/stores/drafts'
 import { ModelPicker } from './ModelPicker'
@@ -127,7 +129,18 @@ export function Composer({
   large,
   mode = 'chat'
 }: Props) {
-  const { models, skills: allSkills, navigate, mcpServers, mcpStatus, settings: appSettings } = useApp()
+  const {
+    models,
+    modelErrors,
+    modelsReady,
+    loadModels,
+    skills: allSkills,
+    navigate,
+    mcpServers,
+    mcpStatus,
+    settings: appSettings
+  } = useApp()
+  const endpoints = useApp(selectEndpoints)
   const runnerOn = !!appSettings && appSettings.runner.mode !== 'off'
   const chatMode = mode === 'chat'
   const settings = useComposerSettings(conversation)
@@ -165,7 +178,10 @@ export function Composer({
   const uploading = pending.some((p) => !p.attachment)
   const hasImages = pending.some((p) => p.attachment?.kind === 'image')
   const visionMissing = hasImages && model && !model.capabilities.includes('vision')
-  const canSend = !!settings.model && !uploading && !submitting && (text.trim().length > 0 || pending.length > 0)
+  // Until the first listing ends, a chat's model can't be told from a missing one, so nothing is blocked yet.
+  const availability = modelsReady ? modelAvailability(settings.model, models, endpoints, modelErrors) : 'ok'
+  const unavailable = availability !== 'ok' && availability !== 'none'
+  const canSend = !!settings.model && !unavailable && !uploading && !submitting && (text.trim().length > 0 || pending.length > 0)
 
   // ---- attachments ----
   const addFiles = useCallback(
@@ -558,7 +574,7 @@ export function Composer({
 
           <div className="flex-1" />
 
-          <ModelPicker value={settings.model} onChange={settings.setModel} />
+          <ModelPicker value={settings.model} onChange={settings.setModel} unavailable={unavailable} />
 
           {streaming ? (
             <Tooltip content="Stop">
@@ -586,8 +602,20 @@ export function Composer({
       {visionMissing && (
         <p className="mt-2 flex items-center gap-1.5 px-2 text-xs text-muted">
           <TriangleAlert className="size-3.5 text-danger" />
-          {model ? `${model.name.replace(/(:|-)cloud$/, '')} can't see images.` : ''} Only the file name will be sent. Pick a model with the
-          eye icon to include them.
+          {model ? `${modelLabel(model)} can't see images.` : ''} Only the file name will be sent. Pick a model with the eye icon to include
+          them.
+        </p>
+      )}
+
+      {unavailable && settings.model && (
+        <p className="mt-2 flex items-center gap-1.5 px-2 text-xs text-muted">
+          <TriangleAlert className="size-3.5 shrink-0 text-danger" />
+          <span>{unavailableText(availability, settings.model, endpoints)}</span>
+          {availability === 'endpoint-offline' && (
+            <button className="text-accent hover:underline" onClick={() => void loadModels(true)}>
+              Retry
+            </button>
+          )}
         </p>
       )}
     </div>

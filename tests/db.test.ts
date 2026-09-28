@@ -200,7 +200,15 @@ describe('usage summary', () => {
   it('sums between the given moments when asked, and over the last days otherwise', () => {
     // A model of this test's own, so its rows are told from any other test's.
     const model = 'summary-test-model'
-    const event = { conversationId: null, messageId: null, model, kind: 'chat' as const, completionTokens: 10, estimated: false }
+    const event = {
+      conversationId: null,
+      messageId: null,
+      model,
+      kind: 'chat' as const,
+      completionTokens: 10,
+      billing: 'priced' as const,
+      estimated: false
+    }
     const mine = (s: ReturnType<typeof usageSummary>) => s.byModel.find((m) => m.model === model)
     insertUsageEvent({ ...event, promptTokens: 100, costUsd: 1 })
     insertUsageEvent({ ...event, promptTokens: 200, costUsd: 2 })
@@ -235,6 +243,7 @@ describe('a chat’s last context tokens (the meter) after history changes', () 
       promptTokens: 90_000,
       completionTokens: 10_000,
       costUsd: 0,
+      billing: 'local',
       estimated: false
     })
     const at1 = usageCreatedAt(m1.id)
@@ -253,6 +262,7 @@ describe('a chat’s last context tokens (the meter) after history changes', () 
       promptTokens: 90_000,
       completionTokens: 10_000,
       costUsd: 0,
+      billing: 'local',
       estimated: false
     })
     const at1 = usageCreatedAt(m1.id)
@@ -266,6 +276,7 @@ describe('a chat’s last context tokens (the meter) after history changes', () 
       promptTokens: 4_000,
       completionTokens: 1_000,
       costUsd: 0,
+      billing: 'local',
       estimated: false
     })
     expect(conversationUsage(c.id).lastContextTokens).toBe(5_000)
@@ -282,6 +293,7 @@ describe('a chat’s last context tokens (the meter) after history changes', () 
       promptTokens: 2_000,
       completionTokens: 500,
       costUsd: 0,
+      billing: 'local',
       estimated: false
     })
     const m2 = say(c.id, 'edited away')
@@ -293,6 +305,7 @@ describe('a chat’s last context tokens (the meter) after history changes', () 
       promptTokens: 9_000,
       completionTokens: 1_000,
       costUsd: 0,
+      billing: 'local',
       estimated: false
     })
     deleteMessagesFrom(c.id, m2.createdAt)

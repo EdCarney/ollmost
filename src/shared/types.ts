@@ -1,5 +1,7 @@
 // Domain types shared by the main process, preload bridge and renderer.
 
+import type { ModelKey } from './modelKey'
+
 export type ID = string
 
 export interface Project {
@@ -166,6 +168,8 @@ export interface MessageStats {
   doneReason?: string
   /** Estimated USD for the requests behind this reply; null when the model's price is unknown. */
   costUsd?: number | null
+  /** How the reply's model was billed when it ran: only a 'priced' reply has a cost to show. */
+  billing?: ModelBilling
   /** Token counts were estimated (e.g. the reply was stopped). */
   estimated?: boolean
   /** The model was still calling tools when the reply ran out of rounds (this many), so it had to answer. */
@@ -256,6 +260,52 @@ export interface SearchHit {
   mode: 'chat' | 'code'
 }
 
+// ---- Endpoints ------------------------------------------------------------
+
+export type EndpointKind = 'ollama' | 'openai'
+export type EndpointFlavor = 'ollama' | 'lmstudio' | 'llamacpp' | 'vllm' | 'generic'
+
+/** A model server Ollmost talks to. Its key is in the keychain; `hasKey` only says there is one. */
+export interface Endpoint {
+  /** [a-z0-9-], made from the name when added. It never changes: model keys start with it. */
+  id: string
+  name: string
+  kind: EndpointKind
+  flavor: EndpointFlavor
+  /** Ollama: the server's root. OpenAI: the base URL as the server's docs give it (usually …/v1). */
+  baseUrl: string
+  enabled: boolean
+  hasKey: boolean
+  /** Ollama: list ollama.com's whole cloud catalog through this server, not only pulled models. */
+  showCloudCatalog?: boolean
+  /** Ollama: the num_ctx Ollmost sends for the models this server runs (capped at each model's own length). */
+  numCtx?: number
+  /** OpenAI: the window assumed when nothing reports one. */
+  defaultContext?: number
+  /** OpenAI: false once the server has rejected `stream_options`. */
+  streamOptions?: boolean
+}
+
+/** What checking an address found, before it's added. */
+export interface EndpointProbe {
+  kind: EndpointKind
+  flavor: EndpointFlavor
+  /** The address to store: Ollama's root, or the OpenAI base the probe confirmed. */
+  baseUrl: string
+  version: string | null
+  models: number
+  withTools: number
+  withVision: number
+  canThink: number
+  reportsCapabilities: boolean
+  reportsContext: boolean
+}
+
+/** Where a model runs: Ollama's cloud, this Mac (a loopback address), or another machine. */
+export type ModelWhere = 'cloud' | 'this-mac' | 'network'
+/** Whether Ollmost can price a model's requests. Only Ollama's cloud models are priced. */
+export type ModelBilling = 'priced' | 'local' | 'untracked'
+
 // ---- Models -------------------------------------------------------------
 
 export type ThinkProfile =
@@ -265,6 +315,17 @@ export interface ModelOverrides {
   think?: ThinkProfile['kind']
   artifacts?: boolean
   autoSkills?: boolean
+  /** Set in Settings → Models (PR 3's columns); unset means Auto. */
+  vision?: boolean
+  tools?: boolean
+  contextLength?: number
+}
+
+/** What Ollmost learned from a server's errors, kept apart from the user's overrides. "Re-detect" clears it. */
+export interface ModelDetected {
+  tools?: false
+  contextLength?: number
+  reason?: string
 }
 
 export interface ModelPrice {
@@ -282,22 +343,32 @@ export interface PriceTable {
 }
 
 export interface ModelInfo {
+  /** "<endpoint id>/<name>": what chats, settings and every lookup use. */
+  key: ModelKey
+  /** The model's id at its server: what requests send. */
   name: string
-  /** Cloud models run on ollama.com; local ones on this machine. */
-  location: 'cloud' | 'local'
+  endpoint: { id: string; name: string; kind: EndpointKind; flavor: EndpointFlavor }
+  where: ModelWhere
+  billing: ModelBilling
+  /** 'client': Ollmost sends the window (Ollama's num_ctx). 'server': the server fixed it when it loaded the model. */
+  contextControl: 'client' | 'server'
+  /** The window this model's requests get. History trimming, the meter and num_ctx all use this one number. */
+  contextWindow: number | null
   installed: boolean
   capabilities: string[]
   contextLength: number | null
   family: string | null
   parameterSize: string | null
   overrides: ModelOverrides
-  /** Published cloud price, if known. Local models are free. */
+  detected: ModelDetected
+  /** Published price for a priced model, when known. */
   price: ModelPrice | null
 }
 
 export interface ModelListResult {
   models: ModelInfo[]
-  error: string | null
+  /** Endpoints that couldn't list their models this time, and why. The others still list. */
+  errors: Array<{ endpointId: string; message: string }>
 }
 
 // ---- Usage & cost ---------------------------------------------------------
@@ -574,11 +645,13 @@ export interface ThemeDef {
 export interface Settings {
   userName: string
   preferences: string
-  connection: { mode: 'local' | 'direct'; host: string; hasApiKey: boolean }
+  /** Where models come from. Changed only through the endpoints calls, never through a settings update. */
+  endpoints: Endpoint[]
+  /** The ollama.com API key: web tools for every model, quota, and an Ollama endpoint on ollama.com. */
+  ollamaAccount: { hasKey: boolean }
+  /** Model keys (endpointId/model). */
   defaultModel: string | null
   titleModel: string | null
-  showCloudCatalog: boolean
-  localNumCtx: number
   appearance: {
     themeId: string
     mode: 'system' | 'light' | 'dark'

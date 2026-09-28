@@ -3,7 +3,7 @@ import type { ServerResponse } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ChatEvent, MessageStats, Settings, ToolEvent } from '@shared/types'
+import type { ChatEvent, MessageStats, Settings, ThinkSetting, ToolEvent } from '@shared/types'
 import type { RoundsInput } from '../src/main/chat/rounds'
 import type { ChatEvent as ProviderEvent, ChatRequest, Provider } from '../src/main/providers/types'
 import type { ToolContext, ToolProvider } from '../src/main/chat/tools'
@@ -33,7 +33,7 @@ const ollama: MockOllama = await startMockOllama()
 process.env.OLLMOST_WEB_URL = ollama.url
 
 const { all, openDatabase } = await import('../src/main/db/index')
-const { updateSettings, setApiKey, getSettings } = await import('../src/main/settings')
+const { updateSettings, setApiKey, setEndpoints, getSettings } = await import('../src/main/settings')
 const service = await import('../src/main/chat/service')
 const { getTrace, listTraces } = await import('../src/main/debug/traces')
 const {
@@ -49,8 +49,7 @@ const {
 } = await import('../src/main/db/conversations')
 const { registerToolProvider } = await import('../src/main/chat/tools')
 const { runRounds } = await import('../src/main/chat/rounds')
-const { getModelInfo } = await import('../src/main/providers/ollama/models')
-const { resolve } = await import('../src/main/providers/registry')
+const { EndpointGoneError, invalidateProviders, modelInfo, resolve } = await import('../src/main/providers/registry')
 const { replayRequest } = await import('../src/main/debug/replay')
 const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
 const approvals = await import('../src/main/chat/approvals')
@@ -67,7 +66,21 @@ let titleCalls: Array<Record<string, unknown>>
 
 beforeAll(() => {
   openDatabase(':memory:')
-  updateSettings({ connection: { mode: 'local', host: ollama.url }, skills: { autoLoad: false }, web: { enabled: true } })
+  // The one Ollama endpoint, pointed at the mock.
+  setEndpoints([
+    {
+      id: 'ollama',
+      name: 'Ollama',
+      kind: 'ollama',
+      flavor: 'ollama',
+      baseUrl: ollama.url,
+      enabled: true,
+      showCloudCatalog: true,
+      numCtx: 32768
+    }
+  ])
+  invalidateProviders()
+  updateSettings({ skills: { autoLoad: false }, web: { enabled: true } })
   ollama.handler = (req, res) => {
     if (req.url === '/api/show')
       return res.writeHead(200).end(JSON.stringify({ capabilities: ['completion', 'tools'], model_info: { 'llama.context_length': 8192 } }))
@@ -110,7 +123,7 @@ const sendBody = (conversationId: string) => ({
   projectId: null,
   content: '',
   attachmentIds: [],
-  model: 'llama3.2',
+  model: 'ollama/llama3.2',
   think: null,
   skills: [],
   toolSources: []
@@ -122,7 +135,7 @@ function start(content = 'hello') {
     projectId: null,
     content,
     attachmentIds: [],
-    model: 'llama3.2',
+    model: 'ollama/llama3.2',
     think: null,
     skills: [],
     toolSources: []
@@ -181,7 +194,7 @@ describe('reply loop', () => {
       projectId: null,
       content: 'hi again',
       attachmentIds: [],
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: []
@@ -224,7 +237,7 @@ describe('reply loop', () => {
 
   it('stop() resolves only after the partial reply is saved', async () => {
     chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'partial' }, done: false })]) // then hangs
-    const r = start()
+    const r = start('stop me for a delete')
     await waitFor(() => events.some((e) => e.type === 'delta' && e.conversationId === r.conversation.id))
     await service.stop(r.conversation.id, { quiet: true }) // as deleting the chat does
     const saved = getMessage(r.assistantMessageId)!
@@ -234,9 +247,9 @@ describe('reply loop', () => {
     // The chat can now be deleted without the reply writing to it afterwards.
     deleteConversation(r.conversation.id)
     expect(service.isReplying()).toBe(false)
-    // A stop for a delete (or a quit) doesn't start a title request.
+    // A stop for a delete (or a quit) doesn't start a title request (an earlier test's title request may still arrive here).
     await new Promise((r) => setTimeout(r, 50))
-    expect(titleCalls).toHaveLength(0)
+    expect(titleCalls.some((t) => JSON.stringify(t.messages).includes('stop me for a delete'))).toBe(false)
   })
 
   it('stop() keeps the thinking of the round it stopped in', async () => {
@@ -269,13 +282,13 @@ describe('reply loop', () => {
       n === 2
         ? reply('sent reply')(_b, res, n)
         : streamChunks(res, [line({ message: { role: 'assistant', content: 'regenerated' }, done: false })])
-    const regen = service.regenerate(r.conversation.id, { model: 'llama3.2', think: null })
+    const regen = service.regenerate(r.conversation.id, { model: 'ollama/llama3.2', think: null })
     service.send({
       conversationId: r.conversation.id,
       projectId: null,
       content: 'again',
       attachmentIds: [],
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: []
@@ -502,7 +515,7 @@ describe('reply loop', () => {
       projectId: null,
       content: 'open the second one',
       attachmentIds: [],
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: []
@@ -541,7 +554,7 @@ describe('reply loop', () => {
         projectId: null,
         content: 'dig deep',
         attachmentIds: [],
-        model: 'llama3.2',
+        model: 'ollama/llama3.2',
         think: null,
         skills: [],
         toolSources: []
@@ -704,6 +717,145 @@ describe('reply loop', () => {
   })
 })
 
+describe('model keys', () => {
+  const HF = 'hf.co/bartowski/Qwen3-8B-GGUF:Q4_K_M'
+  const sendNew = (model: string, think: ThinkSetting | null = null) =>
+    service.send({ conversationId: null, projectId: null, content: 'hello', attachmentIds: [], model, think, skills: [], toolSources: [] })
+
+  it('record a reply under its key and billing, and send Ollama only the name it knows', async () => {
+    chat = reply('Hi')
+    const r = start()
+    const done = await doneEvent(r.conversation.id)
+    expect(chatCalls[0].model).toBe('llama3.2')
+    expect(done.message).toMatchObject({ model: 'ollama/llama3.2', stats: { billing: 'local' } })
+    expect(
+      all<{ model: string; billing: string }>(
+        "SELECT model, billing FROM usage_events WHERE conversation_id = ? AND kind = 'chat'",
+        r.conversation.id
+      )
+    ).toEqual([{ model: 'ollama/llama3.2', billing: 'local' }])
+    expect(listTraces(r.conversation.id).find((t) => t.kind === 'chat')?.model).toBe('ollama/llama3.2')
+  })
+
+  it('send an hf.co model its whole name (Review Focus #1)', async () => {
+    chat = reply('Hi')
+    const r = sendNew(`ollama/${HF}`)
+    await doneEvent(r.conversation.id)
+    expect(r.conversation.model).toBe(`ollama/${HF}`)
+    expect(chatCalls[0].model).toBe(HF)
+  })
+
+  it('read a model’s thinking profile and prompt by its own name, not its key', async () => {
+    const base = ollama.handler
+    ollama.handler = (req, res) =>
+      req.url === '/api/show' && req.json.model === 'gpt-oss:20b'
+        ? void res.writeHead(200).end(JSON.stringify({ capabilities: ['completion', 'tools', 'thinking'], model_info: {} }))
+        : base(req, res)
+    try {
+      chat = reply('Hi')
+      const r = sendNew('ollama/gpt-oss:20b', 'high')
+      await doneEvent(r.conversation.id)
+      // gpt-oss takes effort levels. Read by its key, it would have been an on/off model and sent think: true.
+      expect(chatCalls[0].think).toBe('high')
+      expect((chatCalls[0].messages as Array<{ content: string }>)[0].content).toContain('You are the model "gpt-oss:20b"')
+    } finally {
+      ollama.handler = base
+    }
+  })
+})
+
+describe('the title model', () => {
+  afterEach(() => {
+    updateSettings({ titleModel: null })
+    setEndpoints(getSettings().endpoints.filter((e) => e.id !== 'off'))
+    invalidateProviders()
+  })
+
+  // A title from the test before can land after beforeEach empties titleCalls, so each chat's title is found by its
+  // first message.
+  const titleOf = (content: string) => waitFor(() => titleCalls.find((t) => JSON.stringify(t.messages).includes(content)))
+
+  it('titles with the model set in Settings', async () => {
+    updateSettings({ titleModel: 'ollama/tiny-title' })
+    chat = reply('Hi')
+    start('title me with tiny-title')
+    expect((await titleOf('title me with tiny-title')).model).toBe('tiny-title')
+  })
+
+  it('falls back to the chat’s model when the title model’s endpoint is gone or turned off', async () => {
+    setEndpoints([
+      ...getSettings().endpoints,
+      { id: 'off', name: 'Off box', kind: 'ollama', flavor: 'ollama', baseUrl: 'http://10.0.0.9:11434', enabled: false }
+    ])
+    invalidateProviders()
+    for (const titleModel of ['lm-studio/qwen/qwen3-8b', 'off/tiny-title']) {
+      updateSettings({ titleModel })
+      chat = reply('Hi')
+      start(`title me without ${titleModel}`)
+      expect((await titleOf(`title me without ${titleModel}`)).model).toBe('llama3.2')
+    }
+  })
+})
+
+describe('a model whose endpoint is gone or turned off', () => {
+  afterEach(() => {
+    setEndpoints(getSettings().endpoints.filter((e) => e.id !== 'off'))
+    invalidateProviders()
+  })
+
+  /** A chat with one finished exchange on ollama/llama3.2, and an endpoint 'off' that's turned off. */
+  async function chatBesideOffEndpoint(content: string): Promise<string> {
+    chat = reply('an answer')
+    const r = start(content)
+    await doneEvent(r.conversation.id)
+    setEndpoints([
+      ...getSettings().endpoints,
+      { id: 'off', name: 'Off box', kind: 'ollama', flavor: 'ollama', baseUrl: 'http://10.0.0.9:11434', enabled: false }
+    ])
+    invalidateProviders()
+    return r.conversation.id
+  }
+
+  const snapshot = async (conversationId: string) => {
+    const { listMessages } = await import('../src/main/db/conversations')
+    return listMessages(conversationId).map((m) => ({ id: m.id, content: m.content }))
+  }
+
+  /** `act` is refused with `error`, and the chat's messages and model are as they were, with no chat request made. */
+  async function refusedUnchanged(conversationId: string, act: () => unknown, error: string | typeof EndpointGoneError) {
+    const before = await snapshot(conversationId)
+    const model = getConversation(conversationId)?.model
+    // A request from an earlier test can land late, so only the count this call could change is compared.
+    const calls = chatCalls.length
+    await expect((async () => act())()).rejects.toThrow(error)
+    await new Promise((r) => setTimeout(r, 50))
+    expect(await snapshot(conversationId)).toEqual(before)
+    expect(getConversation(conversationId)?.model).toBe(model)
+    expect(chatCalls.length).toBe(calls)
+  }
+
+  it('refuses a Retry and keeps the answer it would replace', async () => {
+    const id = await chatBesideOffEndpoint('retry me on a turned-off endpoint')
+    await refusedUnchanged(id, () => service.regenerate(id, { model: 'off/qwen3:8b', think: null }), 'Off box is turned off')
+  })
+
+  it('refuses an Edit and keeps everything after the message', async () => {
+    const id = await chatBesideOffEndpoint('edit me on a turned-off endpoint')
+    const firstUser = (await snapshot(id))[0]
+    await refusedUnchanged(id, () => service.edit(firstUser.id, 'changed', { model: 'off/qwen3:8b', think: null }), 'Off box is turned off')
+  })
+
+  it('refuses a send, adding no message', async () => {
+    const id = await chatBesideOffEndpoint('send after me on a turned-off endpoint')
+    await refusedUnchanged(id, () => service.send({ ...sendBody(id), content: 'Continue', model: 'off/qwen3:8b' }), 'Off box is turned off')
+  })
+
+  it('refuses a Retry on a removed endpoint', async () => {
+    const id = await chatBesideOffEndpoint('retry me on a removed endpoint')
+    await refusedUnchanged(id, () => service.regenerate(id, { model: 'gone-box/qwen3:8b', think: null }), EndpointGoneError)
+  })
+})
+
 describe('/compact', () => {
   it('summarizes every message with the chat’s model and replays the summary instead of them', async () => {
     chat = reply('an answer')
@@ -735,7 +887,7 @@ describe('/compact', () => {
     }
     const compactCalls: Array<Record<string, unknown>> = []
     try {
-      const c = await service.compact(r.conversation.id, { focus: 'keep the numbers', model: 'llama3.2' })
+      const c = await service.compact(r.conversation.id, { focus: 'keep the numbers', model: 'ollama/llama3.2' })
       expect(compactCalls).toHaveLength(1)
       const [instructions, summaryRequest] = (compactCalls[0].messages as Array<{ content: string }>).map((m) => m.content)
       expect(instructions).toContain('keep the numbers')
@@ -797,7 +949,7 @@ describe('/compact', () => {
     const restore = summarizer(['Short.'], calls)
     const once = vi.spyOn(resolve('llama3.2').provider, 'chatOnce')
     try {
-      await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       expect(once).toHaveBeenCalledWith(
         expect.objectContaining({
           messages: [expect.objectContaining({ role: 'system' }), expect.objectContaining({ role: 'user' })],
@@ -825,7 +977,7 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['Summary one.', 'Summary two.', 'Summary three.'], calls)
     try {
-      const c = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const c = await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       expect(calls.length).toBeGreaterThan(1)
       const users = calls.map((call) => String((call.messages as Array<{ content: string }>)[1].content))
       expect(users[0]).toContain('first')
@@ -849,7 +1001,7 @@ describe('/compact', () => {
       await exchanges(r.conversation.id, ['q2'])
       const restore = summarizer(['Two questions.'], [])
       try {
-        await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+        await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
         // The meter reads null right after compacting; it doesn't still count the pre-compaction reply.
         expect(conversationUsage(r.conversation.id).lastContextTokens).toBeNull()
       } finally {
@@ -874,7 +1026,7 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['Four questions.'], calls)
     try {
-      const c = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const c = await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       const { listMessages } = await import('../src/main/db/conversations')
       const messages = listMessages(r.conversation.id)
       expect(c.compaction).toMatchObject({ messages: 7, upTo: messages[7].createdAt })
@@ -895,17 +1047,17 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['First summary.', 'Second summary.'], calls)
     try {
-      const first = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const first = await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       expect(first.compaction?.messages).toBe(12)
       await exchanges(r.conversation.id, ['q7', 'q8'])
-      const second = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const second = await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       expect(second.compaction).toMatchObject({ summary: 'Second summary.', messages: 16 })
       expect(String((calls[1].messages as Array<{ content: string }>)[1].content)).toContain('First summary.')
       // Editing q1, which the summary covers, clears it: the summary stood for the old text.
       const { listMessages } = await import('../src/main/db/conversations')
       const q1 = listMessages(r.conversation.id)[0]
       events.length = 0
-      const edited = await service.edit(q1.id, 'q1 reworded', { model: 'llama3.2', think: null })
+      const edited = await service.edit(q1.id, 'q1 reworded', { model: 'ollama/llama3.2', think: null })
       await doneEvent(edited.conversation.id)
       expect(edited.conversation.compaction).toBeNull()
     } finally {
@@ -935,7 +1087,7 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['Three tasks, all done.'], calls)
     try {
-      const c = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const c = await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       const transcript = transcripts(calls)
       for (const q of ['q1 look around', 'q2 find stock data', 'q3 carry on']) expect(transcript).toContain(`User: ${q}`)
       // It lists its first 40 calls and its last 80, and says how many it left out between them.
@@ -980,7 +1132,7 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['Researched x.io.'], calls)
     try {
-      await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       const transcript = transcripts(calls)
       const lines = transcript.split('\n')
       for (let i = 1; i <= 30; i++) expect(lines).toContain(`[web_fetch(url: "https://x.io/${i}") → Page ${i}]`)
@@ -1014,7 +1166,7 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['Four questions.'], calls)
     try {
-      const c = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const c = await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       expect(transcripts(calls)).toMatch(/User: q2 read tools\.io\n\nAssistant:\n\[web_fetch\(url: "https:\/\/tools\.io\/only"\)/)
       expect(c.compaction?.messages).toBe(8)
     } finally {
@@ -1029,8 +1181,8 @@ describe('/compact', () => {
     await exchanges(r.conversation.id, ['q2', 'q3'])
     const restore = summarizer(['A summary.'], [])
     try {
-      await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
-      await expect(service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })).rejects.toThrow(
+      await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
+      await expect(service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })).rejects.toThrow(
         'Nothing new to compact since the last summary.'
       )
     } finally {
@@ -1048,10 +1200,10 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['Late summary.'], calls, gate)
     try {
-      const running = service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const running = service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       await waitFor(() => calls.length === 1)
       expect(() => service.send({ ...sendBody(r.conversation.id), content: 'q5' })).toThrow(/compacting/i)
-      await expect(service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })).rejects.toThrow(/compacting/i)
+      await expect(service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })).rejects.toThrow(/compacting/i)
       release()
       await expect(running).resolves.toMatchObject({ compaction: { summary: 'Late summary.' } })
     } finally {
@@ -1069,7 +1221,7 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['Too late.'], calls, gate)
     try {
-      const running = service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const running = service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       await waitFor(() => calls.length === 1)
       deleteConversation(r.conversation.id)
       release()
@@ -1086,15 +1238,15 @@ describe('/compact', () => {
     await exchanges(r.conversation.id, ['q2', 'q3', 'q4'])
     const restore = summarizer(['<think>hmm</think>   '], [])
     try {
-      await expect(service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })).rejects.toThrow(/no summary/i)
+      await expect(service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })).rejects.toThrow(/no summary/i)
     } finally {
       restore()
     }
   })
 
   it('refuses a chat with nothing in it yet', async () => {
-    const empty = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
-    await expect(service.compact(empty.id, { focus: '', model: 'llama3.2' })).rejects.toThrow('Nothing to compact yet.')
+    const empty = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
+    await expect(service.compact(empty.id, { focus: '', model: 'ollama/llama3.2' })).rejects.toThrow('Nothing to compact yet.')
   })
 
   it('when the last reply failed, upTo is the user message it never answered', async () => {
@@ -1107,7 +1259,7 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['One question answered.'], calls)
     try {
-      const c = await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      const c = await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       const { listMessages } = await import('../src/main/db/conversations')
       const q2 = listMessages(r.conversation.id).find((m) => m.content === 'q2')!
       expect(c.compaction).toMatchObject({ messages: 3, upTo: q2.createdAt })
@@ -1126,7 +1278,7 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['Summary.'], calls)
     try {
-      await service.compact(r.conversation.id, { focus: '', model: 'llama3.2' })
+      await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
       const callLine = transcripts(calls)
         .split('\n')
         .find((l) => l.startsWith('[run_command'))!
@@ -1164,7 +1316,7 @@ describe('/compact', () => {
     const calls: Array<Record<string, unknown>> = []
     const restore = summarizer(['Summary.'], calls)
     try {
-      await service.compact(r.conversation.id, { focus: '', model: 'tiny-window' })
+      await service.compact(r.conversation.id, { focus: '', model: 'ollama/tiny-window' })
       const transcript = transcripts(calls)
       expect(transcript).toMatch(/\[… \d+ characters cut to fit …\]/)
       expect(transcript).toContain('https://x.io/page-1"')
@@ -1268,7 +1420,7 @@ describe('asking before a tool runs', () => {
       projectId: null,
       content: 'and again',
       attachmentIds: [],
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: []
@@ -1372,7 +1524,16 @@ describe('MCP servers in a reply', () => {
   const FIXTURE = new URL('./fixtures/mcp-server.mjs', import.meta.url).pathname
   afterAll(() => mcpManager.stopAll())
   const sendIn = (conversationId: string | null, content: string, toolSources: string[]) =>
-    service.send({ conversationId, projectId: null, content, attachmentIds: [], model: 'llama3.2', think: null, skills: [], toolSources })
+    service.send({
+      conversationId,
+      projectId: null,
+      content,
+      attachmentIds: [],
+      model: 'ollama/llama3.2',
+      think: null,
+      skills: [],
+      toolSources
+    })
   const tools = (call: Record<string, unknown>) => ((call.tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
 
   it("offers the chat's servers, asks before a call, and gives the model the result", async () => {
@@ -1447,7 +1608,7 @@ describe('web_fetch in a chat with files in it', () => {
       projectId: null,
       content: 'look this up',
       attachmentIds,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: []
@@ -1531,7 +1692,7 @@ describe('web_fetch in a chat with MCP servers', () => {
       projectId: null,
       content: 'check the weather',
       attachmentIds: [],
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: [`mcp:${server.id}`]
@@ -1578,7 +1739,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       projectId: null,
       content: 'what is 21*2? use code',
       attachmentIds: [],
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: ['code']
@@ -1617,7 +1778,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
     const session = createConversation({
       projectId: null,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       mode: 'code',
@@ -1667,7 +1828,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
     const session = createConversation({
       projectId: null,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       mode: 'code',
@@ -1706,7 +1867,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     writeFileSync(join(folder, 'README.md'), 'Hello\n')
     const session = createConversation({
       projectId: null,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       mode: 'code',
@@ -1736,7 +1897,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
     const session = createConversation({
       projectId: null,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       mode: 'code',
@@ -1764,7 +1925,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     writeFileSync(join(folder, 'README.md'), 'Hello\n')
     const session = createConversation({
       projectId: null,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       mode: 'code',
@@ -1806,7 +1967,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
         : reply('Done: bonjour.')(b, res, n)
     const session = createConversation({
       projectId: null,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       mode: 'code',
@@ -1818,7 +1979,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       projectId: null,
       content: 'make a greeting file',
       attachmentIds: [],
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: []
@@ -1883,7 +2044,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
             : reply('Changed the greeting.')(b, res, n)
     const session = createConversation({
       projectId: null,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       mode: 'code',
@@ -1895,7 +2056,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       projectId: null,
       content: 'say bonjour instead',
       attachmentIds: [],
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: []
@@ -1958,7 +2119,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
         : reply('Nothing to change.')(b, res, n)
     const session = createConversation({
       projectId: null,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       mode: 'code',
@@ -1970,7 +2131,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       projectId: null,
       content: 'say bonjour instead of goodbye',
       attachmentIds: [],
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: []
@@ -1994,7 +2155,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-gone-')))
     const session = createConversation({
       projectId: null,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       mode: 'code',
@@ -2008,7 +2169,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       projectId: null,
       content: 'hi',
       attachmentIds: [],
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       toolSources: []
@@ -2024,7 +2185,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
 
 describe('markInterruptedReplies', () => {
   it('flags replies that never got their final save, and only those', () => {
-    const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+    const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
     const user = insertMessage({ conversationId: c.id, parentId: null, role: 'user', content: 'hi' })
     const cut = insertMessage({ conversationId: c.id, parentId: user.id, role: 'assistant', content: '' })
     // A checkpoint wrote text and a running tool, then the app died.
@@ -2097,6 +2258,7 @@ describe('sub-agent settings and usage', () => {
       promptTokens: 100,
       completionTokens: 10,
       costUsd: null,
+      billing: 'priced',
       estimated: false
     })
     insertUsageEvent({
@@ -2107,6 +2269,7 @@ describe('sub-agent settings and usage', () => {
       promptTokens: 5000,
       completionTokens: 50,
       costUsd: null,
+      billing: 'priced',
       estimated: false
     })
     const u = conversationUsage(c.id)
@@ -2134,9 +2297,15 @@ describe('runRounds', () => {
   }
 
   async function setup() {
-    const conversation = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], mode: 'chat' })
-    const message = insertMessage({ conversationId: conversation.id, parentId: null, role: 'assistant', content: '', model: 'llama3.2' })
-    const model = await getModelInfo('llama3.2')
+    const conversation = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], mode: 'chat' })
+    const message = insertMessage({
+      conversationId: conversation.id,
+      parentId: null,
+      role: 'assistant',
+      content: '',
+      model: 'ollama/llama3.2'
+    })
+    const model = await modelInfo('ollama/llama3.2')
     const body: RoundsInput['body'] = {
       model: 'llama3.2',
       messages: [
@@ -2155,7 +2324,7 @@ describe('runRounds', () => {
       conversationId: conversation.id,
       messageId: message.id,
       loopId: 'loop-1',
-      modelName: 'llama3.2',
+      modelName: 'ollama/llama3.2',
       model,
       provider: resolve('llama3.2').provider,
       body,
@@ -2349,6 +2518,7 @@ describe('runRounds', () => {
       const requests: ChatRequest[] = []
       const provider: Provider = {
         id: 'fake',
+        endpoint: { id: 'fake', name: 'Fake', kind: 'openai', flavor: 'generic', baseUrl: 'fake://', enabled: true, hasKey: false },
         listModels: () => Promise.resolve([]),
         modelInfo: () => Promise.reject(new Error('not used')),
         async *chatStream(req) {
@@ -2430,7 +2600,7 @@ describe('sub-agents', () => {
   const parentReply = (conversationId: string, messageId: string): ToolContext['reply'] => ({
     conversationId,
     messageId,
-    model: 'llama3.2',
+    model: 'ollama/llama3.2',
     think: null,
     prompt: { userName: '', model: 'llama3.2', contextLength: 8192, web: 'on', skillIndex: [] }
   })
@@ -2708,7 +2878,7 @@ describe('sub-agents', () => {
   })
 
   it('settles a child’s waiting call in a reply Ollmost closed on', () => {
-    const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+    const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
     const user = insertMessage({ conversationId: c.id, parentId: null, role: 'user', content: 'wipe it' })
     const cut = insertMessage({ conversationId: c.id, parentId: user.id, role: 'assistant', content: '' })
     // A checkpoint saved the child's question, then the app died.
@@ -2729,8 +2899,8 @@ describe('sub-agents', () => {
 
   it('refuses to run a child that nothing could stop', async () => {
     const { delegateTools } = await import('../src/main/chat/delegate')
-    const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
-    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: '', model: 'llama3.2' })
+    const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
+    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: '', model: 'ollama/llama3.2' })
     chat = reply('A child answered.')
     const result = await delegateTools.run(
       { provider: delegateTools, name: 'delegate', via: null, args: { task: 'Look it up.' } },
@@ -2849,8 +3019,8 @@ describe('sub-agents', () => {
 
   it('cuts a child’s reply to the room its call has, so the card shows what the parent got', async () => {
     const { runTool } = await import('../src/main/chat/tools')
-    const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
-    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: '', model: 'llama3.2' })
+    const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
+    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: '', model: 'ollama/llama3.2' })
     chat = reply('word '.repeat(3_000).trim())
     const result = await runTool(
       { function: { name: 'delegate', arguments: { task: 'Write at length.' } } },
@@ -3233,7 +3403,7 @@ describe('sub-agents', () => {
     writeFileSync(join(folder, 'README.md'), 'Hello\n')
     const session = createConversation({
       projectId: null,
-      model: 'llama3.2',
+      model: 'ollama/llama3.2',
       think: null,
       skills: [],
       mode: 'code',
@@ -3283,7 +3453,7 @@ describe('replay', () => {
       return base(req, res)
     }
     try {
-      const c = createConversation({ projectId: null, model: 'llama3.2', think: null, skills: [], toolSources: [] })
+      const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
       const detail = await replayRequest(c.id, {
         model: 'llama3.2',
         messages: [{ role: 'user', content: 'replay me', images: ['<image 3 KB>'] }],

@@ -1,8 +1,39 @@
+import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
-import { chosenOption } from '@/components/ui'
+import { chosenOption, TextArea, TextField } from '@/components/ui'
 import { cn } from '@/lib/format'
 
 // Layout pieces shared by the Settings tabs.
+
+/** Text input that saves on blur, so typing doesn't write settings on every keystroke. */
+export function BlurField({
+  value,
+  onSave,
+  multiline,
+  ...rest
+}: {
+  value: string
+  onSave: (v: string) => void
+  multiline?: boolean
+  placeholder?: string
+  type?: string
+  rows?: number
+}) {
+  const [local, setLocal] = useState(value)
+  useEffect(() => setLocal(value), [value])
+  const commit = () => local !== value && onSave(local)
+  return multiline ? (
+    <TextArea value={local} onChange={(e) => setLocal(e.target.value)} onBlur={commit} {...rest} />
+  ) : (
+    <TextField
+      value={local}
+      onChange={(e) => setLocal(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => e.key === 'Enter' && commit()}
+      {...rest}
+    />
+  )
+}
 
 export function Section({ title, description, children }: { title: string; description?: ReactNode; children: ReactNode }) {
   return (
