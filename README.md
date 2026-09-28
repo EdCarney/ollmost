@@ -222,3 +222,4 @@ Builds are signed ad hoc (`identity: '-'` in `electron-builder.yml`), which is e
 - **The Changes panel shows what git reports, not a tamper-proof review.** A session's commands can hide changes from `git status` (`update-index --skip-worktree`, `.git/info/exclude`): read the panel as you would `git status` in a folder a script worked in.
 - **A repository's own clean filter still runs when the Changes panel refreshes.** It's confined by the sandbox like any of the session's own git commands; only the fsmonitor, hooks, an external diff and textconv are switched off for the panel's git.
 - **Code sessions are macOS only.** They need the same sandbox as the code runner.
+- **tok/s is measured on this Mac when a server doesn't report it.** Ollama's cloud models, LM Studio and vLLM send no generation time, so their replies' tok/s runs from the first token to the end, network time included.

@@ -110,3 +110,103 @@ export function capturedChunks(path: string): Uint8Array[] {
   }
   return at < bytes.length ? [...out, bytes.subarray(at)] : out
 }
+
+// ---- One scripted reply, in either dialect (PR 3) ----
+
+export type Dialect = 'ollama' | 'openai'
+
+/** One request's reply, the same whichever server writes it. */
+export interface Turn {
+  thinking?: string
+  content?: string
+  toolCalls?: Array<{ name: string; args: Record<string, unknown> }>
+  /** Counts the server reports; left out, Ollmost estimates them. */
+  usage?: { prompt: number; completion: number }
+  /** done_reason / finish_reason, 'stop' unless given (Ollama says 'stop' for tool rounds too). */
+  finish?: string
+  /** 'hang': stop writing and keep the socket open, as a model still writing; 'drop': close it with no ending. */
+  cut?: 'hang' | 'drop'
+}
+
+/**
+ * A turn as each server writes it: NDJSON lines for Ollama; for OpenAI, SSE deltas with each call's arguments in two
+ * fragments, and a usage chunk only when the request asked for one.
+ */
+export function turnChunks(dialect: Dialect, turn: Turn, opts: { includeUsage?: boolean } = {}): string[] {
+  const finish = turn.finish ?? 'stop'
+  if (dialect === 'ollama') {
+    const message = (m: Record<string, unknown>) => line({ message: { role: 'assistant', content: '', ...m }, done: false })
+    return [
+      ...(turn.thinking ? [message({ thinking: turn.thinking })] : []),
+      ...(turn.content ? [message({ content: turn.content })] : []),
+      ...(turn.toolCalls?.length
+        ? [message({ tool_calls: turn.toolCalls.map((c) => ({ function: { name: c.name, arguments: c.args } })) })]
+        : []),
+      ...(turn.cut
+        ? []
+        : [
+            line({
+              done: true,
+              done_reason: finish,
+              ...(turn.usage && { prompt_eval_count: turn.usage.prompt, eval_count: turn.usage.completion })
+            })
+          ])
+    ]
+  }
+  const calls = (turn.toolCalls ?? []).flatMap((c, index) => {
+    const args = JSON.stringify(c.args)
+    const half = Math.ceil(args.length / 2)
+    return [
+      sseDelta({ tool_calls: [{ index, id: `call_mock_${index}`, type: 'function', function: { name: c.name, arguments: '' } }] }),
+      sseDelta({ tool_calls: [{ index, function: { arguments: args.slice(0, half) } }] }),
+      sseDelta({ tool_calls: [{ index, function: { arguments: args.slice(half) } }] })
+    ]
+  })
+  const usage =
+    turn.usage && opts.includeUsage
+      ? [
+          sse({
+            id: 'chatcmpl-mock',
+            object: 'chat.completion.chunk',
+            created: 0,
+            model: 'mock',
+            choices: [],
+            usage: {
+              prompt_tokens: turn.usage.prompt,
+              completion_tokens: turn.usage.completion,
+              total_tokens: turn.usage.prompt + turn.usage.completion
+            }
+          })
+        ]
+      : []
+  return [
+    sseDelta({ role: 'assistant', content: '' }),
+    ...(turn.thinking ? [sseDelta({ reasoning_content: turn.thinking })] : []),
+    ...(turn.content ? [sseDelta({ content: turn.content })] : []),
+    ...calls,
+    ...(turn.cut ? [] : [sseDelta({}, finish), ...usage, sseDone])
+  ]
+}
+
+/** Write a turn as its server would, ending the response unless the turn hangs. */
+export async function writeTurn(
+  res: ServerResponse,
+  dialect: Dialect,
+  turn: Turn,
+  opts: { includeUsage?: boolean; pauseMs?: number } = {}
+): Promise<void> {
+  const chunks = turnChunks(dialect, turn, opts)
+  await (dialect === 'ollama' ? streamChunks(res, chunks, opts.pauseMs) : streamSse(res, chunks, opts.pauseMs))
+  if (turn.cut !== 'hang') res.end()
+}
+
+/** A chat completion read whole (titles, /compact). */
+export const completionJson = (content: string): string =>
+  JSON.stringify({
+    id: 'chatcmpl-mock',
+    object: 'chat.completion',
+    created: 0,
+    model: 'mock',
+    choices: [{ index: 0, message: { role: 'assistant', content }, finish_reason: 'stop' }],
+    usage: { prompt_tokens: 20, completion_tokens: 2, total_tokens: 22 }
+  })

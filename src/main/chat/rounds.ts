@@ -85,7 +85,7 @@ export interface RoundsResult {
   rounds: number
   /** Set when a request failed; null when the rounds ended or were stopped. */
   error: string | null
-  /** The server's own generation time over the rounds that reported it; 0 when none did. */
+  /** Generation time in ms: each round's reported genMs, else its first token → done. */
   genMs: number
   thinkStart: number | null
   thinkEnd: number | null
@@ -216,10 +216,12 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
       })
       // Events, not network chunks: an adapter sends an empty `content` for a chunk that carried nothing.
       let chunks = 0
+      let firstTokenAt: number | null = null
       for await (const ev of provider.chatStream(body, input.signal)) {
         chunks++
         roundTrace.firstByte()
         if ((ev.type === 'thinking' || ev.type === 'content') && ev.text) {
+          firstTokenAt ??= Date.now()
           roundTrace.firstToken()
           roundTrace.progress(roundContent || 'Thinking…', estimateTokens(roundContent + roundThinking))
         }
@@ -276,7 +278,8 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         timing: done?.timing
       })
       roundTrace = null
-      genMs += done?.timing?.genMs ?? 0
+      // A server that reports no generation time (LM Studio, vLLM, Ollama's cloud models) is timed from its first token.
+      genMs += done?.timing?.genMs ?? (done && firstTokenAt !== null ? Date.now() - firstTokenAt : 0)
       if (!calls.length) break
 
       body.messages.push({ role: 'assistant', content: roundContent, thinking: roundThinking || undefined, toolCalls: calls })

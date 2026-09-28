@@ -524,7 +524,7 @@ async function generate(
   if (!getMessage(messageId)) return
 
   stats.durationMs = Date.now() - startedAt
-  // The server's own generation time, where it reports one (local Ollama models do; cloud ones don't).
+  // The server's own generation time, else the time from its first token to the end (see runRounds).
   if (genMs && stats.completionTokens) stats.tokensPerSecond = stats.completionTokens / (genMs / 1000)
   if (thinkStart) stats.thinkingMs = (thinkEnd ?? Date.now()) - thinkStart
 
