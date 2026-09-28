@@ -2,7 +2,11 @@
 // (models.ts) call it; everything else speaks the neutral types in ../types.ts.
 import { OLLAMA_CLOUD_URL } from '@shared/endpoints'
 import type { ModelWhere } from '@shared/types'
+import { createStallTimer, STREAM_TIMEOUTS, type StreamTimeouts } from '../stream'
 import type { ToolDef } from '../types'
+
+// Kept here too, where the Ollama side and its tests have always found them.
+export { STREAM_TIMEOUTS, type StreamTimeouts }
 
 export const OLLAMA_CLOUD = OLLAMA_CLOUD_URL
 
@@ -127,21 +131,6 @@ async function request(t: OllamaTarget, path: string, init: RequestInit & { mode
   return res
 }
 
-export interface StreamTimeouts {
-  /** Until the first byte of the reply: covers loading a cold local model and reading a long prompt. */
-  firstByteMs: number
-  /** Between chunks once the reply has started. */
-  idleMs: number
-  /**
-   * Between chunks when the request offers tools. Ollama holds back a tool call until its arguments are
-   * complete, so a slow local model writing a long argument can go quiet for many minutes while healthy.
-   */
-  toolIdleMs: number
-}
-
-// Generous on purpose: these catch a dead connection, not a slow model.
-export const STREAM_TIMEOUTS: StreamTimeouts = { firstByteMs: 10 * 60_000, idleMs: 3 * 60_000, toolIdleMs: 30 * 60_000 }
-
 /**
  * The long tool-call allowance is for models that run on a machine: a cloud model finishes a tool call's arguments in
  * seconds, so a long silence there is always a dead connection.
@@ -173,17 +162,9 @@ export async function* chatStream(
   const forward = () => inner.abort(signal.reason)
   if (signal.aborted) forward()
   else signal.addEventListener('abort', forward, { once: true })
-  let stalled: string | null = null
-  let timer: ReturnType<typeof setTimeout> | undefined
-  const arm = (ms: number, message: string) => {
-    clearTimeout(timer)
-    timer = setTimeout(() => {
-      stalled = message
-      inner.abort()
-    }, ms)
-  }
+  const stall = createStallTimer(() => inner.abort())
 
-  arm(
+  stall.arm(
     timeouts.firstByteMs,
     `${t.name} didn't start replying within ${Math.round(timeouts.firstByteMs / 60_000)} minutes. Check that it's running, then retry.`
   )
@@ -204,7 +185,7 @@ export async function* chatStream(
     for (;;) {
       const { value, done } = await reader.read()
       if (done) break
-      arm(idleMs, idle)
+      stall.arm(idleMs, idle)
       buffer += decoder.decode(value, { stream: true })
       let nl: number
       while ((nl = buffer.indexOf('\n')) >= 0) {
@@ -226,10 +207,11 @@ export async function* chatStream(
     }
     if (!finished) throw new OllamaError(`The connection to ${t.name} dropped before the reply finished.`)
   } catch (err) {
+    const stalled = stall.stalled()
     if (stalled && !signal.aborted) throw new OllamaError(stalled)
     throw err
   } finally {
-    clearTimeout(timer)
+    stall.clear()
     signal.removeEventListener('abort', forward)
     // A consumer that stops early (break or throw) must not leave Ollama generating into an unread socket.
     inner.abort()
