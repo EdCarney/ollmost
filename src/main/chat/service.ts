@@ -9,6 +9,7 @@ import type {
   Conversation,
   Message,
   MessageStats,
+  ModelInfo,
   SendRequest,
   SendResult,
   ThinkingSegment,
@@ -293,7 +294,8 @@ async function generate(
     const settings = getSettings()
     const { provider, model: serverName } = resolve(modelName)
     const model = await modelInfo(modelName)
-    const profile = resolveThinkProfile(modelName, model.capabilities, model.overrides.think)
+    stats.billing = model.billing
+    const profile = resolveThinkProfile(model.name, model.capabilities, model.overrides.think)
     const vision = model.capabilities.includes('vision')
     const toolsCapable = model.capabilities.includes('tools')
     const numCtx = model.contextWindow
@@ -324,7 +326,7 @@ async function generate(
     const serverIds = sources.filter((s) => s.startsWith(MCP_SOURCE)).map((s) => s.slice(MCP_SOURCE.length))
     const unavailable = serverIds.length ? await ensureServers(serverIds, SERVER_WAIT_MS) : []
     if (!toolsCapable && conversation.toolSources.length)
-      unavailable.push(`${modelName} can't use tools, so this chat's tools weren't used.`)
+      unavailable.push(`${model.name} can't use tools, so this chat's tools weren't used.`)
 
     // The folder code runs in. A chat's is readied (its attachments copied in) only when the code runner is on; a code
     // session's is the user's, readied for its own tools (#88). Either fails when code an earlier run left can't be
@@ -397,7 +399,7 @@ async function generate(
         think,
         prompt: {
           userName: settings.userName,
-          model: modelName,
+          model: model.name,
           contextLength: numCtx,
           web,
           mcpServers: servers,
@@ -423,7 +425,7 @@ async function generate(
     )
 
     const assembled = assemble({
-      model: modelName,
+      model: model.name,
       contextLength: numCtx,
       userName: settings.userName,
       preferences: settings.preferences,
@@ -678,7 +680,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
   try {
     const { provider, model: serverName } = resolve(opts.model)
     const info = await modelInfo(opts.model)
-    const profile = resolveThinkProfile(opts.model, info.capabilities, info.overrides.think)
+    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think)
     const contextWindow = info.contextWindow
     const focus = opts.focus.trim()
     const system = focus ? `${COMPACT_PROMPT}\n\nAbove all, keep what the user asked for: ${focus}` : COMPACT_PROMPT
@@ -714,7 +716,7 @@ export async function compact(conversationId: string, opts: { focus: string; mod
         i++
       }
       const transcript = `${head}<conversation>\n${piece.join('\n\n')}\n</conversation>\n\n${COMPACT_INSTRUCTION}`
-      summary = await summarizeOnce(conversationId, opts.model, provider, request(transcript), transcript, piece.length)
+      summary = await summarizeOnce(conversationId, opts.model, provider, request(transcript), transcript, piece.length, info)
     }
     if (!getConversation(conversationId)) throw new Error('The chat was deleted while it was being compacted.')
     const compaction: Compaction = {
@@ -738,7 +740,8 @@ async function summarizeOnce(
   provider: Provider,
   request: ChatRequest,
   transcript: string,
-  count: number
+  count: number,
+  info: ModelInfo
 ): Promise<string> {
   const wire = provider.wire(request, false)
   const trace = startTrace({
@@ -756,7 +759,7 @@ async function summarizeOnce(
     const summary = res.content.replace(/<think>[\s\S]*?<\/think>/g, '').trim()
     const promptTokens = res.usage.prompt ?? estimateTokens(transcript)
     const completionTokens = res.usage.completion ?? estimateTokens(summary)
-    const costUsd = requestCost(modelName, promptTokens, completionTokens)
+    const costUsd = requestCost(info, promptTokens, completionTokens)
     // Spent tokens are kept even for a chat deleted meanwhile (with no chat to bill them to), and the chat's usage
     // chip moves after each piece, so a later failure leaves it right.
     const chat = getConversation(conversationId)
@@ -768,6 +771,7 @@ async function summarizeOnce(
       promptTokens,
       completionTokens,
       costUsd,
+      billing: info.billing,
       estimated: res.usage.completion === undefined
     })
     if (chat) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
@@ -801,7 +805,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
     const modelName = getSettings().titleModel || chatModel
     const { provider, model: serverName } = resolve(modelName)
     const info = await modelInfo(modelName)
-    const profile = resolveThinkProfile(modelName, info.capabilities, info.overrides.think)
+    const profile = resolveThinkProfile(info.name, info.capabilities, info.overrides.think)
     const request: ChatRequest = {
       model: serverName,
       messages: [
@@ -830,7 +834,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
     title = cleanTitle(res.content)
     const promptTokens = res.usage.prompt ?? estimateTokens(transcript)
     const completionTokens = res.usage.completion ?? estimateTokens(res.content)
-    const costUsd = requestCost(modelName, promptTokens, completionTokens)
+    const costUsd = requestCost(info, promptTokens, completionTokens)
     insertUsageEvent({
       conversationId,
       messageId: null,
@@ -839,6 +843,7 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       promptTokens,
       completionTokens,
       costUsd,
+      billing: info.billing,
       estimated: res.usage.completion === undefined
     })
     emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })

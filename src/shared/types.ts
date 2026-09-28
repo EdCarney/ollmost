@@ -168,6 +168,8 @@ export interface MessageStats {
   doneReason?: string
   /** Estimated USD for the requests behind this reply; null when the model's price is unknown. */
   costUsd?: number | null
+  /** How the reply's model was billed when it ran: only a 'priced' reply has a cost to show. */
+  billing?: ModelBilling
   /** Token counts were estimated (e.g. the reply was stopped). */
   estimated?: boolean
   /** The model was still calling tools when the reply ran out of rounds (this many), so it had to answer. */

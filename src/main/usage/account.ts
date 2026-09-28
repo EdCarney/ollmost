@@ -1,8 +1,9 @@
+import { isOllamaCloudUrl } from '@shared/endpoints'
 import { creditPool, describeWindows, detectReset, effectiveSpend, parseUsageResponse } from '@shared/usage'
 import type { AccountUsage } from '@shared/types'
 import { readSetting, writeSetting } from '../db/kv'
 import { OLLAMA_CLOUD } from '../providers/ollama/wire'
-import { getApiKey, getSettings, ollamaConnection, updateSettings } from '../settings'
+import { getApiKey, getSettings, updateSettings } from '../settings'
 import { errorMessage } from '../util'
 
 const CACHE_MS = 30_000
@@ -12,13 +13,14 @@ let cache: AccountUsage | null = null
 let inflight: Promise<AccountUsage> | null = null
 let plan: string | null = null
 
-/** The signed-in daemon knows the plan name (POST /api/me), even without an API key. */
+/** The signed-in Ollama app knows the plan name (POST /api/me), even without an API key. */
 async function fetchPlan(): Promise<string | null> {
   if (plan) return plan
-  const c = ollamaConnection()
-  if (c.mode !== 'local') return null
+  // The first Ollama app among the endpoints: ollama.com itself has no /api/me.
+  const app = getSettings().endpoints.find((e) => e.enabled && e.kind === 'ollama' && !isOllamaCloudUrl(e.baseUrl))
+  if (!app) return null
   try {
-    const res = await fetch(`${c.host.replace(/\/+$/, '')}/api/me`, { method: 'POST', signal: AbortSignal.timeout(5000) })
+    const res = await fetch(`${app.baseUrl.replace(/\/+$/, '')}/api/me`, { method: 'POST', signal: AbortSignal.timeout(5000) })
     if (!res.ok) return null
     plan = ((await res.json()) as { plan?: string }).plan ?? null
     return plan

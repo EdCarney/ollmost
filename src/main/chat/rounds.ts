@@ -46,6 +46,7 @@ export interface RoundsInput {
   messageId: string
   /** The id traces and approvals are keyed by: the message's own, or a sub-agent's `<message id>#<call index>`. */
   loopId: string
+  /** The model's key: what usage rows and traces record. */
   modelName: string
   model: ModelInfo
   /** The model's server: every round's request goes through it. */
@@ -130,7 +131,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
     const estimated = !done?.usage.completion
     const promptTokens = done?.usage.prompt ?? openRound.promptEstimate
     const completionTokens = done?.usage.completion ?? estimateTokens(openRound.content + openRound.thinking)
-    const costUsd = requestCost(modelName, promptTokens, completionTokens)
+    const costUsd = requestCost(input.model, promptTokens, completionTokens)
     insertUsageEvent({
       conversationId,
       messageId: input.messageId,
@@ -139,6 +140,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
       promptTokens,
       completionTokens,
       costUsd,
+      billing: input.model.billing,
       estimated
     })
     stats.promptTokens! += promptTokens

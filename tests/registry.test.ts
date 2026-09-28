@@ -22,6 +22,7 @@ const registry = await import('../src/main/providers/registry')
 const { ollamaTarget } = await import('../src/main/providers/ollama/adapter')
 const { contextWindowFor } = await import('../src/main/providers/context')
 const { billingOf } = await import('../src/main/providers/where')
+const { requestCost } = await import('../src/main/usage/pricing')
 
 const HF = 'hf.co/bartowski/Qwen3-8B-GGUF:Q4_K_M'
 
@@ -231,5 +232,15 @@ describe('billing and context windows', () => {
     expect(contextWindowFor(m({ detected: { contextLength: 40_960 }, overrides: { contextLength: 32_768 } }), { kind: 'openai' })).toBe(
       32_768
     )
+  })
+})
+
+describe('requestCost', () => {
+  it('prices only priced requests, and a priced one with no known price as unknown', () => {
+    const price = { input: 1, cachedInput: null, output: 2 }
+    expect(requestCost({ billing: 'priced', price }, 1_000_000, 1_000_000)).toBe(3)
+    expect(requestCost({ billing: 'priced', price: null }, 10, 10)).toBeNull()
+    expect(requestCost({ billing: 'local', price }, 10, 10)).toBe(0)
+    expect(requestCost({ billing: 'untracked', price: null }, 10, 10)).toBe(0)
   })
 })

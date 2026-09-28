@@ -74,7 +74,6 @@ describe('the settings migration', () => {
     const s = settings.getSettings()
     expect(s.endpoints).toEqual([{ ...OLLAMA, name: 'Ollama cloud', baseUrl: 'https://ollama.com' }])
     expect(s.defaultModel).toBeNull()
-    expect(settings.ollamaConnection()).toMatchObject({ mode: 'direct', host: 'https://ollama.com' })
   })
 
   it('leaves a row that already has endpoints alone', async () => {

@@ -1,5 +1,5 @@
 import type { DeepPartial } from '@shared/ipc'
-import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_URL, isOllamaCloudUrl, OLLAMA_CLOUD_URL } from '@shared/endpoints'
+import { DEFAULT_NUM_CTX, DEFAULT_OLLAMA_URL, OLLAMA_CLOUD_URL } from '@shared/endpoints'
 import { MIGRATED_ENDPOINT_ID, toModelKey } from '@shared/modelKey'
 import { DEFAULT_THEME_ID } from '@shared/themes'
 import type { Endpoint, Settings } from '@shared/types'
@@ -135,18 +135,4 @@ export function setApiKey(key: string | null): void {
 
 export function getApiKey(): string | null {
   return getSecret(OLLAMA_ACCOUNT_SECRET)
-}
-
-/**
- * Until Task 2.5 of the endpoints plan: the `ollama` endpoint in the shape the Ollama client, the plan lookup and the
- * context window read from the old `connection`. Deleted once they read endpoints.
- */
-export function ollamaConnection(): { mode: 'local' | 'direct'; host: string; showCloudCatalog: boolean; numCtx: number } {
-  const e = stored().endpoints.find((x) => x.id === MIGRATED_ENDPOINT_ID) ?? DEFAULT_OLLAMA
-  return {
-    mode: isOllamaCloudUrl(e.baseUrl) ? 'direct' : 'local',
-    host: e.baseUrl,
-    showCloudCatalog: e.showCloudCatalog ?? true,
-    numCtx: e.numCtx ?? DEFAULT_NUM_CTX
-  }
 }

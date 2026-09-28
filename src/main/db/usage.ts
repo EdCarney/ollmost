@@ -1,4 +1,4 @@
-import type { ChatUsage, TokenTotals, UsageSummary } from '@shared/types'
+import type { ChatUsage, ModelBilling, TokenTotals, UsageSummary } from '@shared/types'
 import { now, uid } from '../util'
 import { getConversation } from './conversations'
 import { all, get, run } from './index'
@@ -11,11 +11,13 @@ export function insertUsageEvent(e: {
   promptTokens: number
   completionTokens: number
   costUsd: number | null
+  /** Decided when the row is written, from the model's billing. */
+  billing: ModelBilling
   estimated: boolean
 }): void {
   run(
-    `INSERT INTO usage_events (id, conversation_id, message_id, model, kind, prompt_tokens, completion_tokens, cost_usd, estimated, created_at)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO usage_events (id, conversation_id, message_id, model, kind, prompt_tokens, completion_tokens, cost_usd, billing, estimated, created_at)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     uid(),
     e.conversationId,
     e.messageId,
@@ -24,6 +26,7 @@ export function insertUsageEvent(e: {
     Math.round(e.promptTokens),
     Math.round(e.completionTokens),
     e.costUsd,
+    e.billing,
     e.estimated ? 1 : 0,
     now()
   )

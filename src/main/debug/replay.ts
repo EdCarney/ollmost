@@ -1,4 +1,5 @@
 import { stripImagePlaceholders } from '@shared/debug'
+import { MIGRATED_ENDPOINT_ID, toModelKey } from '@shared/modelKey'
 import type { TraceDetail } from '@shared/types'
 import { insertUsageEvent } from '../db/usage'
 import { resolve } from '../providers/registry'
@@ -18,12 +19,16 @@ export async function replayRequest(conversationId: string | null, raw: unknown)
     throw new Error('A replay needs a JSON object with a "model" string and a "messages" array.')
   const { body } = stripImagePlaceholders(recorded as Recorded)
   const request = { ...body, stream: false }
-  const { provider } = resolve(request.model)
+  // A replay body names the model as its server knows it, and replays go to the ollama endpoint, as they did before
+  // endpoints (PR 4 routes a replay by its trace's key).
+  const key = toModelKey(MIGRATED_ENDPOINT_ID, request.model)
+  const { provider, model } = resolve(key)
+  const info = await provider.modelInfo(model)
   const trace = startTrace({
     kind: 'replay',
     conversationId,
     messageId: null,
-    model: request.model,
+    model: key,
     endpoint: provider.wireEndpoint(),
     request,
     summary: 'Replay…'
@@ -33,15 +38,16 @@ export async function replayRequest(conversationId: string | null, raw: unknown)
     trace.firstByte()
     const promptTokens = res.usage.prompt ?? 0
     const completionTokens = res.usage.completion ?? 0
-    const costUsd = requestCost(request.model, promptTokens, completionTokens)
+    const costUsd = requestCost(info, promptTokens, completionTokens)
     insertUsageEvent({
       conversationId,
       messageId: null,
-      model: request.model,
+      model: key,
       kind: 'replay',
       promptTokens,
       completionTokens,
       costUsd,
+      billing: info.billing,
       estimated: false
     })
     return trace.finish({
