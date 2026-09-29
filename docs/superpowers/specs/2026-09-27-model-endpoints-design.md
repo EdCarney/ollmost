@@ -353,7 +353,9 @@ Today's behaviour, moved:
 
 - **What a trace stores.** The `traces.model` column holds the key. The trace JSON gains
   `dialect: 'ollama' | 'openai'` and `auth: 'ollama.com' | 'endpoint' | null`; the key itself is never stored. If
-  either field is missing, the trace is read as Ollama.
+  either field is missing, the trace is read as Ollama. The exception is a trace with no `dialect` whose recorded
+  endpoint ends with `/chat/completions`: it reads as OpenAI, with `auth` null. That covers OpenAI traces recorded
+  before the dialect field existed.
 - **Replay** resolves the trace's `model` key and calls that endpoint's `sendWire(editedBody)`. If the endpoint is
   gone: *"This trace's endpoint (<name>) no longer exists."*
 - **Image hiding.** `redactImages` and `stripImagePlaceholders` handle `image_url` data URLs.
@@ -383,7 +385,9 @@ Today's behaviour, moved:
   - No key but an Ollama endpoint exists → today's "add a key" chip.
   - Neither → hidden, and no polling.
 - **`/api/me`** goes to the first enabled Ollama endpoint on a loopback address, and is skipped if there is none. A
-  failure is remembered for the session.
+  failure is remembered for the session: an HTTP error, a body that isn't JSON or the 5 s timeout. A refused connection
+  isn't, because the Ollama app may not have started yet (or is restarting for an update); it's asked again at the next
+  load.
 - **`refreshPrices`** runs only when an Ollama endpoint exists.
 - **Web tools** are unchanged. They're on for any tools-capable model when the ollama.com key is saved.
 
