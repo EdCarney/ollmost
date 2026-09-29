@@ -170,13 +170,25 @@ describe('debug helpers', () => {
     const curl = toCurl('https://ollama.com/api/chat', redactImages(body), 'OLLAMA_API_KEY')
     expect(curl).toContain('Bearer $OLLAMA_API_KEY')
     expect(curl).toContain('"stream": false')
-    expect(curl).toContain("1 image(s) weren't recorded")
+    expect(curl.split('\n')[0]).toBe(': 1 image was not recorded and is left out.')
     expect(toCurl('http://127.0.0.1:11434/api/chat', { model: 'm', messages: [] }, null)).not.toContain('Authorization')
     const openai = toCurl('http://localhost:1234/v1/chat/completions', redactImages(openaiBody), 'LM_STUDIO_API_KEY')
     expect(openai).toContain('Bearer $LM_STUDIO_API_KEY')
     expect(openai).toContain('"stream": false')
     expect(openai).not.toContain('stream_options')
-    expect(openai).toContain("1 image(s) weren't recorded")
+    expect(openai.split('\n')[0]).toBe(': 1 image was not recorded and is left out.')
+  })
+
+  it('notes the images it left out in a line every shell runs as a no-op, pasted or not', () => {
+    const images = (n: number) => ({ model: 'm', messages: [{ role: 'user', content: 'x', images: Array(n).fill('<image 3 KB>') }] })
+    const notes = [1, 2].map((n) => toCurl('http://127.0.0.1:11434/api/chat', images(n), null).split('\n')[0])
+    expect(notes).toEqual([': 1 image was not recorded and is left out.', ': 2 images were not recorded and are left out.'])
+    for (const note of notes) {
+      // Not a # comment: an interactive zsh reads # as a word unless interactivecomments is on, and then an apostrophe
+      // would open a quote and swallow the curl line. Plain words after `:` mean the same to every shell.
+      expect(note).not.toMatch(/['"$()&;|<>\\*?[\]#!{}`]/)
+      expect(execFileSync('sh', ['-c', note], { encoding: 'utf8' })).toBe('')
+    }
   })
 
   it('quotes the address, so a shell reads it as written and runs nothing in it', () => {

@@ -238,6 +238,12 @@ export function toCurl(endpoint: string, body: unknown, keyVar: string | null): 
   const { stream_options: _options, ...rest } = (clean ?? {}) as Record<string, unknown>
   const payload = JSON.stringify({ ...rest, stream: false }, null, 2)
   const auth = keyVar ? ` \\\n  -H "Authorization: Bearer $${keyVar}"` : ''
-  const note = removed ? `# ${removed} image(s) weren't recorded and are left out.\n` : ''
+  // A `:` line of plain words, not a # comment: an interactive zsh reads # as a word unless interactivecomments is on,
+  // and an apostrophe would then open a quote that swallows the curl line.
+  const note = !removed
+    ? ''
+    : removed === 1
+      ? ': 1 image was not recorded and is left out.\n'
+      : `: ${removed} images were not recorded and are left out.\n`
   return `${note}curl ${shellQuote(endpoint)} \\\n  -H 'Content-Type: application/json'${auth} \\\n  -d @- <<'JSON'\n${payload}\nJSON`
 }
