@@ -197,6 +197,8 @@ describe('debug helpers', () => {
     expect(curlKeyVar({ auth: 'endpoint', endpointId: 'ollama' })).toBe('OLLAMA_ENDPOINT_API_KEY')
     // A shell variable can't start with a digit.
     expect(curlKeyVar({ auth: 'endpoint', endpointId: '8080-box' })).toBe('_8080_BOX_API_KEY')
+    // The name goes inside double quotes, where $( ` " would be acted on: a hand-edited id keeps to what a name can hold.
+    expect(curlKeyVar({ auth: 'endpoint', endpointId: 'a$(rm -rf ~)`"b' })).toBe('A__RM__RF_____B_API_KEY')
     expect(curlKeyVar({ auth: null, endpointId: 'lm-studio' })).toBeNull()
   })
 })
@@ -234,6 +236,21 @@ describe('where a trace’s request went', () => {
     expect(storedTraceTarget({ endpoint: 'https://ollama.com/api/chat' }).auth).toBe('ollama.com')
     const stored = { dialect: 'openai' as const, auth: null, endpointId: 'lm-studio', endpointName: 'LM Studio' }
     expect(storedTraceTarget({ endpoint: 'http://localhost:1234/v1/chat/completions', ...stored })).toEqual(stored)
+    // A recorded dialect is kept, whatever the address.
+    expect(storedTraceTarget({ endpoint: 'http://box/chat/completions', dialect: 'ollama' }).dialect).toBe('ollama')
+  })
+
+  it('reads an OpenAI request recorded before traces kept their dialect by its address, with no key it can tell', () => {
+    // PR 3 recorded OpenAI-compatible requests with no dialect. Whether one carried a key can't be told afterwards.
+    expect(storedTraceTarget({ endpoint: 'http://localhost:1234/v1/chat/completions' })).toEqual({
+      dialect: 'openai',
+      auth: null,
+      endpointId: null,
+      endpointName: null
+    })
+    expect(storedTraceTarget({ endpoint: 'http://10.0.0.5:8000/api/v1/chat/completions' }).dialect).toBe('openai')
+    expect(storedTraceTarget({ endpoint: 'http://127.0.0.1:11434/api/chat' }).dialect).toBe('ollama')
+    expect(storedTraceTarget({}).dialect).toBe('ollama')
   })
 })
 

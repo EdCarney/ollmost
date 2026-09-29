@@ -217,7 +217,7 @@ export function getTrace(id: string): TraceDetail | null {
     request: data.request ?? null,
     response: data.response ?? {},
     timing: data.timing ?? ({} as TraceTiming),
-    // Traces recorded before endpoints have no dialect or auth, and read as Ollama's.
+    // Traces recorded before endpoints have no dialect or auth, and read as Ollama's (an OpenAI request by its address).
     ...storedTraceTarget(data)
   }
 }

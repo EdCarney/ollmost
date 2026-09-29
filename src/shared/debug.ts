@@ -71,7 +71,10 @@ export function traceTarget(endpoint: Pick<Endpoint, 'id' | 'name' | 'kind' | 'b
   }
 }
 
-/** A stored trace's target. Traces recorded before endpoints have none and read as Ollama's. */
+/**
+ * A stored trace's target. Traces recorded before endpoints have none and read as Ollama's, except an OpenAI-compatible
+ * request recorded before traces kept their dialect (PR 3's), told by its address: {baseUrl}/chat/completions.
+ */
 export function storedTraceTarget(data: {
   endpoint?: string
   dialect?: TraceDialect
@@ -80,8 +83,9 @@ export function storedTraceTarget(data: {
   endpointName?: string | null
 }): Pick<TraceDetail, 'dialect' | 'auth' | 'endpointId' | 'endpointName'> {
   return {
-    dialect: data.dialect ?? 'ollama',
-    // Before endpoints, only a request to ollama.com carried a key: the account's.
+    dialect: data.dialect ?? (data.endpoint?.endsWith('/chat/completions') ? 'openai' : 'ollama'),
+    // Before endpoints, only a request to ollama.com carried a key: the account's. Whether one of PR 3's OpenAI requests
+    // carried its endpoint's key wasn't recorded, and reads as none.
     auth: data.auth !== undefined ? data.auth : carriesAccountKey(data.endpoint ?? '') ? 'ollama.com' : null,
     endpointId: data.endpointId ?? null,
     endpointName: data.endpointName ?? null
@@ -208,13 +212,14 @@ export function promptAnatomy(body: BodyLike, dialect: TraceDialect = 'ollama'):
 
 /**
  * The environment variable Copy as curl reads a key from: $OLLAMA_API_KEY for ollama.com, $<ENDPOINT_ID>_API_KEY for
- * an endpoint's own key (upper case, '-' as '_', and a leading '_' when the id starts with a digit, which a shell
- * variable can't).
+ * an endpoint's own key (upper case, anything but a letter, digit or '_' as '_', and a leading '_' when the id starts
+ * with a digit, which a shell variable can't). Ids are made of [a-z0-9-], but the name goes inside double quotes, where
+ * a hand-edited id's $( ` or " would be acted on when the command is pasted.
  */
 export function curlKeyVar(t: Pick<TraceDetail, 'auth' | 'endpointId'>): string | null {
   if (t.auth === 'ollama.com') return 'OLLAMA_API_KEY'
   if (t.auth !== 'endpoint') return null
-  const id = (t.endpointId ?? 'endpoint').toUpperCase().replace(/-/g, '_')
+  const id = (t.endpointId ?? 'endpoint').toUpperCase().replace(/[^A-Z0-9_]/g, '_')
   const name = `${/^\d/.test(id) ? '_' : ''}${id}_API_KEY`
   // $OLLAMA_API_KEY holds the ollama.com key, which goes only to ollama.com: endpoint `ollama`'s own key reads another.
   return name === 'OLLAMA_API_KEY' ? 'OLLAMA_ENDPOINT_API_KEY' : name
