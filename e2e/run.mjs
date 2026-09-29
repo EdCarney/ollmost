@@ -31,8 +31,8 @@ const CHAT_MODEL = process.env.OLLMOST_E2E_MODEL ?? 'gpt-oss:120b'
 const VISION_MODEL = process.env.OLLMOST_E2E_VISION_MODEL ?? 'kimi-k3'
 mkdirSync(SHOTS, { recursive: true })
 
-// Every temp folder the run makes is removed when the process ends, however it ends: a finished, failed or crashed run,
-// or Ctrl-C. OLLMOST_E2E_KEEP=1 keeps them, for looking at what an app wrote.
+// Every temp folder the run makes is removed when the process exits: a finished, failed or crashed run, or Ctrl-C (not a
+// SIGKILL or SIGHUP). OLLMOST_E2E_KEEP=1 keeps them, for looking at what an app wrote.
 const KEEP = process.env.OLLMOST_E2E_KEEP === '1'
 const made = []
 const tempDir = (prefix) => {
@@ -50,8 +50,10 @@ process.on('exit', () => {
     }
   }
 })
-process.on('SIGINT', () => process.exit(130))
-process.on('SIGTERM', () => process.exit(143))
+// While an app is open, Playwright's own handlers close it first (Ollmost stops what it started as it quits); on Ctrl-C it
+// then exits with 130, which runs the removal above. Exit here only when no app is open.
+process.on('SIGINT', () => process.listenerCount('SIGINT') === 1 && process.exit(130))
+process.on('SIGTERM', () => process.listenerCount('SIGTERM') === 1 && process.exit(143))
 
 const userData = tempDir('ollmost-e2e-')
 const fixtures = tempDir('ollmost-fixtures-')
@@ -2577,7 +2579,7 @@ process.on('SIGTERM', () => app.quit())
 const failed = results.filter((r) => !r.ok).length
 console.log(
   `\n${results.length - failed}/${results.length} checks passed. Screenshots in e2e/shots/` +
-    (KEEP ? `, data in ${userData}` : ' (temp folders removed; OLLMOST_E2E_KEEP=1 keeps them)')
+    (KEEP ? `, data in ${userData}` : '. Temp folders removed (OLLMOST_E2E_KEEP=1 keeps them).')
 )
 usageServer.close()
 process.exit(failed ? 1 : 0)
