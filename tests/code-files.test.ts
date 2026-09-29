@@ -1,19 +1,9 @@
-import {
-  chmodSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  statSync,
-  symlinkSync,
-  writeFileSync
-} from 'node:fs'
+import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Workspace } from '../src/main/runner/workspace'
+import { tempDir } from './tempDir'
 
 // A code session's file tools (#93): where they may read and write (inside the folder by real path, never through a
 // link on a write, never .git or a name the sandbox denies commands), what each gives back, and their place among
@@ -35,7 +25,7 @@ const files = await import('../src/main/code/files')
 const tools = await import('../src/main/chat/tools')
 const { codeTools, COMMANDS_KEY, EDITS_KEY } = await import('../src/main/code/tools')
 
-const data = mkdtempSync(join(tmpdir(), 'ollmost-code-files-'))
+const data = tempDir('ollmost-code-files-')
 beforeAll(() => {
   openDatabase(':memory:')
   paths.data = data
@@ -52,7 +42,7 @@ afterAll(() => {
 
 /** A folder of the user's holding `tree`, by its real path, with a session working in it. */
 function project(tree: Record<string, string | Buffer> = {}) {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-')))
+  const dir = realpathSync(tempDir('ollmost-user-'))
   made.push(dir)
   for (const [rel, text] of Object.entries(tree)) {
     mkdirSync(join(dir, dirname(rel)), { recursive: true })

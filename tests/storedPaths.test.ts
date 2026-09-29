@@ -1,5 +1,3 @@
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { beforeAll, describe, expect, it } from 'vitest'
@@ -8,8 +6,9 @@ import { MIGRATIONS } from '../src/main/db/migrations'
 import * as conversations from '../src/main/db/conversations'
 import * as projects from '../src/main/db/projects'
 import { paths, toStored } from '../src/main/paths'
+import { tempDir } from './tempDir'
 
-const data = mkdtempSync(join(tmpdir(), 'ollmost-paths-'))
+const data = tempDir('ollmost-paths-')
 beforeAll(() => {
   paths.data = data
   openDatabase(':memory:')
@@ -31,7 +30,7 @@ describe('stored file paths', () => {
 
   it('follow the data folder when it moves', () => {
     attach('a2', join(data, 'files', 'a2.png'))
-    const moved = mkdtempSync(join(tmpdir(), 'ollmost-moved-'))
+    const moved = tempDir('ollmost-moved-')
     paths.data = moved
     try {
       expect(conversations.getAttachmentRow('a2')?.path).toBe(join(moved, 'files', 'a2.png'))

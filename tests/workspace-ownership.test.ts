@@ -1,18 +1,7 @@
-import {
-  existsSync,
-  lstatSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  symlinkSync,
-  writeFileSync
-} from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, lstatSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { tempDir, trackTempDir } from './tempDir'
 
 // A code session works in a folder of the user's (#78): Ollmost must never repair, fill, mark or delete it, only
 // its own folders for the session, and it must find the folder where it was. A chat's folder is Ollmost's own.
@@ -35,7 +24,7 @@ const lock = await import('../src/main/runner/lock')
 const tools = await import('../src/main/chat/tools')
 await import('../src/main/runner/provider')
 
-const root = mkdtempSync(join(tmpdir(), 'ollmost-ownership-'))
+const root = tempDir('ollmost-ownership-')
 beforeAll(() => {
   openDatabase(':memory:')
   paths.data = root
@@ -48,7 +37,7 @@ beforeAll(() => {
 
 /** A folder of the user's, as a code session's root: a real path, with a file of theirs in it. */
 function userFolder(): string {
-  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-folder-')))
+  const dir = realpathSync(tempDir('ollmost-user-folder-'))
   writeFileSync(join(dir, 'README.md'), 'theirs')
   return dir
 }
@@ -186,6 +175,7 @@ describe('a code session’s folder', () => {
     const ws = workspace.workspaceFor(c.id)
     const elsewhere = userFolder()
     renameSync(dir, `${dir}-moved`)
+    trackTempDir(`${dir}-moved`)
     await expect(workspace.readyForRun(ws)).rejects.toBeInstanceOf(workspace.RootMissingError)
     await expect(workspace.prepareWorkspace(ws)).rejects.toThrow(/no longer at/)
     symlinkSync(elsewhere, dir)

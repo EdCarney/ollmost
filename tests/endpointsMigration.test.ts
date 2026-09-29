@@ -1,14 +1,14 @@
-import { existsSync, mkdtempSync, statSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { describe, expect, it } from 'vitest'
 import { splitModelKey } from '@shared/modelKey'
 import { all, endpointsBackupPath, openDatabase } from '../src/main/db/index'
 import { MIGRATIONS, MODEL_KEYS_MIGRATION } from '../src/main/db/migrations'
+import { tempDir } from './tempDir'
 
 const HF = 'hf.co/bartowski/Qwen3-8B-GGUF:Q4_K_M'
-const folder = () => mkdtempSync(join(tmpdir(), 'ollmost-endpoints-'))
+const folder = () => tempDir('ollmost-endpoints-')
 
 /** A database as the Ollmost before endpoints left it, with a row of every kind that names a model. */
 function oldDatabase(dir: string, name = 'ollmost.db'): string {

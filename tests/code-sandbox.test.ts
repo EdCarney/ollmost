@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { spawn } from 'node:child_process'
 import { dirname, join } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { tempDir } from './tempDir'
 
 // A code session's commands under the real sandbox (#88): what codePolicyFor lets them read and write in a folder of
 // the user's, what the mandatory denies cover there, the network presets, and that the reaper knows a session's
@@ -23,8 +24,10 @@ const { reap } = await import('../src/main/runner/reaper')
 const python = await import('../src/main/runner/python')
 type Workspace = import('../src/main/runner/workspace').Workspace
 
-const data = mkdtempSync(join(tmpdir(), 'ollmost-code-sandbox-'))
+// Made in beforeAll, not while the file loads: off a Mac every test here is skipped, and vitest then runs no afterAll,
+// so tests/setup.ts couldn't remove a folder made earlier.
 beforeAll(() => {
+  const data = tempDir('ollmost-code-sandbox-')
   openDatabase(':memory:')
   paths.data = data
   paths.workspaces = join(data, 'workspaces')
@@ -44,30 +47,33 @@ const alive = (pid: number) => {
 describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exec'))('a session’s commands in the sandbox', () => {
   // Real paths, which the pins match. Everything here is in the per-user temp folder, which the policy hides, so only
   // what it opens again is readable: like the user's home folder, where a real session's folder is.
-  const base = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-session-')))
-  const root = join(base, 'repo')
-  const scratch = join(base, 'runner', 'sessions', 's1')
-  const venv = join(base, 'runner', 'venvs', 's1')
-  const home = join(base, 'home')
-  mkdirSync(join(root, '.git', 'hooks'), { recursive: true })
-  // A submodule's git folder, as git would leave it: the sandbox denies writing there, not only creating it.
-  mkdirSync(join(root, '.git', 'modules', 'sub'), { recursive: true })
-  // A linked worktree's folder likewise: its commondir and config.worktree point git at another config.
-  mkdirSync(join(root, '.git', 'worktrees', 'x'), { recursive: true })
-  writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n')
-  writeFileSync(join(root, 'README.md'), 'theirs')
-  for (const dir of ['home', 'tmp']) mkdirSync(join(scratch, dir), { recursive: true })
-  mkdirSync(join(home, '.nvm', 'versions', 'node', 'v22', 'bin'), { recursive: true })
-  writeFileSync(join(home, '.nvm', 'versions', 'node', 'v22', 'bin', 'node'), 'a runtime')
-  mkdirSync(join(home, '.cargo', 'bin'), { recursive: true })
-  writeFileSync(join(home, '.cargo', 'bin', 'cargo'), 'a tool')
-  writeFileSync(join(home, '.cargo', 'credentials.toml'), 'token = "secret"')
-  mkdirSync(join(home, '.ssh'), { recursive: true })
-  writeFileSync(join(home, '.ssh', 'id_ed25519'), 'key')
-  writeFileSync(join(home, 'private.txt'), 'private')
-  writeFileSync(join(base, 'runner', 'ollmost.db'), 'the database')
+  let base: string, root: string, scratch: string, venv: string, home: string, ws: Workspace
+  beforeAll(() => {
+    base = realpathSync(tempDir('ollmost-session-'))
+    root = join(base, 'repo')
+    scratch = join(base, 'runner', 'sessions', 's1')
+    venv = join(base, 'runner', 'venvs', 's1')
+    home = join(base, 'home')
+    mkdirSync(join(root, '.git', 'hooks'), { recursive: true })
+    // A submodule's git folder, as git would leave it: the sandbox denies writing there, not only creating it.
+    mkdirSync(join(root, '.git', 'modules', 'sub'), { recursive: true })
+    // A linked worktree's folder likewise: its commondir and config.worktree point git at another config.
+    mkdirSync(join(root, '.git', 'worktrees', 'x'), { recursive: true })
+    writeFileSync(join(root, '.git', 'HEAD'), 'ref: refs/heads/main\n')
+    writeFileSync(join(root, 'README.md'), 'theirs')
+    for (const dir of ['home', 'tmp']) mkdirSync(join(scratch, dir), { recursive: true })
+    mkdirSync(join(home, '.nvm', 'versions', 'node', 'v22', 'bin'), { recursive: true })
+    writeFileSync(join(home, '.nvm', 'versions', 'node', 'v22', 'bin', 'node'), 'a runtime')
+    mkdirSync(join(home, '.cargo', 'bin'), { recursive: true })
+    writeFileSync(join(home, '.cargo', 'bin', 'cargo'), 'a tool')
+    writeFileSync(join(home, '.cargo', 'credentials.toml'), 'token = "secret"')
+    mkdirSync(join(home, '.ssh'), { recursive: true })
+    writeFileSync(join(home, '.ssh', 'id_ed25519'), 'key')
+    writeFileSync(join(home, 'private.txt'), 'private')
+    writeFileSync(join(base, 'runner', 'ollmost.db'), 'the database')
+    ws = { id: 's1', root, owned: false, key: root, folders: [scratch, venv] }
+  })
 
-  const ws: Workspace = { id: 's1', root, owned: false, key: root, folders: [scratch, venv] }
   const policy = (network: 'none' | 'registries' | 'registries-git' = 'none') =>
     codePolicyFor({
       root,

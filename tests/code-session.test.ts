@@ -1,8 +1,8 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
-import { tmpdir } from 'node:os'
 import { basename, join } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { tempDir, trackTempDir } from './tempDir'
 
 // A code session's pieces (#88): the sandbox policy's shape (its rules run for real in tests/code-sandbox.test.ts),
 // the environment and git identity its commands get, what the reply is told about the project, and run_command's
@@ -28,7 +28,7 @@ const { assemble } = await import('../src/main/chat/assemble')
 const { previewsAllowed } = await import('../src/main/chat/exposure')
 const lock = await import('../src/main/runner/lock')
 
-const root = mkdtempSync(join(tmpdir(), 'ollmost-code-session-'))
+const root = tempDir('ollmost-code-session-')
 beforeAll(() => {
   openDatabase(':memory:')
   paths.data = root
@@ -39,7 +39,7 @@ beforeAll(() => {
 })
 
 /** A folder of the user's, by its real path. */
-const userFolder = () => realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-')))
+const userFolder = () => realpathSync(tempDir('ollmost-user-'))
 const newSession = (dir: string) =>
   createConversation({ projectId: null, model: 'm', think: null, skills: [], mode: 'code', root: dir, title: basename(dir) })
 
@@ -201,7 +201,7 @@ describe('getting a session ready for a reply', () => {
     expect(long.branch).toBeNull()
 
     const linked = userFolder()
-    const elsewhere = mkdtempSync(join(tmpdir(), 'ollmost-elsewhere-'))
+    const elsewhere = tempDir('ollmost-elsewhere-')
     writeFileSync(join(elsewhere, 'secret.md'), 'private')
     symlinkSync(join(elsewhere, 'secret.md'), join(linked, 'OLLMOST.md'))
     const l = newSession(linked)
@@ -221,6 +221,7 @@ describe('getting a session ready for a reply', () => {
     const dir = userFolder()
     const c = newSession(dir)
     renameSync(dir, `${dir}-moved`)
+    trackTempDir(`${dir}-moved`)
     await expect(session.prepareCodeSession(workspace.workspaceFor(c.id), { network: 'none', timeoutSec: 30 })).rejects.toBeInstanceOf(
       workspace.RootMissingError
     )

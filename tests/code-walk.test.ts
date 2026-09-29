@@ -1,9 +1,10 @@
 import { execFileSync } from 'node:child_process'
-import { chmodSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { matchesGlob, walkFiles } from '../src/main/code/walk'
+import { tempDir } from './tempDir'
 
 // The files of a code session's folder as git would see them, for list_files and search_files (#91). The walk runs
 // outside the sandbox, so it must never follow a link: what it reports lies under the root.
@@ -13,7 +14,7 @@ import { matchesGlob, walkFiles } from '../src/main/code/walk'
  * after the describe it's made in. A real path: on a Mac the temp folder is under /var, a link.
  */
 function tree(files: Record<string, string> = {}): string {
-  const root = realpathSync.native(mkdtempSync(join(tmpdir(), 'ollmost-walk-')))
+  const root = realpathSync.native(tempDir('ollmost-walk-'))
   afterAll(() => rmSync(root, { recursive: true, force: true }))
   for (const [rel, text] of Object.entries(files)) {
     if (rel.endsWith('/')) {

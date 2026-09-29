@@ -1,7 +1,6 @@
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
+import { tempDir } from './tempDir'
 
 // A real in-memory database: which chats may fetch link previews (#63).
 vi.mock('electron', () => ({ shell: {}, app: { getPath: () => '' }, safeStorage: {} }))
@@ -13,7 +12,7 @@ const { previewsAllowed } = await import('../src/main/chat/exposure')
 const { paths } = await import('../src/main/paths')
 
 beforeAll(() => {
-  paths.data = mkdtempSync(join(tmpdir(), 'ollmost-exposure-'))
+  paths.data = tempDir('ollmost-exposure-')
   openDatabase(':memory:')
 })
 

@@ -1,20 +1,9 @@
 import { spawn } from 'node:child_process'
-import {
-  chmodSync,
-  copyFileSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  renameSync,
-  symlinkSync,
-  writeFileSync
-} from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, copyFileSync, existsSync, mkdirSync, readdirSync, readFileSync, renameSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { DatabaseSync } from 'node:sqlite'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { tempDir } from './tempDir'
 
 // The migration's keychain use is faked, as in mcp.test.ts: Electron isn't running under vitest.
 vi.mock('electron', () => ({
@@ -31,7 +20,7 @@ const migrate = await import('../src/main/migrate')
 
 /** A folder holding "Kiln" (with a kiln.db) and room for "Ollmost" next to it, as in Application Support. */
 function appSupport(): { kiln: string; ollmost: string } {
-  const root = mkdtempSync(join(tmpdir(), 'migrate-'))
+  const root = tempDir('migrate-')
   const kiln = join(root, 'Kiln')
   mkdirSync(join(kiln, 'files'), { recursive: true })
   writeFileSync(join(kiln, 'kiln.db'), 'db')
@@ -74,7 +63,7 @@ describe('moving Kiln’s data folder', () => {
     expect(migrate.moveKilnData(ollmost)).toEqual({ state: 'none' })
     expect(existsSync(kiln)).toBe(true)
     // A fresh install: no Kiln folder next to it.
-    const fresh = join(mkdtempSync(join(tmpdir(), 'migrate-')), 'Ollmost')
+    const fresh = join(tempDir('migrate-'), 'Ollmost')
     expect(migrate.moveKilnData(fresh)).toEqual({ state: 'none' })
   })
 
@@ -152,10 +141,10 @@ const count = (file: string) => {
 
 /** Kiln's database as a crash leaves it: two rows written only to the WAL, which nothing has checkpointed. */
 function crashedDatabase(): string {
-  const live = mkdtempSync(join(tmpdir(), 'migrate-db-'))
+  const live = tempDir('migrate-db-')
   const writer = new DatabaseSync(join(live, 'kiln.db'))
   writer.exec('PRAGMA journal_mode = WAL; PRAGMA wal_autocheckpoint = 0; CREATE TABLE t (x); INSERT INTO t VALUES (1), (2);')
-  const crashed = mkdtempSync(join(tmpdir(), 'migrate-crashed-'))
+  const crashed = tempDir('migrate-crashed-')
   for (const f of readdirSync(live)) copyFileSync(join(live, f), join(crashed, f))
   writer.close()
   expect(existsSync(join(crashed, 'kiln.db-wal'))).toBe(true)
@@ -164,7 +153,7 @@ function crashedDatabase(): string {
 
 describe('what’s left to do after the move', () => {
   it('is pending after a move, or while Kiln’s database still has its old name', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'migrate-'))
+    const dir = tempDir('migrate-')
     expect(migrate.migrationPending(dir, join(dir, 'ollmost.db'))).toBe(false)
     writeFileSync(join(dir, 'kiln.db'), '')
     expect(migrate.migrationPending(dir, join(dir, 'ollmost.db'))).toBe(true)
@@ -193,7 +182,7 @@ describe('renaming Kiln’s database', () => {
   })
 
   it('renames nothing when both databases exist', () => {
-    const dir = mkdtempSync(join(tmpdir(), 'migrate-'))
+    const dir = tempDir('migrate-')
     writeFileSync(join(dir, 'kiln.db'), 'old')
     writeFileSync(join(dir, 'ollmost.db'), 'new')
     migrate.renameDatabase(dir, join(dir, 'ollmost.db'))
@@ -206,7 +195,7 @@ describe('finishing the move', () => {
   beforeAll(() => openDatabase(':memory:'))
 
   it('forgets Kiln’s secrets, noting once what to ask for again', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'migrate-'))
+    const dir = tempDir('migrate-')
     writeFileSync(join(dir, migrate.MARKER), '')
     writeSetting('apiKey', Buffer.from('enc:key').toString('base64'))
     const server = mcp.saveServer({ name: 'GitHub', command: 'npx', args: [], cwd: null, env: { TOKEN: 't' }, defaultOn: false })
@@ -224,12 +213,12 @@ describe('finishing the move', () => {
   })
 
   it('deletes the Python environments and renames each chat’s hidden folder, moving a link, not following it', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'migrate-'))
+    const dir = tempDir('migrate-')
     for (const venv of ['base-venv/bin', 'venvs/c1/bin', 'venv/bin']) mkdirSync(join(dir, 'runner', venv), { recursive: true })
     mkdirSync(join(dir, 'runner', 'scripts', 'c1'), { recursive: true })
     mkdirSync(join(dir, 'workspaces', 'c1', '.kiln', 'home'), { recursive: true })
     writeFileSync(join(dir, 'workspaces', 'c1', '.kiln', 'home', 'saved.txt'), 'kept')
-    const outside = mkdtempSync(join(tmpdir(), 'migrate-outside-'))
+    const outside = tempDir('migrate-outside-')
     writeFileSync(join(outside, 'target.txt'), 'untouched')
     mkdirSync(join(dir, 'workspaces', 'c2'), { recursive: true })
     symlinkSync(outside, join(dir, 'workspaces', 'c2', '.kiln'))
@@ -250,7 +239,7 @@ describe('finishing the move', () => {
 
   it('carries on past a folder it can’t change, keeping the marker so the next launch tries again', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
-    const dir = mkdtempSync(join(tmpdir(), 'migrate-'))
+    const dir = tempDir('migrate-')
     writeFileSync(join(dir, migrate.MARKER), '')
     // Code can make its own environment and workspace unwritable.
     const locked = [join(dir, 'runner', 'venvs', 'c1', 'lib'), join(dir, 'workspaces', 'c1')]

@@ -1,5 +1,3 @@
-import { mkdtempSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
 import { getDb, openDatabase, transaction } from '../src/main/db/index'
@@ -29,6 +27,7 @@ import {
   projectKnowledge
 } from '../src/main/db/projects'
 import { conversationUsage, insertUsageEvent, usageSummary } from '../src/main/db/usage'
+import { tempDir } from './tempDir'
 
 beforeAll(() => openDatabase(':memory:'))
 
@@ -343,7 +342,7 @@ describe('a code session’s stage', () => {
 })
 
 describe('a project’s files in folders', () => {
-  const data = mkdtempSync(join(tmpdir(), 'ollmost-db-files-'))
+  const data = tempDir('ollmost-db-files-')
   beforeAll(() => {
     paths.data = data
   })

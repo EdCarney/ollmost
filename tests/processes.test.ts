@@ -1,9 +1,9 @@
 import { spawn } from 'node:child_process'
-import { mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { elapsedMs, hasChildren, isOllmostsGroup, parsePs, spawnGroup, stopAllGroups, trackProcesses } from '../src/main/processes'
+import { tempDir } from './tempDir'
 
 const alive = (pid: number) => {
   try {
@@ -67,7 +67,7 @@ describe('process groups', () => {
 })
 
 describe('cleaning up after a crash', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ollmost-pidfile-'))
+  const dir = tempDir('ollmost-pidfile-')
   const recorded = (file: string) => (JSON.parse(readFileSync(file, 'utf8')) as Array<{ pgid: number }>).map((r) => r.pgid)
 
   /** A group started the way Ollmost starts one, but not tracked: what a crashed run leaves behind. Resolves with its pids. */

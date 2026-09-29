@@ -1,10 +1,10 @@
-import { chmodSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, mkdirSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import { childEnv, INHERITED_ENV, inheritedEnv, loginPath, mergePath, readLoginPath } from '../src/main/env'
+import { tempDir } from './tempDir'
 
-const dir = mkdtempSync(join(tmpdir(), 'ollmost-env-'))
+const dir = tempDir('ollmost-env-')
 
 /** A stand-in login shell: runs the command Ollmost passes (after -ilc) with the given script around it. */
 function fakeShell(name: string, body: string): string {

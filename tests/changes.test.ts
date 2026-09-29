@@ -1,19 +1,8 @@
 import { execFileSync } from 'node:child_process'
-import {
-  chmodSync,
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  realpathSync,
-  renameSync,
-  rmSync,
-  symlinkSync,
-  unlinkSync,
-  writeFileSync
-} from 'node:fs'
-import { tmpdir } from 'node:os'
+import { chmodSync, existsSync, mkdirSync, realpathSync, renameSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { tempDir } from './tempDir'
 
 // What changed in a session's folder (#102): git status and diff run inside the session's sandbox, parsed. The
 // sandbox part is macOS only, like tests/code-sandbox.test.ts, and needs the Command Line Tools for git.
@@ -32,7 +21,7 @@ const { workspaceFor } = await import('../src/main/runner/workspace')
 const { changes, diff, parseStatus, withoutNote, stopPanelRuns, FILES_LIMIT } = await import('../src/main/code/changes')
 const { readyForSession } = await import('../src/main/runner/workspace')
 
-const data = mkdtempSync(join(tmpdir(), 'ollmost-changes-'))
+const data = tempDir('ollmost-changes-')
 beforeAll(() => {
   openDatabase(':memory:')
   paths.data = data
@@ -107,7 +96,7 @@ describe.runIf(process.platform === 'darwin' && existsSync('/usr/bin/sandbox-exe
   'what changed in a session’s folder',
   () => {
     // A real path, which the pins match. The mandatory denies are anchored at the working directory: / as in the app.
-    const base = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-changes-')))
+    const base = realpathSync(tempDir('ollmost-user-changes-'))
     beforeAll(() => process.chdir('/'))
     afterAll(() => rmSync(base, { recursive: true, force: true }))
 

@@ -1,7 +1,7 @@
-import { mkdtempSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { tempDir } from './tempDir'
 
 // A stand-in for Electron's nativeImage: each test says how big the image is, or that Electron can't read it.
 const image = vi.hoisted(() => ({ size: { width: 800, height: 600 }, empty: false }))
@@ -18,7 +18,7 @@ vi.mock('electron', () => {
 
 const { imageForModel } = await import('../src/main/files/ingest')
 
-const dir = mkdtempSync(join(tmpdir(), 'ollmost-image-'))
+const dir = tempDir('ollmost-image-')
 const file = (name: string) => {
   const path = join(dir, name)
   writeFileSync(path, 'file-bytes')

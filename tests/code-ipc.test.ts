@@ -1,7 +1,8 @@
-import { mkdirSync, mkdtempSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { homedir, tmpdir } from 'node:os'
+import { mkdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { homedir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { tempDir } from './tempDir'
 
 // The `code` IPC group the renderer calls for code sessions (#86), through the handlers registerIpc installs. Electron
 // is faked: the folder dialog answers from `picks`, and Show in Finder records what it was shown.
@@ -49,7 +50,7 @@ const { updateSettings } = await import('../src/main/settings')
 const { paths } = await import('../src/main/paths')
 const { registerIpc } = await import('../src/main/ipc')
 
-const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'ollmost-code-ipc-')))
+const base = realpathSync.native(tempDir('ollmost-code-ipc-'))
 beforeAll(() => {
   openDatabase(':memory:')
   paths.data = join(base, 'data')
