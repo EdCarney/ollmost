@@ -93,7 +93,7 @@ describe('listing every endpoint', () => {
     const { models, errors } = await registry.listAllModels(true)
     // The same name on two endpoints is two models; a turned-off endpoint isn't asked.
     expect(models.map((m) => m.key)).toEqual(['ollama/gpt-oss:120b-cloud', 'ollama/llama3.2', 'ollama/qwen3:8b', 'gpu/qwen3:8b'])
-    expect(errors).toEqual([{ endpointId: 'down', message: expect.stringMatching(/^Can't reach Down box at http:\/\/127\.0\.0\.1:\d+/) }])
+    expect(errors).toEqual([{ endpointId: 'down', message: expect.stringMatching(/^Can't reach Down box at 127\.0\.0\.1:\d+/) }])
   })
 
   it('says where each model runs, how it’s billed, and the window it gets', async () => {

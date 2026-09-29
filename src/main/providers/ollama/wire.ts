@@ -132,7 +132,7 @@ const METADATA_TIMEOUT_MS = 30_000
 /** A request that never got an answer, in words that name the server; `err` is what fetch threw. */
 function unreachable(t: OllamaTarget, err: unknown): string {
   if (t.cloud) return cloudUnreachableMessage(err)
-  const refused = `Can't reach ${t.name} at ${t.base}. Is the Ollama app running?`
+  const refused = `Can't reach ${t.name} at ${displayAddress(t.base)}. Is the Ollama app running?`
   return fetchFailureMessage(err, { subject: t.name, address: displayAddress(t.base), host: hostnameOf(t.base) ?? t.base }, refused)
 }
 

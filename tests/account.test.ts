@@ -268,7 +268,7 @@ describe('the account’s usage', () => {
 
     it('says the usage couldn’t be read, not that ollama.com is offline, when a 200 isn’t JSON', async () => {
       for (const body of ['<html><body>Sign in to continue</body></html>', '', 'not json'])
-        expect(await answered(200, body)).toMatchObject({ needsKey: false, error: "ollama.com sent usage Ollmost couldn't read." })
+        expect(await answered(200, body)).toMatchObject({ needsKey: false, error: "ollama.com sent a usage reply Ollmost couldn't read." })
     })
 
     it('still says ollama.com didn’t answer when the wait runs out while the usage is being read', async () => {

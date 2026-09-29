@@ -84,7 +84,7 @@ async function load(): Promise<AccountUsage> {
     json = await res.json()
   } catch (err) {
     // A body that isn't JSON (a sign-in page, or the endpoint changed) isn't a connection problem.
-    if (err instanceof SyntaxError) return { ...base, needsKey: false, error: "ollama.com sent usage Ollmost couldn't read." }
+    if (err instanceof SyntaxError) return { ...base, needsKey: false, error: "ollama.com sent a usage reply Ollmost couldn't read." }
     return { ...base, needsKey: false, error: cloudUnreachableMessage(err, USAGE_TIMEOUT_MS / 1000) }
   }
   // The endpoint is undocumented: keep the last response so its shape can be inspected in Settings.

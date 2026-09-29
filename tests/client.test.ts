@@ -183,7 +183,7 @@ describe('targets', () => {
     await collectFrom({ ...t, headers: { Authorization: 'Bearer k' }, keyed: true })
     expect(auth).toBe('Bearer k')
     const gone = { ...t, base: 'http://127.0.0.1:9', name: 'GPU box' }
-    await expect(chatOnce(gone, body, { timeoutMs: 2_000 })).rejects.toThrow("Can't reach GPU box at http://127.0.0.1:9.")
+    await expect(chatOnce(gone, body, { timeoutMs: 2_000 })).rejects.toThrow("Can't reach GPU box at 127.0.0.1:9.")
   })
 })
 
@@ -200,7 +200,7 @@ describe('a failed request', () => {
   it('says why an endpoint can’t be reached: refused, a host that isn’t there, or an untrusted certificate', async () => {
     const reach = () => message(() => chatOnce(gpu, body, { timeoutMs: 2_000 }))
     stubFetch(fetchFailed('ECONNREFUSED', 'aggregate-no-code'))
-    expect(await reach()).toBe("Can't reach GPU box at https://gpu.lan:11434. Is the Ollama app running?")
+    expect(await reach()).toBe("Can't reach GPU box at gpu.lan:11434. Is the Ollama app running?")
     stubFetch(fetchFailed('ENOTFOUND'))
     expect(await reach()).toBe("GPU box's host gpu.lan wasn't found. Check the address in Settings → Models → GPU box.")
     stubFetch(fetchFailed('SELF_SIGNED_CERT_IN_CHAIN'))
