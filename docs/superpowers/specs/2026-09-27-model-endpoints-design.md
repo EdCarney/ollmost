@@ -384,10 +384,11 @@ Today's behaviour, moved:
   - ollama.com key saved → as today.
   - No key but an Ollama endpoint exists → today's "add a key" chip.
   - Neither → hidden, and no polling.
-- **`/api/me`** goes to the first enabled Ollama endpoint on a loopback address, and is skipped if there is none. A
-  failure is remembered for the session: an HTTP error, a body that isn't JSON or the 5 s timeout. A refused connection
-  isn't, because the Ollama app may not have started yet (or is restarting for an update); it's asked again at the next
-  load.
+- **`/api/me`** goes to the first enabled Ollama endpoint on a loopback address, and is skipped if there is none. Only
+  a server without `/api/me` is remembered for the session: a 404, 405 or 501, a body that isn't JSON, or the 5 s
+  timeout. Anything else reads as no plan and is asked again at the next load: a refused connection (the Ollama app may
+  not have started yet, or is restarting for an update), 401 or 403 (signed out; signing in needs no restart), another
+  error status, or a JSON answer without a string `plan` (a signed-in app that can't reach ollama.com answers `null`).
 - **`refreshPrices`** runs only when an Ollama endpoint exists.
 - **Web tools** are unchanged. They're on for any tools-capable model when the ollama.com key is saved.
 

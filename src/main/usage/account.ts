@@ -15,11 +15,14 @@ let inflight: Promise<AccountUsage> | null = null
 let generation = 0
 let plan: string | null = null
 /**
- * The address /api/me last failed at: not asked again this session (a server without it would fail on every load). A
- * refused connection isn't remembered: nothing is listening there yet (the Ollama app not started, or restarting for an
- * update), which isn't a server without /api/me, and it's asked again at the next load.
+ * The address found to have no /api/me: not asked again this session, since it would fail, or hold up, every load. Only
+ * that is remembered: a 404, 405 or 501, a body that isn't JSON, or no answer within 5 s. Anything else reads as no plan
+ * and is asked again at the next load: a refused connection (the Ollama app not started yet, or restarting for an
+ * update), 401 or 403 (signed out, and signing in needs no restart), another error status, or an answer without a plan.
  */
 let planFailedAt: string | null = null
+/** What a server without /api/me answers: an older Ollama, or something else on the port. */
+const NO_API_ME = new Set([404, 405, 501])
 
 /** Where to ask for the plan: the first enabled Ollama endpoint on this Mac (the signed-in app), if any. */
 export function planEndpoint(endpoints: readonly Endpoint[]): Endpoint | null {
@@ -35,13 +38,16 @@ async function fetchPlan(): Promise<string | null> {
   if (planFailedAt === base) return null
   try {
     const res = await fetch(`${base}/api/me`, { method: 'POST', signal: AbortSignal.timeout(5000) })
-    if (!res.ok) throw new Error(`HTTP ${res.status}`)
-    // A signed-out daemon answers without a plan: asked again next time, since signing in needs no restart.
-    plan = ((await res.json()) as { plan?: string }).plan ?? null
+    if (NO_API_ME.has(res.status)) planFailedAt = base
+    if (!res.ok) return null
+    // A signed-in app that can't reach ollama.com answers null: no plan yet, asked again next time.
+    const found = ((await res.json()) as { plan?: unknown } | null)?.plan
+    plan = typeof found === 'string' && found ? found : null
     return plan
   } catch (err) {
-    // An error status, a body that isn't JSON and the 5 s timeout are remembered; fetch's refused connection isn't.
-    if ((err as { cause?: { code?: string } }).cause?.code !== 'ECONNREFUSED') planFailedAt = base
+    // A body that isn't JSON, or the 5 s timeout (waiting for the answer or reading it). A refused or dropped connection
+    // is asked again.
+    if (err instanceof SyntaxError || (err instanceof Error && err.name === 'TimeoutError')) planFailedAt = base
     return null
   }
 }

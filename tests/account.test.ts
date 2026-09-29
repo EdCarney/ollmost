@@ -31,6 +31,12 @@ async function daemon(reply: (res: ServerResponse) => void = (res) => void res.w
   stub.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   return stub
 }
+/** An answer with a JSON body. */
+const json = (status: number, body: string) => (res: ServerResponse) =>
+  void res.writeHead(status, { 'Content-Type': 'application/json' }).end(body)
+// What a signed-out Ollama app answers /api/me with (its WhoamiHandler): 401, and where to sign in.
+const SIGNED_OUT = json(401, '{"error":"unauthorized","signin_url":"https://ollama.com/connect?name=mac&key=made-up"}')
+
 const endpoint = (over: Partial<Endpoint>): Endpoint => ({
   id: 'ollama',
   name: 'Ollama',
@@ -75,14 +81,17 @@ describe('the account’s plan (/api/me)', () => {
     }
   })
 
-  it('remembers a failure for the session instead of asking on every load', async () => {
-    const old = await daemon()
-    state.endpoints = [endpoint({ baseUrl: old.url })]
-    await getAccountUsage(true)
-    await getAccountUsage(true)
-    await getAccountUsage(true)
-    expect(old.meHits).toBe(1)
-  })
+  it.each([404, 405, 501])(
+    'remembers a server without /api/me (HTTP %i) for the session instead of asking on every load',
+    async (status) => {
+      const old = await daemon((res) => void res.writeHead(status).end())
+      state.endpoints = [endpoint({ baseUrl: old.url })]
+      await getAccountUsage(true)
+      await getAccountUsage(true)
+      await getAccountUsage(true)
+      expect(old.meHits).toBe(1)
+    }
+  )
 
   it('remembers an answer that isn’t JSON too: something answered there, and would again', async () => {
     const other = await daemon((res) => void res.writeHead(200, { 'Content-Type': 'text/html' }).end('<html>'))
@@ -90,6 +99,27 @@ describe('the account’s plan (/api/me)', () => {
     await getAccountUsage(true)
     await getAccountUsage(true)
     expect(other.meHits).toBe(1)
+  })
+
+  it('remembers a server that doesn’t answer within 5 s: every load would wait for it', async () => {
+    const held: ServerResponse[] = []
+    const slow = await daemon((res) => void held.push(res))
+    state.endpoints = [endpoint({ baseUrl: slow.url })]
+    // The 5 s timeout, fired early: the same abort the real one gives.
+    const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), 20)
+      return controller.signal
+    })
+    try {
+      await getAccountUsage(true)
+      await getAccountUsage(true)
+      expect(timeout).toHaveBeenCalledWith(5000)
+      expect(slow.meHits).toBe(1)
+    } finally {
+      timeout.mockRestore()
+      for (const res of held) res.end()
+    }
   })
 
   it('asks again at a different address: the memory is of where it failed, not of failing', async () => {
@@ -109,7 +139,8 @@ describe('the account’s plan (/api/me)', () => {
     await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
     const port = (probe.address() as AddressInfo).port
     await new Promise((resolve) => probe.close(resolve))
-    // A fresh module: an earlier test's remembered plan would answer before anything was asked.
+    // A fresh module: a plan, once known, is kept for the session, so an earlier test's would answer before anything
+    // was asked, and this test's would answer the tests after it.
     vi.resetModules()
     const account = await import('../src/main/usage/account')
     state.endpoints = [endpoint({ baseUrl: `http://127.0.0.1:${port}` })]
@@ -120,13 +151,30 @@ describe('the account’s plan (/api/me)', () => {
     expect(app.meHits).toBe(1)
   })
 
-  it('does not remember a signed-out answer, since signing in needs no restart', async () => {
-    const app = await daemon((res) => void res.writeHead(200, { 'Content-Type': 'application/json' }).end('{}'))
+  it.each([403, 500, 502, 503])('asks again after HTTP %i: refused for now, or trouble that may pass', async (status) => {
+    const app = await daemon(json(status, '{"error":"something went wrong"}'))
     state.endpoints = [endpoint({ baseUrl: app.url })]
     expect((await getAccountUsage(true)).plan).toBeNull()
     expect((await getAccountUsage(true)).plan).toBeNull()
     expect(app.meHits).toBe(2)
-    app.reply = (res) => void res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"plan":"pro"}')
+  })
+
+  // A signed-in app that can't reach ollama.com (offline, or just after a wake) answers 200 null.
+  it.each(['null', '{}', '{"plan":5}'])('reads a 200 answer of %s as no plan, and asks again at the next load', async (body) => {
+    const app = await daemon(json(200, body))
+    state.endpoints = [endpoint({ baseUrl: app.url })]
+    expect((await getAccountUsage(true)).plan).toBeNull()
+    expect((await getAccountUsage(true)).plan).toBeNull()
+    expect(app.meHits).toBe(2)
+  })
+
+  it('asks a signed-out app again at the next load, since signing in needs no restart', async () => {
+    const app = await daemon(SIGNED_OUT)
+    state.endpoints = [endpoint({ baseUrl: app.url })]
+    expect((await getAccountUsage(true)).plan).toBeNull()
+    expect((await getAccountUsage(true)).plan).toBeNull()
+    expect(app.meHits).toBe(2)
+    app.reply = json(200, '{"plan":"pro"}')
     expect((await getAccountUsage(true)).plan).toBe('pro')
   })
 })
