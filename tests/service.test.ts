@@ -1818,7 +1818,8 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     // Back to planning drops the approved plan: a new one will come.
     await waitFor(() => !service.isReplying())
     expect(service.setStage(session.id, 'plan')).toMatchObject({ stage: 'plan', plan: null })
-  })
+    // Two replies in a sandboxed session: more than the default 5 s on a busy macOS runner.
+  }, 30_000)
 
   it('keeps no plan when nothing was written in plan mode, and none of a chat', async () => {
     const { paths } = await import('../src/main/paths')
