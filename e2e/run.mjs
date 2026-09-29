@@ -2131,7 +2131,11 @@ const evilSvg = (port) =>
     dialect: 'openai',
     models: ['mock-slow-model'],
     route: async (req) => {
-      if (slowList && req.url === '/v1/models') await new Promise((resolve) => setTimeout(resolve, SLOW_MS))
+      if (slowList && req.url === '/v1/models') {
+        await new Promise((resolve) => setTimeout(resolve, SLOW_MS))
+        // The app may be gone by now (if the check failed it closed): reading an aborted request rejects, and nothing catches that.
+        if (req.destroyed) return true
+      }
       return false
     }
   })

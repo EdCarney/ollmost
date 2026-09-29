@@ -21,7 +21,8 @@ export function modelAvailability(
   if (!endpoint.enabled) return 'endpoint-disabled'
   // By endpoint and name, so a bare name from before keys still finds its Ollama model.
   if (models.some((m) => m.endpoint.id === endpointId && m.name === model)) return 'ok'
-  // Still answering isn't offline: its list may yet have the model.
+  // Still answering isn't offline: its list may yet have the model. The composer says so but still sends (a chat request
+  // doesn't need the list); every other reason here blocks.
   const error = errors.find((e) => e.endpointId === endpointId)
   if (error) return error.pending ? 'endpoint-waiting' : 'endpoint-offline'
   return 'model-missing'

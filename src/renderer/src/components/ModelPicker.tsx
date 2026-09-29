@@ -189,7 +189,7 @@ export function ModelPicker({
               {models.length
                 ? 'No models match.'
                 : modelErrors.length
-                  ? modelErrors.every((e) => e.pending)
+                  ? modelErrors.some((e) => e.pending)
                     ? 'Waiting for your endpoints to list their models…'
                     : 'No endpoint could list its models.'
                   : 'No models yet.'}

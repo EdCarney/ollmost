@@ -262,6 +262,23 @@ describe('a slow endpoint', () => {
     expect(late).toEqual([])
   })
 
+  it('lets a listener that throws (a window closing mid-send) fail on its own, not as an unhandled rejection in main', async () => {
+    const unhandled: unknown[] = []
+    const record = (reason: unknown) => unhandled.push(reason)
+    process.on('unhandledRejection', record)
+    try {
+      registry.onLateModels(() => {
+        throw new Error('window destroyed')
+      })
+      await registry.listAllModels(true, WAIT)
+      answer.resolve([lateModel])
+      await settleTimers()
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', record)
+    }
+  })
+
   it('still fails an endpoint at once when its server refuses', async () => {
     setEndpoints([ollama('ollama', 'Ollama', a.url), ollama('down', 'Down box', down)])
     registry.invalidateProviders()

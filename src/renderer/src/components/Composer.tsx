@@ -180,7 +180,10 @@ export function Composer({
   const visionMissing = hasImages && model && !model.capabilities.includes('vision')
   // Until the first listing ends, a chat's model can't be told from a missing one, so nothing is blocked yet.
   const availability = modelsReady ? modelAvailability(settings.model, models, endpoints, modelErrors) : 'ok'
-  const unavailable = availability !== 'ok' && availability !== 'none'
+  // An endpoint still listing its models is a notice, not a block: a chat request doesn't need the list, and a dead host
+  // fails with its own error.
+  const waiting = availability === 'endpoint-waiting'
+  const unavailable = availability !== 'ok' && availability !== 'none' && !waiting
   const canSend = !!settings.model && !unavailable && !uploading && !submitting && (text.trim().length > 0 || pending.length > 0)
 
   // ---- attachments ----
@@ -574,11 +577,7 @@ export function Composer({
 
           <div className="flex-1" />
 
-          <ModelPicker
-            value={settings.model}
-            onChange={settings.setModel}
-            unavailable={unavailable && availability !== 'endpoint-waiting'}
-          />
+          <ModelPicker value={settings.model} onChange={settings.setModel} unavailable={unavailable} />
 
           {streaming ? (
             <Tooltip content="Stop">
@@ -611,13 +610,9 @@ export function Composer({
         </p>
       )}
 
-      {unavailable && settings.model && (
+      {(unavailable || waiting) && settings.model && (
         <p className="mt-2 flex items-center gap-1.5 px-2 text-xs text-muted">
-          {availability === 'endpoint-waiting' ? (
-            <Spinner className="size-3.5 shrink-0" />
-          ) : (
-            <TriangleAlert className="size-3.5 shrink-0 text-danger" />
-          )}
+          {waiting ? <Spinner className="size-3.5 shrink-0" /> : <TriangleAlert className="size-3.5 shrink-0 text-danger" />}
           <span>{unavailableText(availability, settings.model, endpoints)}</span>
           {availability === 'endpoint-offline' && (
             <button className="text-accent hover:underline" onClick={() => void loadModels(true)}>

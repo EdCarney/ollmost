@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
-import { mergeLateModels } from '../src/shared/modelList'
-import type { ModelInfo, ModelListResult } from '../src/shared/types'
+import { mergeLateModels, nextDraftModel } from '../src/shared/modelList'
+import type { Endpoint, ModelInfo, ModelListResult } from '../src/shared/types'
 
 const model = (endpointId: string, name: string) => ({ key: `${endpointId}/${name}`, name, endpoint: { id: endpointId } }) as ModelInfo
 
@@ -37,5 +37,63 @@ describe('a late answer from an endpoint', () => {
     mergeLateModels(state, { endpointId: 'slow', models: [model('slow', 'c')] })
     mergeLateModels(state, { endpointId: 'slow', error: 'no' })
     expect(state).toEqual(copy)
+  })
+})
+
+describe('the model a new chat starts with', () => {
+  const ep = (id: string, name: string): Endpoint => ({
+    id,
+    name,
+    kind: 'openai',
+    flavor: 'generic',
+    baseUrl: `http://${id}.local:1234/v1`,
+    enabled: true,
+    hasKey: false
+  })
+  const endpoints = [ep('fast', 'Fast box'), ep('gpu', 'GPU box'), ep('down', 'Down box')]
+  const installed = (endpointId: string, name: string) => ({ ...model(endpointId, name), installed: true }) as ModelInfo
+  const fastOnly: ModelListResult = { models: [model('fast', 'a'), installed('fast', 'b')], errors: [] }
+  const gpuWaiting = { endpointId: 'gpu', message: 'Still waiting for GPU box at gpu.local:1234…', pending: true as const }
+  const gpuDown = { endpointId: 'gpu', message: "Can't reach GPU box at gpu.local:1234." }
+  const gpuListed: ModelListResult = { models: [...fastOnly.models, model('gpu', 'x')], errors: [] }
+
+  it('switches an auto-picked model to the default once the default is listed', () => {
+    const waiting: ModelListResult = { ...fastOnly, errors: [gpuWaiting] }
+    expect(nextDraftModel('fast/b', true, 'gpu/x', waiting, endpoints)).toBe('fast/b')
+    expect(nextDraftModel('fast/b', true, 'gpu/x', gpuListed, endpoints)).toBe('gpu/x')
+  })
+
+  it("keeps the user's own choice when the default is listed", () => {
+    expect(nextDraftModel('fast/a', false, 'gpu/x', gpuListed, endpoints)).toBe('fast/a')
+  })
+
+  it("keeps a model whose endpoint is still answering, the user's or the auto-picked one", () => {
+    const waiting: ModelListResult = { ...fastOnly, errors: [gpuWaiting] }
+    expect(nextDraftModel('gpu/x', false, 'fast/a', waiting, endpoints)).toBe('gpu/x')
+    expect(nextDraftModel('gpu/x', true, 'gpu/x', waiting, endpoints)).toBe('gpu/x')
+  })
+
+  it('replaces a model whose endpoint failed, is gone, or no longer lists it', () => {
+    const failed: ModelListResult = { ...fastOnly, errors: [gpuDown] }
+    expect(nextDraftModel('gpu/x', false, 'fast/a', failed, endpoints)).toBe('fast/a')
+    expect(nextDraftModel('gpu/x', false, null, failed, endpoints)).toBe('fast/b')
+    expect(nextDraftModel('gone/x', false, null, fastOnly, endpoints)).toBe('fast/b')
+    expect(nextDraftModel('fast/zzz', false, null, fastOnly, endpoints)).toBe('fast/b')
+  })
+
+  it('picks the default, else an installed model, else the first, when there is no model yet', () => {
+    expect(nextDraftModel(null, true, 'fast/a', fastOnly, endpoints)).toBe('fast/a')
+    expect(nextDraftModel(null, true, 'gpu/x', fastOnly, endpoints)).toBe('fast/b')
+    expect(nextDraftModel(null, true, null, { models: [model('fast', 'a'), model('fast', 'c')], errors: [] }, endpoints)).toBe('fast/a')
+  })
+
+  it('keeps an auto-picked model while the default is not listed', () => {
+    expect(nextDraftModel('fast/a', true, 'gpu/x', fastOnly, endpoints)).toBe('fast/a')
+  })
+
+  it('has nothing to pick from an empty list, and leaves the model as it is', () => {
+    const waiting: ModelListResult = { models: [], errors: [gpuWaiting] }
+    expect(nextDraftModel(null, true, 'gpu/x', waiting, endpoints)).toBeNull()
+    expect(nextDraftModel('fast/a', false, 'gpu/x', waiting, endpoints)).toBe('fast/a')
   })
 })

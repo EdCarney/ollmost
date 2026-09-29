@@ -104,7 +104,12 @@ function tellLater(p: Provider, request: Promise<ModelInfo[]>): void {
   const endpointId = p.endpoint.id
   // `providers`, not live(): after an endpoint change the renderer lists again, so this answer is no use to it.
   const tell = (update: ModelListUpdate) => {
-    if (providers?.get(endpointId) === p) lateListener?.(update)
+    if (providers?.get(endpointId) !== p) return
+    try {
+      lateListener?.(update)
+    } catch {
+      // A send to a window that's closing throws; there's no one left to tell, and this runs off a promise nobody awaits.
+    }
   }
   request.then(
     (models) => tell({ endpointId, models }),
