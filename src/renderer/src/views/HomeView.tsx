@@ -1,5 +1,5 @@
 import { TriangleAlert } from 'lucide-react'
-import type { Endpoint } from '@shared/types'
+import { noModelsNotice } from '@shared/noModels'
 import { Composer } from '@/components/Composer'
 import { MigrationNotice } from '@/components/MigrationNotice'
 import { OllmostMark } from '@/components/OllmostMark'
@@ -9,18 +9,10 @@ import { sendMessage } from '@/lib/chatActions'
 import { greeting } from '@/lib/format'
 import { useApp } from '@/stores/app'
 
-/** Why there are no models when no endpoint reported an error. */
-function noModelsNote(endpoints: readonly Endpoint[]): string {
-  if (!endpoints.length) return 'No endpoints yet. Add one in Settings → Models.'
-  // A switched-off endpoint isn't asked, so it has neither models nor an error.
-  if (!endpoints.some((e) => e.enabled)) return 'Your endpoints are all turned off. Turn one on in Settings → Models.'
-  return 'None of your endpoints has a model yet. Add one, or add another endpoint in Settings → Models.'
-}
-
 export function HomeView() {
   const { settings, models, modelErrors, modelsLoading, modelsReady, loadModels, navigate, skills } = useApp()
   // Not before the first listing has finished: on the first render nothing has been asked yet.
-  const noModels = modelsReady && !modelsLoading && models.length === 0
+  const notice = modelsReady && !modelsLoading && models.length === 0 ? noModelsNotice(settings?.endpoints ?? [], modelErrors) : null
 
   return (
     <div className="flex h-full flex-col">
@@ -33,14 +25,12 @@ export function HomeView() {
           </h1>
 
           <MigrationNotice />
-          {noModels && (
+          {notice && (
             <div className="mb-4 flex items-start gap-3 rounded-ollmost border border-line bg-panel p-4 text-sm">
               <TriangleAlert className="mt-0.5 size-4 shrink-0 text-danger" />
               <div className="flex-1">
-                <div className="font-medium">
-                  {modelErrors.length ? "Couldn't load models from any endpoint" : "Ollmost can't find any models."}
-                </div>
-                {modelErrors.length ? (
+                <div className="font-medium">{notice.heading}</div>
+                {modelErrors.length > 0 && (
                   // The main process's messages name their endpoint and address. A failed list call (endpointId '') shows
                   // the error as it came.
                   <ul className="mt-1 space-y-0.5 text-muted">
@@ -50,9 +40,8 @@ export function HomeView() {
                       </li>
                     ))}
                   </ul>
-                ) : (
-                  <div className="mt-1 text-muted">{noModelsNote(settings?.endpoints ?? [])}</div>
                 )}
+                {notice.note && <div className="mt-1 text-muted">{notice.note}</div>}
               </div>
               <div className="flex gap-2">
                 <Button size="sm" onClick={() => loadModels(true)}>
