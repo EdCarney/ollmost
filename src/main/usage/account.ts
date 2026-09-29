@@ -15,14 +15,18 @@ let inflight: Promise<AccountUsage> | null = null
 let generation = 0
 let plan: string | null = null
 /**
- * The address found to have no /api/me: not asked again this session, since it would fail, or hold up, every load. Only
- * that is remembered: a 404, 405 or 501, a body that isn't JSON, or no answer within 5 s. Anything else reads as no plan
- * and is asked again at the next load: a refused connection (the Ollama app not started yet, or restarting for an
- * update), 401 or 403 (signed out, and signing in needs no restart), another error status, or an answer without a plan.
+ * Where /api/me failed in a way worth remembering, and until when it isn't asked again. A server without /api/me (a 404,
+ * 405 or 501, or a body that isn't JSON) would fail every load: remembered for the session. No answer within 5 s is
+ * remembered for 10 minutes: the app asks ollama.com with no deadline of its own, so a stalled ollama.com (after a wake,
+ * or behind a captive portal) holds it up for a while, and a hung app then delays at most one load in 10 minutes.
+ * Anything else reads as no plan and is asked again at the next load: a refused connection (the Ollama app not started
+ * yet, or restarting for an update), 401 or 403 (signed out, and signing in needs no restart), another error status, or
+ * an answer without a plan.
  */
-let planFailedAt: string | null = null
+let planFailed: { at: string; until: number } | null = null
 /** What a server without /api/me answers: an older Ollama, or something else on the port. */
 const NO_API_ME = new Set([404, 405, 501])
+const PLAN_TIMEOUT_MEMORY_MS = 10 * 60_000
 
 /** Where to ask for the plan: the first enabled Ollama endpoint on this Mac (the signed-in app), if any. */
 export function planEndpoint(endpoints: readonly Endpoint[]): Endpoint | null {
@@ -35,19 +39,21 @@ async function fetchPlan(): Promise<string | null> {
   const target = planEndpoint(getSettings().endpoints)
   if (!target) return null
   const base = target.baseUrl.replace(/\/+$/, '')
-  if (planFailedAt === base) return null
+  if (planFailed?.at === base && Date.now() < planFailed.until) return null
   try {
     const res = await fetch(`${base}/api/me`, { method: 'POST', signal: AbortSignal.timeout(5000) })
-    if (NO_API_ME.has(res.status)) planFailedAt = base
+    if (NO_API_ME.has(res.status)) planFailed = { at: base, until: Infinity }
+    // Signed out (401), or signed in but unable to reach ollama.com (503 on newer builds, 200 null on older ones): no plan
+    // yet, asked again next time.
     if (!res.ok) return null
-    // A signed-in app that can't reach ollama.com answers null: no plan yet, asked again next time.
     const found = ((await res.json()) as { plan?: unknown } | null)?.plan
     plan = typeof found === 'string' && found ? found : null
     return plan
   } catch (err) {
-    // A body that isn't JSON, or the 5 s timeout (waiting for the answer or reading it). A refused or dropped connection
-    // is asked again.
-    if (err instanceof SyntaxError || (err instanceof Error && err.name === 'TimeoutError')) planFailedAt = base
+    // A body that isn't JSON, for the session; the 5 s timeout (waiting for the answer or reading it), for 10 minutes. A
+    // refused or dropped connection is asked again.
+    if (err instanceof SyntaxError) planFailed = { at: base, until: Infinity }
+    else if (err instanceof Error && err.name === 'TimeoutError') planFailed = { at: base, until: Date.now() + PLAN_TIMEOUT_MEMORY_MS }
     return null
   }
 }

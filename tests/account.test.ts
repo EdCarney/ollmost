@@ -49,7 +49,16 @@ const endpoint = (over: Partial<Endpoint>): Endpoint => ({
 })
 
 beforeAll(() => openDatabase(':memory:'))
-afterAll(() => Promise.all(servers.map((s) => new Promise((resolve) => s.close(resolve)))))
+// Closing waits for open connections, and one a timed-out ask left would hold it for seconds.
+afterAll(() =>
+  Promise.all(
+    servers.map((s) => {
+      const closed = new Promise((resolve) => s.close(resolve))
+      s.closeAllConnections()
+      return closed
+    })
+  )
+)
 
 describe('the account’s plan (/api/me)', () => {
   it('asks the first enabled Ollama endpoint on this Mac, and no other', () => {
@@ -88,7 +97,14 @@ describe('the account’s plan (/api/me)', () => {
       state.endpoints = [endpoint({ baseUrl: old.url })]
       await getAccountUsage(true)
       await getAccountUsage(true)
-      await getAccountUsage(true)
+      // Not only for a while, as a timeout is.
+      vi.useFakeTimers({ toFake: ['Date'] })
+      try {
+        vi.setSystemTime(Date.now() + 60 * 60_000)
+        await getAccountUsage(true)
+      } finally {
+        vi.useRealTimers()
+      }
       expect(old.meHits).toBe(1)
     }
   )
@@ -101,9 +117,12 @@ describe('the account’s plan (/api/me)', () => {
     expect(other.meHits).toBe(1)
   })
 
-  it('remembers a server that doesn’t answer within 5 s: every load would wait for it', async () => {
-    const held: ServerResponse[] = []
-    const slow = await daemon((res) => void held.push(res))
+  it('remembers a server that doesn’t answer within 5 s for 10 minutes, then asks again', async () => {
+    // It never answers: the app waiting on a stalled ollama.com.
+    const slow = await daemon(() => undefined)
+    // A fresh module: this test ends with a plan, which would answer the tests after it.
+    vi.resetModules()
+    const account = await import('../src/main/usage/account')
     state.endpoints = [endpoint({ baseUrl: slow.url })]
     // The 5 s timeout, fired early: the same abort the real one gives.
     const timeout = vi.spyOn(AbortSignal, 'timeout').mockImplementation(() => {
@@ -111,14 +130,23 @@ describe('the account’s plan (/api/me)', () => {
       setTimeout(() => controller.abort(new DOMException('The operation was aborted due to timeout', 'TimeoutError')), 20)
       return controller.signal
     })
+    vi.useFakeTimers({ toFake: ['Date'] })
+    const t0 = Date.now()
     try {
-      await getAccountUsage(true)
-      await getAccountUsage(true)
+      await account.getAccountUsage(true)
       expect(timeout).toHaveBeenCalledWith(5000)
+      // Every load in the next 10 minutes would wait 5 s for it.
+      vi.setSystemTime(t0 + 10 * 60_000 - 1)
+      await account.getAccountUsage(true)
       expect(slow.meHits).toBe(1)
+      // The app waits on ollama.com with no deadline of its own: once ollama.com answers it again, so does the app.
+      slow.reply = json(200, '{"plan":"pro"}')
+      vi.setSystemTime(t0 + 10 * 60_000)
+      expect((await account.getAccountUsage(true)).plan).toBe('pro')
+      expect(slow.meHits).toBe(2)
     } finally {
+      vi.useRealTimers()
       timeout.mockRestore()
-      for (const res of held) res.end()
     }
   })
 
@@ -159,7 +187,8 @@ describe('the account’s plan (/api/me)', () => {
     expect(app.meHits).toBe(2)
   })
 
-  // A signed-in app that can't reach ollama.com (offline, or just after a wake) answers 200 null.
+  // A signed-in app that can't reach ollama.com (offline, or just after a wake) answers 200 null, or 503 on newer Ollama
+  // builds (above).
   it.each(['null', '{}', '{"plan":5}'])('reads a 200 answer of %s as no plan, and asks again at the next load', async (body) => {
     const app = await daemon(json(200, body))
     state.endpoints = [endpoint({ baseUrl: app.url })]
