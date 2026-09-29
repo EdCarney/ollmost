@@ -49,7 +49,10 @@ const TOOL_FLAGS = [
 // isn't one of them: with just-in-time loading off it means "load a model", so its own words go through.
 const MISSING_MODEL = /not found|does not exist|no such|invalid model|unknown model/i
 
-/** The message in any of the error shapes servers send, trimmed (a blank one is none), and the error object itself when there is one. */
+/**
+ * The message in any of the error shapes servers send, trimmed (a blank one is none), and the error object itself when
+ * there is one. JSON with no text message says nothing; text that isn't JSON is its own message.
+ */
 function readError(body: string): { detail: string; error: Record<string, unknown> } {
   let json: unknown
   try {
@@ -59,8 +62,8 @@ function readError(body: string): { detail: string; error: Record<string, unknow
   }
   const obj = isRecord(json) ? json : {}
   if (typeof obj.error === 'string') return { detail: obj.error.trim(), error: {} }
-  if (isRecord(obj.error)) return { detail: (typeof obj.error.message === 'string' ? obj.error.message : body).trim(), error: obj.error }
-  const detail = typeof obj.message === 'string' ? obj.message : typeof obj.detail === 'string' ? obj.detail : body
+  if (isRecord(obj.error)) return { detail: typeof obj.error.message === 'string' ? obj.error.message.trim() : '', error: obj.error }
+  const detail = typeof obj.message === 'string' ? obj.message : typeof obj.detail === 'string' ? obj.detail : ''
   return { detail: detail.trim(), error: obj }
 }
 

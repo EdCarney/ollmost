@@ -176,6 +176,33 @@ describe('friendlyOpenAIError', () => {
     )
   })
 
+  it('counts JSON with no text message as none, and shows text that isn’t JSON as it came', () => {
+    const answered = 'GPU box at 192.168.1.20:8000 answered HTTP 502.'
+    for (const body of [
+      '{"error":{"code":502}}',
+      '{"error":{"message":{"text":"x"}}}',
+      '{"error":{"message":null,"type":"server_error"}}',
+      '{"message":502}',
+      '{"detail":{"reason":"upstream"}}',
+      '{"detail":["x"]}',
+      '{"error":null}',
+      '{"error":502}',
+      '{"other":"runner crashed"}',
+      '{}',
+      '[]',
+      'null'
+    ])
+      expect(friendlyOpenAIError(gpu, 502, body).error.message).toBe(answered)
+    // Text that isn't JSON has only itself to say.
+    expect(friendlyOpenAIError(gpu, 502, '  upstream timed out\n').error.message).toBe('GPU box: upstream timed out')
+    // An error object that says nothing in words can still teach the model's context, as llama.cpp's does.
+    const exceeded = { error: { code: 400, type: 'exceed_context_size_error', n_ctx: 4096 } }
+    expect(friendlyOpenAIError(gpu, 400, JSON.stringify(exceeded), 'qwen3').detected).toEqual({
+      contextLength: 4096,
+      reason: 'GPU box reported a 4K context'
+    })
+  })
+
   it('is an OpenAIError carrying the status', () => {
     const { error } = friendlyOpenAIError(lm, 418, 'teapot')
     expect(error).toBeInstanceOf(OpenAIError)
