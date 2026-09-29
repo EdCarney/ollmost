@@ -28,7 +28,7 @@ describe('a reply’s cost label', () => {
     expect(billingLabel('untracked', 0)).toBe('cost not tracked')
   })
 
-  it('reads a reply saved before billing was recorded the way the database backfill does: $0 was local', () => {
+  it('reads a reply saved before billing by its cost alone: $0 as local, anything else priced', () => {
     expect(legacyBilling(0)).toBe('local')
     expect(legacyBilling(0.2)).toBe('priced')
     expect(legacyBilling(null)).toBe('priced')
