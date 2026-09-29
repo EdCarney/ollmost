@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import type { DeepPartial } from '@shared/ipc'
-import { mergeLateModels, nextDraftModel } from '@shared/modelList'
+import { keepPendingModels, mergeLateModels, nextDraftModel } from '@shared/modelList'
 import type { SettingsTabId } from '@shared/palette'
 import { defaultThinkSetting, resolveThinkProfile } from '@shared/thinking'
 import type {
@@ -155,7 +155,7 @@ export const useApp = create<AppState>((set, get) => ({
       const { models, errors } = await api.models.list(refresh)
       // A newer listing has started: this reply is the older one, and would put back what it has since replaced.
       if (call !== listCall) return
-      set({ models, modelErrors: errors })
+      set({ models: keepPendingModels(get().models, { models, errors }), modelErrors: errors })
       ensureDraftModel(get())
     } catch (err) {
       if (call === listCall) set({ modelErrors: [{ endpointId: '', message: (err as Error).message }] })

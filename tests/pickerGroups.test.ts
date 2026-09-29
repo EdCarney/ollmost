@@ -121,6 +121,15 @@ describe('an endpoint that is still answering', () => {
   it('leaves every other endpoint’s models listed', () => {
     expect(pending({}).flatMap((g) => g.items.map((m) => m.name))).toEqual(models.map((m) => m.name))
   })
+
+  it('keeps listing the models it had before (a Refresh), in its usual group', () => {
+    const kept = model(cpp, 'qwen3-8b-q4')
+    const groups = groupModels([...models, kept], [stillWaiting], { query: '', filter: 'all', currentKey: null, endpoints })
+    const group = groups.find((g) => g.endpointId === 'llama-cpp')
+    expect(group?.items).toEqual([kept])
+    expect(group).not.toHaveProperty('error')
+    expect(group).not.toHaveProperty('pending')
+  })
 })
 
 describe('the endpoint chips', () => {

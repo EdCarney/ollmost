@@ -50,7 +50,9 @@ export function groupModels(
   for (const e of ordered) {
     const items = models.filter((m) => m.endpoint.id === e.id && matches(m))
     const failure = errors.find((x) => x.endpointId === e.id)
-    if (failure) {
+    // One still answering that listed before keeps its models (the chip says it's waiting) until it answers.
+    const kept = failure?.pending && models.some((m) => m.endpoint.id === e.id)
+    if (failure && !kept) {
       // Pending or failed, it listed nothing: shown only when asked about, but a pending one as waiting.
       if (opts.filter === e.id || e.id === current) {
         const base = { id: e.id, endpointId: e.id, label: e.name, where: whereOf(e.baseUrl), items: [] }

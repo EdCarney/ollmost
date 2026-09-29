@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { mergeLateModels, nextDraftModel } from '../src/shared/modelList'
+import { keepPendingModels, mergeLateModels, nextDraftModel } from '../src/shared/modelList'
 import type { Endpoint, ModelInfo, ModelListResult } from '../src/shared/types'
 
 const model = (endpointId: string, name: string) => ({ key: `${endpointId}/${name}`, name, endpoint: { id: endpointId } }) as ModelInfo
@@ -9,6 +9,19 @@ const state: ModelListResult = {
   models: [model('fast', 'a'), model('fast', 'b')],
   errors: [waiting, { endpointId: 'down', message: "Can't reach Down box at 10.0.0.8:1234." }]
 }
+
+describe('a new list while an endpoint is still answering', () => {
+  it('keeps what that endpoint listed last time, and only that endpoint’s', () => {
+    const previous = [model('fast', 'a'), model('slow', 'c'), model('down', 'd'), model('gone', 'e')]
+    const next: ModelListResult = { models: [model('fast', 'a2')], errors: state.errors }
+    expect(keepPendingModels(previous, next).map((m) => m.key)).toEqual(['fast/a2', 'slow/c'])
+  })
+
+  it('is the new list as it came when nothing is pending', () => {
+    const next: ModelListResult = { models: [model('fast', 'a2')], errors: [state.errors[1]] }
+    expect(keepPendingModels([model('slow', 'c')], next)).toEqual(next.models)
+  })
+})
 
 describe('a late answer from an endpoint', () => {
   it('puts its models in and clears its pending entry, leaving the others as they were', () => {

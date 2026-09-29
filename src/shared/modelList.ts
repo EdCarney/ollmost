@@ -1,6 +1,6 @@
 // Folding an endpoint's late answer into the model list the renderer already has, and what a new chat starts with.
 import { modelAvailability } from './availability'
-import type { Endpoint, ModelListResult, ModelListUpdate } from './types'
+import type { Endpoint, ModelInfo, ModelListResult, ModelListUpdate } from './types'
 
 /**
  * The list once an endpoint that was still pending has answered: its models replace any it had, and its pending entry
@@ -11,6 +11,15 @@ export function mergeLateModels(state: ModelListResult, update: ModelListUpdate)
   const models = state.models.filter((m) => m.endpoint.id !== update.endpointId)
   if ('error' in update) return { models, errors: [...errors, { endpointId: update.endpointId, message: update.error }] }
   return { models: [...models, ...update.models], errors }
+}
+
+/**
+ * A new list's models, plus what an endpoint that's still answering listed last time: a Refresh keeps showing its
+ * models until it answers, rather than dropping them for as long as it takes.
+ */
+export function keepPendingModels(previous: readonly ModelInfo[], next: ModelListResult): ModelInfo[] {
+  const pending = new Set(next.errors.filter((e) => e.pending).map((e) => e.endpointId))
+  return [...next.models, ...previous.filter((m) => pending.has(m.endpoint.id))]
 }
 
 /**
