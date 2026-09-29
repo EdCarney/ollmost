@@ -130,10 +130,10 @@ export function ProjectExplorer({ project }: { project: Project }) {
     setNaming(null)
   }
 
-  // The name box opens once its menu has closed, not as New folder… is chosen: the menu is still mounted for a moment after
-  // that, and its focus trap pulls focus back from a box that mounts inside that moment, which blurs it and cancels the
-  // folder. Radix also hands focus back to the "…" button as it closes; keeping that back only for New folder… leaves it
-  // there for any other way out of the menu.
+  // The name box opens once its menu has closed, not as New folder… is chosen: Radix runs onSelect while the menu is still
+  // open, and its focus trap keeps the box's autoFocus from landing. Radix then hands focus back to the "…" button (which
+  // would blur, and so cancel, a box that had focus); keeping that back only for New folder… leaves it for any other way
+  // out of the menu.
   const nameAfterMenu = (e: Event) => {
     const parent = namingFrom.current
     if (parent === null) return
