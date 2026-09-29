@@ -261,6 +261,8 @@ describe('where a trace’s request went', () => {
       endpointName: null
     })
     expect(storedTraceTarget({ endpoint: 'http://10.0.0.5:8000/api/v1/chat/completions' }).dialect).toBe('openai')
+    // The account key goes only over the Ollama wire, so even at ollama.com such a trace carried no key it can tell.
+    expect(storedTraceTarget({ endpoint: 'https://ollama.com/v1/chat/completions' })).toMatchObject({ dialect: 'openai', auth: null })
     expect(storedTraceTarget({ endpoint: 'http://127.0.0.1:11434/api/chat' }).dialect).toBe('ollama')
     expect(storedTraceTarget({}).dialect).toBe('ollama')
   })

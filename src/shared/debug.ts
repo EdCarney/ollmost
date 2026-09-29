@@ -82,11 +82,12 @@ export function storedTraceTarget(data: {
   endpointId?: string | null
   endpointName?: string | null
 }): Pick<TraceDetail, 'dialect' | 'auth' | 'endpointId' | 'endpointName'> {
+  const openAIBeforeDialect = data.dialect === undefined && !!data.endpoint?.endsWith('/chat/completions')
   return {
-    dialect: data.dialect ?? (data.endpoint?.endsWith('/chat/completions') ? 'openai' : 'ollama'),
-    // Before endpoints, only a request to ollama.com carried a key: the account's. Whether one of PR 3's OpenAI requests
-    // carried its endpoint's key wasn't recorded, and reads as none.
-    auth: data.auth !== undefined ? data.auth : carriesAccountKey(data.endpoint ?? '') ? 'ollama.com' : null,
+    dialect: data.dialect ?? (openAIBeforeDialect ? 'openai' : 'ollama'),
+    // Before endpoints, only a request to ollama.com carried a key: the account's, over the Ollama wire. Whether one of
+    // PR 3's OpenAI requests carried its endpoint's key wasn't recorded, and reads as none, whatever its address.
+    auth: data.auth !== undefined ? data.auth : !openAIBeforeDialect && carriesAccountKey(data.endpoint ?? '') ? 'ollama.com' : null,
     endpointId: data.endpointId ?? null,
     endpointName: data.endpointName ?? null
   }
