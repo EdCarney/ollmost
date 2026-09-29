@@ -2067,7 +2067,8 @@ const evilSvg = (port) =>
 }
 
 // 15. Model endpoints: an OpenAI-compatible server added in Settings (Check, then Add), picked with its chip, a tool
-// round on it, the "local" label, and the same chat switched to a model on the Ollama endpoint.
+// round on it, the "local" label, the same chat switched to a model on the Ollama endpoint, and a slow endpoint that
+// doesn't hold up the model list.
 {
   const openaiRequests = []
   const openai = await fakeServer({
@@ -2092,6 +2093,19 @@ const evilSvg = (port) =>
     requests: ollamaRequests,
     reply: () => ({ content: 'Ollama answered: E2E-OLLAMA-OK' })
   })
+  // A stand-in whose model list is slow: /v1/models answers after SLOW_MS once `slowList` is set. Adding it checks that
+  // address too, so that goes ahead of the delay.
+  const SLOW_MS = 8000
+  let slowList = false
+  const slow = await fakeServer({
+    dialect: 'openai',
+    models: ['mock-slow-model'],
+    route: async (req) => {
+      if (slowList && req.url === '/v1/models') await new Promise((resolve) => setTimeout(resolve, SLOW_MS))
+      return false
+    }
+  })
+  let slowId = null
   const data = mkdtempSync(join(tmpdir(), 'ollmost-e2e-endpoints-'))
   mkdirSync(join(data, 'skills', 'endpoint-helper'), { recursive: true })
   writeFileSync(
@@ -2209,13 +2223,54 @@ const evilSvg = (port) =>
       'with no Ollama endpoint turned on and no key, there is no quota chip',
       (await expectedQuota(win)) === 'hidden' && (await win.locator('button[aria-label^="Ollama usage"]').count()) === 0
     )
+
+    // A slow endpoint doesn't hold up the list: a second endpoint whose model list takes SLOW_MS. The first endpoint's
+    // models show before it could have answered, its chip waits (no warning), and its model fills in when it answers.
+    slowId = await win.evaluate(async (url) => {
+      const probe = await window.ollmost.endpoints.probe({ baseUrl: url })
+      const added = await window.ollmost.endpoints.add({
+        name: 'Slow Server',
+        baseUrl: probe.baseUrl,
+        kind: probe.kind,
+        flavor: probe.flavor
+      })
+      return added.id
+    }, slow.url)
+    slowList = true
+    const listedAt = Date.now()
+    await win.reload()
+    await win.waitForSelector('textarea')
+    await win.click('button[aria-label="Choose model"]')
+    const slowPicker = win.locator('[data-radix-popper-content-wrapper]')
+    // With the list held for the slow endpoint this times out: its models would only show after SLOW_MS.
+    await slowPicker
+      .locator('button')
+      .filter({ hasText: 'mock-openai-tools' })
+      .first()
+      .waitFor({ timeout: SLOW_MS - 2000 })
+    const shownAfter = Date.now() - listedAt
+    const waitingChip = slowPicker.getByRole('button', { name: 'Slow Server', exact: true })
+    const waitingTitle = await waitingChip.getAttribute('title')
+    const warned = await waitingChip.evaluate((el) => el.className.includes('border-dashed'))
+    await win.screenshot({ path: join(SHOTS, 'endpoint-slow-waiting.png') })
+    // Then it answers, and its model fills in on its own.
+    await waitingChip.click()
+    await slowPicker.locator('button').filter({ hasText: 'mock-slow-model' }).first().waitFor({ timeout: SLOW_MS })
+    check(
+      "a slow endpoint doesn't hold up the list: the other endpoint's models show while its chip waits, and its model fills in when it answers",
+      /^Still waiting for Slow Server at /.test(waitingTitle ?? '') && !warned && (await waitingChip.getAttribute('title')) === null,
+      `models after ${shownAfter} ms, the slow one's after ${Date.now() - listedAt} ms; ${waitingTitle}${warned ? ' (marked offline)' : ''}`
+    )
   } catch (err) {
     check('model endpoints run completed without errors', false, err.message.split('\n')[0])
     await win.screenshot({ path: join(SHOTS, 'endpoints-failure.png') }).catch(() => {})
   } finally {
+    // The slow endpoint goes before the app closes, whether or not the run got as far as using it.
+    if (slowId) await win.evaluate((id) => window.ollmost.endpoints.remove(id), slowId).catch(() => {})
     await app.close()
     openai.close()
     ollama.close()
+    slow.close()
   }
 
   // 15b. Live: a model on a real OpenAI-compatible server (LM Studio: http://localhost:1234/v1), when one is given.

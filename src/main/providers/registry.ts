@@ -1,5 +1,6 @@
+import { displayAddress } from '@shared/endpoints'
 import { keyPrefix, splitModelKey, toModelKey } from '@shared/modelKey'
-import type { Endpoint, ModelInfo, ModelListResult } from '@shared/types'
+import type { Endpoint, ModelInfo, ModelListResult, ModelListUpdate } from '@shared/types'
 import { writeModelDetected } from '../db/kv'
 import { getSettings } from '../settings'
 import { errorMessage } from '../util'
@@ -68,15 +69,80 @@ export function redetectModel(key: string): Promise<ModelInfo> {
   return modelInfo(key, true)
 }
 
-/** Every enabled endpoint's models, asked in parallel. One that fails adds to `errors`; the others still list. */
-export async function listAllModels(refresh = false): Promise<ModelListResult> {
+/** How long a list waits for one endpoint before it carries on without it (its request keeps going). */
+export const LIST_WAIT_MS = 3_000
+
+// At most one list request per provider at a time. A Retry while one hangs joins it: asking a dead host again can't
+// make it faster. Keyed by provider, so an endpoint change (a new provider) starts fresh.
+const inflight = new WeakMap<Provider, Promise<ModelInfo[]>>()
+// Requests a list has stopped waiting for, so one that several lists joined tells the listener once.
+const lateWatched = new WeakSet<Promise<ModelInfo[]>>()
+let lateListener: ((update: ModelListUpdate) => void) | null = null
+
+/** Who hears when an endpoint that a list stopped waiting for answers or fails; null stops it. main sends it to the windows. */
+export function onLateModels(cb: ((update: ModelListUpdate) => void) | null): void {
+  lateListener = cb
+}
+
+function requestList(p: Provider, refresh: boolean): Promise<ModelInfo[]> {
+  const joined = inflight.get(p)
+  if (joined) return joined
+  // Made async, so a provider that throws before it returns a promise fails only its own endpoint.
+  const request = (async () => p.listModels(refresh))()
+  inflight.set(p, request)
+  const done = () => {
+    if (inflight.get(p) === request) inflight.delete(p)
+  }
+  request.then(done, done)
+  return request
+}
+
+/** Tell the listener how a request that missed the deadline ends, unless its endpoint has changed since. */
+function tellLater(p: Provider, request: Promise<ModelInfo[]>): void {
+  if (lateWatched.has(request)) return
+  lateWatched.add(request)
+  const endpointId = p.endpoint.id
+  // `providers`, not live(): after an endpoint change the renderer lists again, so this answer is no use to it.
+  const tell = (update: ModelListUpdate) => {
+    if (providers?.get(endpointId) === p) lateListener?.(update)
+  }
+  request.then(
+    (models) => tell({ endpointId, models }),
+    (err) => tell({ endpointId, error: errorMessage(err) })
+  )
+}
+
+type Outcome = { models: ModelInfo[] } | { error: string; pending?: true }
+
+async function listOne(p: Provider, refresh: boolean, waitMs: number): Promise<Outcome> {
+  const request = requestList(p, refresh)
+  let timer: NodeJS.Timeout | undefined
+  const deadline = new Promise<'late'>((resolve) => (timer = setTimeout(() => resolve('late'), waitMs)))
+  try {
+    const answer = await Promise.race([request, deadline])
+    if (answer !== 'late') return { models: answer }
+    tellLater(p, request)
+    return { error: `Still waiting for ${p.endpoint.name} at ${displayAddress(p.endpoint.baseUrl)}…`, pending: true }
+  } catch (err) {
+    return { error: errorMessage(err) }
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
+/**
+ * Every enabled endpoint's models, asked in parallel. One that fails adds to `errors`; the others still list. One that
+ * hasn't answered within `waitMs` adds a `pending` error instead of holding the list up: its request goes on, and the
+ * listener from onLateModels hears how it ends.
+ */
+export async function listAllModels(refresh = false, waitMs = LIST_WAIT_MS): Promise<ModelListResult> {
   const list = [...live().values()]
-  // Each call made async, so a provider that throws before it returns a promise still fails only its own endpoint.
-  const settled = await Promise.allSettled(list.map(async (p) => p.listModels(refresh)))
+  const outcomes = await Promise.all(list.map((p) => listOne(p, refresh, waitMs)))
   const result: ModelListResult = { models: [], errors: [] }
-  settled.forEach((r, i) => {
-    if (r.status === 'fulfilled') result.models.push(...r.value)
-    else result.errors.push({ endpointId: list[i].endpoint.id, message: errorMessage(r.reason) })
+  outcomes.forEach((o, i) => {
+    const endpointId = list[i].endpoint.id
+    if ('models' in o) result.models.push(...o.models)
+    else result.errors.push({ endpointId, message: o.error, ...(o.pending && { pending: true as const }) })
   })
   return result
 }

@@ -37,6 +37,21 @@ describe('Home with no models', () => {
     expect(noModelsNotice([ep('a'), ep('b')], [{ endpointId: '', message: 'Something broke.' }])).toEqual(all)
   })
 
+  it('says it is waiting, not that it failed, while endpoints are still answering', () => {
+    const waiting = (id: string) => ({ endpointId: id, message: `Still waiting for ${id} at ${id}.local:1234…`, pending: true as const })
+    expect(noModelsNotice([ep('a'), ep('b')], [waiting('a'), waiting('b')])).toEqual({
+      heading: 'Waiting for a and b…',
+      note: null,
+      waiting: true
+    })
+    expect(noModelsNotice([ep('a'), ep('off', { enabled: false })], [waiting('a')])).toMatchObject({ heading: 'Waiting for a…' })
+    expect(noModelsNotice([ep('a'), ep('b'), ep('c')], [waiting('a'), waiting('b'), waiting('c')]).heading).toBe('Waiting for a, b and c…')
+    // Another endpoint that failed doesn't make the slow one a failure too: it may still answer.
+    expect(noModelsNotice([ep('a'), ep('b')], [failed('a'), waiting('b')])).toMatchObject({ heading: 'Waiting for b…', waiting: true })
+    // A pending entry for an endpoint that's gone or switched off names no one to wait for.
+    expect(noModelsNotice([ep('a')], [waiting('gone')])).not.toHaveProperty('waiting')
+  })
+
   it('says the others have no models when only some failed', () => {
     expect(noModelsNotice([ep('a'), ep('b')], [failed('a')])).toEqual({
       heading: "Ollmost can't find any models.",

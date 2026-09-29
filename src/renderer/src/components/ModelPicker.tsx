@@ -1,4 +1,17 @@
-import { Brain, Check, ChevronDown, Cloud, Eye, HardDrive, Network, RefreshCw, Search, TriangleAlert, Wrench } from 'lucide-react'
+import {
+  Brain,
+  Check,
+  ChevronDown,
+  Cloud,
+  Eye,
+  HardDrive,
+  LoaderCircle,
+  Network,
+  RefreshCw,
+  Search,
+  TriangleAlert,
+  Wrench
+} from 'lucide-react'
 import { useMemo, useState } from 'react'
 import { displayAddress } from '@shared/endpoints'
 import { labelForKey, modelLabel, shortModelName } from '@shared/modelLabel'
@@ -60,8 +73,9 @@ function ModelRow({ model, selected, onPick }: { model: ModelInfo; selected: boo
 }
 
 /**
- * The composer's model menu: a search box, endpoint chips (All, then each endpoint; an offline one dashed with ⚠),
- * and a section per endpoint with the current model's first. `value` and `onChange` are model keys.
+ * The composer's model menu: a search box, endpoint chips (All, then each endpoint; an offline one dashed with ⚠, one
+ * still answering with a spinner), and a section per endpoint with the current model's first. `value` and `onChange`
+ * are model keys.
  */
 export function ModelPicker({
   value,
@@ -90,8 +104,8 @@ export function ModelPicker({
     [models, modelErrors, query, active, value, endpoints]
   )
   const current = models.find((m) => m.key === value)
-  // One endpoint that answers needs no filter. Several, or one that's offline, get the chips.
-  const showChips = chips.length > 2 || chips.some((c) => c.offline)
+  // One endpoint that answers needs no filter. Several, or one that's offline or still answering, get the chips.
+  const showChips = chips.length > 2 || chips.some((c) => c.offline || c.pending)
   const pick = (key: string) => {
     onChange(key)
     setOpen(false)
@@ -128,7 +142,7 @@ export function ModelPicker({
               <button
                 key={c.id}
                 aria-pressed={active === c.id}
-                title={c.error}
+                title={c.error ?? c.note}
                 onClick={() => setFilter(c.id)}
                 className={cn(
                   'flex items-center gap-1 rounded-full border px-2.5 py-0.5 text-xs',
@@ -141,6 +155,8 @@ export function ModelPicker({
               >
                 {c.label}
                 {c.offline && <TriangleAlert className="size-3" />}
+                {/* Not Spinner, which is always grey: the chip's own colour, so it reads when the chip is pressed. */}
+                {c.pending && <LoaderCircle className="size-3 animate-spin" />}
               </button>
             ))}
           </div>
@@ -157,6 +173,12 @@ export function ModelPicker({
                   </button>
                 </div>
               )}
+              {g.pending && (
+                <div className="mx-2 mb-1.5 flex items-center gap-2 rounded-md bg-hover px-2 py-1.5 text-xs text-muted">
+                  <Spinner className="size-3 shrink-0" />
+                  <span>{g.note}</span>
+                </div>
+              )}
               {g.items.map((m) => (
                 <ModelRow key={m.key} model={m} selected={m.key === value} onPick={() => pick(m.key)} />
               ))}
@@ -164,7 +186,13 @@ export function ModelPicker({
           ))}
           {!groups.length && (
             <div className="px-3 py-4 text-sm text-subtle">
-              {models.length ? 'No models match.' : modelErrors.length ? 'No endpoint could list its models.' : 'No models yet.'}
+              {models.length
+                ? 'No models match.'
+                : modelErrors.length
+                  ? modelErrors.every((e) => e.pending)
+                    ? 'Waiting for your endpoints to list their models…'
+                    : 'No endpoint could list its models.'
+                  : 'No models yet.'}
             </div>
           )}
         </div>

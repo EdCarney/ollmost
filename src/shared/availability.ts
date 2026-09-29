@@ -9,7 +9,7 @@ export function modelAvailability(
   models: readonly ModelInfo[],
   endpoints: readonly Endpoint[],
   errors: ModelListResult['errors']
-): 'ok' | 'none' | 'endpoint-removed' | 'endpoint-disabled' | 'endpoint-offline' | 'model-missing' {
+): 'ok' | 'none' | 'endpoint-removed' | 'endpoint-disabled' | 'endpoint-waiting' | 'endpoint-offline' | 'model-missing' {
   if (!key) return 'none'
   const ids = endpoints.map((e) => e.id)
   // A prefix shaped like an endpoint id that names none: that endpoint was removed (see registry.resolve).
@@ -21,7 +21,9 @@ export function modelAvailability(
   if (!endpoint.enabled) return 'endpoint-disabled'
   // By endpoint and name, so a bare name from before keys still finds its Ollama model.
   if (models.some((m) => m.endpoint.id === endpointId && m.name === model)) return 'ok'
-  if (errors.some((e) => e.endpointId === endpointId)) return 'endpoint-offline'
+  // Still answering isn't offline: its list may yet have the model.
+  const error = errors.find((e) => e.endpointId === endpointId)
+  if (error) return error.pending ? 'endpoint-waiting' : 'endpoint-offline'
   return 'model-missing'
 }
 
@@ -48,6 +50,8 @@ export function unavailableText(reason: ModelAvailability, key: string, endpoint
     }
     case 'endpoint-disabled':
       return `${label} is unavailable: ${endpoint} is turned off in Settings → Models. Turn it on, or pick another model.`
+    case 'endpoint-waiting':
+      return `Waiting for ${endpoint} to list its models…`
     case 'endpoint-offline':
       return `${label} is unavailable: Ollmost can't reach ${endpoint}.`
     case 'model-missing':

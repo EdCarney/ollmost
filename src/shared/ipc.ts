@@ -23,6 +23,7 @@ import type {
   McpStatus,
   ModelInfo,
   ModelListResult,
+  ModelListUpdate,
   ModelOverrides,
   PriceTable,
   Project,
@@ -101,6 +102,10 @@ export interface OllmostApi {
     setApiKey(key: string | null): Promise<Settings>
   }
   models: {
+    /**
+     * Every enabled endpoint's models. Each is waited for a few seconds: one that hasn't answered by then comes back in
+     * `errors` with `pending`, and its answer arrives through events.onModels.
+     */
     list(refresh?: boolean): Promise<ModelListResult>
     info(key: string): Promise<ModelInfo>
     setOverrides(key: string, overrides: ModelOverrides): Promise<ModelInfo>
@@ -301,6 +306,8 @@ export interface OllmostApi {
     onSkillsChanged(cb: () => void): () => void
     onMenu(cb: (action: string) => void): () => void
     onMcp(cb: (statuses: McpStatus[]) => void): () => void
+    /** An endpoint that was still pending in models.list has answered, or failed. */
+    onModels(cb: (update: ModelListUpdate) => void): () => void
   }
   files: {
     /** Resolve a dropped File to its on-disk path (empty for pasted data). */
@@ -335,7 +342,8 @@ export const EVENT_CHANNELS = {
   menu: 'event:menu',
   trace: 'event:trace',
   debugFocus: 'event:debug-focus',
-  mcp: 'event:mcp'
+  mcp: 'event:mcp',
+  models: 'event:models'
 } as const
 
 export type TraceEvent = { type: 'upsert'; trace: TraceSummary } | { type: 'cleared'; conversationId: ID | null }

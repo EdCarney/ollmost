@@ -574,7 +574,11 @@ export function Composer({
 
           <div className="flex-1" />
 
-          <ModelPicker value={settings.model} onChange={settings.setModel} unavailable={unavailable} />
+          <ModelPicker
+            value={settings.model}
+            onChange={settings.setModel}
+            unavailable={unavailable && availability !== 'endpoint-waiting'}
+          />
 
           {streaming ? (
             <Tooltip content="Stop">
@@ -609,7 +613,11 @@ export function Composer({
 
       {unavailable && settings.model && (
         <p className="mt-2 flex items-center gap-1.5 px-2 text-xs text-muted">
-          <TriangleAlert className="size-3.5 shrink-0 text-danger" />
+          {availability === 'endpoint-waiting' ? (
+            <Spinner className="size-3.5 shrink-0" />
+          ) : (
+            <TriangleAlert className="size-3.5 shrink-0 text-danger" />
+          )}
           <span>{unavailableText(availability, settings.model, endpoints)}</span>
           {availability === 'endpoint-offline' && (
             <button className="text-accent hover:underline" onClick={() => void loadModels(true)}>

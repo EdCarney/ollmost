@@ -19,7 +19,8 @@ api.events = {
   onDebugFocus: (cb) => subscribe(EVENT_CHANNELS.debugFocus, cb),
   onSkillsChanged: (cb) => subscribe(EVENT_CHANNELS.skills, cb),
   onMenu: (cb) => subscribe(EVENT_CHANNELS.menu, cb),
-  onMcp: (cb) => subscribe(EVENT_CHANNELS.mcp, cb)
+  onMcp: (cb) => subscribe(EVENT_CHANNELS.mcp, cb),
+  onModels: (cb) => subscribe(EVENT_CHANNELS.models, cb)
 } satisfies OllmostApi['events']
 
 api.files = { pathFor: (file: File) => webUtils.getPathForFile(file) } satisfies OllmostApi['files']

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { DeepPartial } from '@shared/ipc'
+import { mergeLateModels } from '@shared/modelList'
 import type { SettingsTabId } from '@shared/palette'
 import { defaultThinkSetting, resolveThinkProfile } from '@shared/thinking'
 import type {
@@ -9,6 +10,7 @@ import type {
   McpStatus,
   ModelInfo,
   ModelListResult,
+  ModelListUpdate,
   Project,
   Settings,
   Skill,
@@ -60,6 +62,8 @@ export interface AppState {
   /** The first listing has finished: before it, a chat's model can't be told from a missing one. */
   modelsReady: boolean
   loadModels: (refresh?: boolean) => Promise<void>
+  /** An endpoint the list stopped waiting for has answered, or failed: fold it in without asking the others again. */
+  mergeModels: (update: ModelListUpdate) => void
   /** An endpoint was added, changed or removed: the endpoint list (in settings) and the models again. */
   endpointsChanged: () => Promise<void>
 
@@ -107,6 +111,15 @@ export interface AppState {
 
 let toastId = 0
 
+/** Picks a model for new chats when none is set, or the one set isn't listed: the default, else an installed one. */
+function ensureDraftModel(s: AppState): void {
+  const { draftModel, settings, models } = s
+  if (draftModel && models.some((m) => m.key === draftModel)) return
+  const preferred = settings?.defaultModel && models.find((m) => m.key === settings.defaultModel)
+  const pick = preferred || models.find((m) => m.installed) || models[0]
+  if (pick) s.setDraftModel(pick.key)
+}
+
 export const useApp = create<AppState>((set, get) => ({
   route: { name: 'home' },
   navigate: (route) => set({ route }),
@@ -129,17 +142,18 @@ export const useApp = create<AppState>((set, get) => ({
     try {
       const { models, errors } = await api.models.list(refresh)
       set({ models, modelErrors: errors })
-      const { draftModel, settings } = get()
-      if (!draftModel || !models.some((m) => m.key === draftModel)) {
-        const preferred = settings?.defaultModel && models.find((m) => m.key === settings.defaultModel)
-        const pick = preferred || models.find((m) => m.installed) || models[0]
-        if (pick) get().setDraftModel(pick.key)
-      }
+      ensureDraftModel(get())
     } catch (err) {
       set({ modelErrors: [{ endpointId: '', message: (err as Error).message }] })
     } finally {
       set({ modelsLoading: false, modelsReady: true })
     }
+  },
+  mergeModels: (update) => {
+    const { models, errors } = mergeLateModels({ models: get().models, errors: get().modelErrors }, update)
+    set({ models, modelErrors: errors })
+    // A list that came back empty, waiting on this endpoint, had nothing to pick from.
+    ensureDraftModel(get())
   },
   endpointsChanged: async () => {
     await get().loadSettings()
