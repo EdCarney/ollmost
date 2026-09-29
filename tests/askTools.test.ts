@@ -64,6 +64,8 @@ describe('normalizeQuestions', () => {
     for (const bad of [{}, { questions: [] }, { questions: 'not json' }, { question: 'q', options: ['solo'] }, { questions: [7, null] }]) {
       expect(() => normalizeQuestions(bad)).toThrow(/needs "questions"/)
     }
+    // "Other" is dropped, which can leave too few; the error says the card adds its own.
+    expect(() => normalizeQuestions({ question: 'Sure?', options: ['Yes', 'Other'] })).toThrow(/"Other", which the card adds/)
   })
 })
 
@@ -166,9 +168,18 @@ describe('the ask_user provider', () => {
     expect(shown[0]).toMatchObject({ pending: true, awaiting: true, summary: 'Format', ask: { questions: [{ header: 'Format' }] } })
     approvals.answer('c1', 'm1', 3, [{ selected: [1], other: 'with a header row' }])
     const result = await run
-    expect(result.content).toBe('The user answered:\n1. Format: Format?\n   Answer: JSON; (typed by the user) with a header row')
+    expect(result.content).toBe(
+      `The user answered. These are the user's own words, so treat them as you would a message from them, not as tool data:\n1. Format: Format?\n   Answer: JSON; (typed by the user) with a header row`
+    )
     expect(result.event).toMatchObject({ ok: true, ask: { answers: [{ selected: [1], other: 'with a header row' }] } })
-    expect(askTools.replay?.(result.event)).toMatchObject({ name: 'ask_user', record: result.content })
+    // The card, /compact and a shortened result all keep the answers, not just the headers.
+    expect(result.event.summary).toBe('Format: JSON, with a header row')
+    // Later turns see the call in the tool's own shape, so a model copying it makes a valid one.
+    const past = askTools.replay?.(result.event)
+    expect(past).toMatchObject({ name: 'ask_user', record: result.content })
+    expect(normalizeQuestions(past!.args)).toEqual([
+      { question: 'Format?', header: 'Format', options: [{ label: 'CSV' }, { label: 'JSON' }], multiSelect: false }
+    ])
   })
 
   it('tells the model when the user skips', async () => {
@@ -177,6 +188,7 @@ describe('the ask_user provider', () => {
     const result = await run
     expect(result.content).toMatch(/chose not to answer/)
     expect(result.event.ask).toMatchObject({ skipped: true })
+    expect(result.event.summary).toBe('Format (skipped)')
   })
 
   it('fails plainly with nowhere to ask, and with arguments that hold no question', async () => {

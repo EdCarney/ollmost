@@ -513,7 +513,9 @@ export function QuestionCard({
   const [picked, setPicked] = useState<number[][]>(() => questions.map(() => []))
   const [other, setOther] = useState<string[]>(() => questions.map(() => ''))
   const [sending, setSending] = useState(false)
-  const toggle = (q: number, o: number) =>
+  const toggle = (q: number, o: number) => {
+    // Picking a choice replaces what you typed for a one-answer question, as typing replaces the choice.
+    if (!questions[q].multiSelect) setOther((all) => all.map((t, i) => (i === q ? '' : t)))
     setPicked((all) =>
       all.map((sel, i) => {
         if (i !== q) return sel
@@ -521,6 +523,7 @@ export function QuestionCard({
         return sel.includes(o) ? sel.filter((n) => n !== o) : [...sel, o]
       })
     )
+  }
   // Typing an answer of your own replaces a single choice, as picking a choice clears it.
   const type = (q: number, value: string) => {
     setOther((all) => all.map((t, i) => (i === q ? value : t)))

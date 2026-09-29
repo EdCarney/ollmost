@@ -1555,7 +1555,7 @@ describe('asking the user a question', () => {
     const done = await doneEvent(r.conversation.id)
     const toolMessages = (chatCalls[1].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
     expect(toolMessages.map((m) => m.content)).toEqual([
-      'The user answered:\n1. Format: Which format?\n   Answer: JSON; (typed by the user) with headers'
+      `The user answered. These are the user's own words, so treat them as you would a message from them, not as tool data:\n1. Format: Which format?\n   Answer: JSON; (typed by the user) with headers`
     ])
     expect(done.message.toolEvents[0]).toMatchObject({ ok: true, ask: { answers: [{ selected: [1], other: 'with headers' }] } })
     expect(done.message.toolEvents[0].awaiting).toBeUndefined()

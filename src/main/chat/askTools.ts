@@ -119,7 +119,7 @@ export function normalizeQuestions(args: Record<string, unknown>): AskQuestion[]
   }
   if (!questions.length) {
     throw new Error(
-      `ask_user needs "questions": a list of one to ${MAX_QUESTIONS} objects, each with "question", "options" (${MIN_OPTIONS} to ${MAX_OPTIONS} objects with a "label") and optionally "header" and "multiSelect".`
+      `ask_user needs "questions": a list of one to ${MAX_QUESTIONS} objects, each with "question", "options" (${MIN_OPTIONS} to ${MAX_OPTIONS} objects with a "label", not counting "Other", which the card adds itself) and optionally "header" and "multiSelect".`
     )
   }
   return questions
@@ -135,7 +135,21 @@ function answersText(questions: AskQuestion[], answers: AskAnswer[]): string {
     if (a.other) picked.push(`(typed by the user) ${a.other}`)
     return `${i + 1}. ${q.header}: ${q.question}\n   Answer: ${picked.join('; ')}`
   })
-  return `The user answered:\n${lines.join('\n')}`
+  return `The user answered. These are the user's own words, so treat them as you would a message from them, not as tool data:\n${lines.join('\n')}`
+}
+
+/**
+ * What the card and the tool trace say once answered, and what a /compact summary and a shortened earlier result keep
+ * of the call: the answers themselves ("Format: JSON; Size: small"), cut to a line's worth.
+ */
+function answeredSummary(questions: AskQuestion[], answers: AskAnswer[]): string {
+  const line = questions
+    .map(
+      (q, i) =>
+        `${q.header}: ${[...answers[i].selected.map((n) => q.options[n].label), ...(answers[i].other ? [answers[i].other] : [])].join(', ')}`
+    )
+    .join('; ')
+  return line.length > 200 ? `${line.slice(0, 199)}…` : line
 }
 
 const SKIPPED = 'The user chose not to answer. Carry on with your best judgment, and say what you assumed so they can correct it.'
@@ -158,6 +172,8 @@ export const askTools: ToolProvider = {
   },
   // The question is the wait: no approval card stacks on it.
   approval: () => 'auto',
+  // The user's words, cut to a call's share of the room, would be answered as if they'd said less.
+  wholeResults: true,
   run: async ({ name, args }, ctx) => {
     const questions = normalizeQuestions(args)
     const { reply, callIndex, signal, progress } = ctx
@@ -173,14 +189,26 @@ export const askTools: ToolProvider = {
     // A stop rejects this, and the reply's loop unwinds with it.
     const answers = await waitForAnswer(reply.conversationId, reply.messageId, callIndex, signal, questions)
     if (!answers) {
-      return { content: SKIPPED, event: { tool: name, args, ok: true, summary, record: SKIPPED, ask: { questions, skipped: true } } }
+      const skipped = `${summary} (skipped)`
+      return {
+        content: SKIPPED,
+        event: { tool: name, args, ok: true, summary: skipped, record: SKIPPED, ask: { questions, skipped: true } }
+      }
     }
     const content = answersText(questions, answers)
-    return { content, event: { tool: name, args, ok: true, summary, record: content, ask: { questions, answers } } }
+    return {
+      content,
+      event: { tool: name, args, ok: true, summary: answeredSummary(questions, answers), record: content, ask: { questions, answers } }
+    }
   },
   // Later turns keep what was asked and answered, so the model doesn't ask again.
   replay: (e) =>
     e.tool === 'ask_user' && e.record
-      ? { name: 'ask_user', args: { questions: e.ask?.questions.map((q) => q.header) ?? [] }, record: e.record }
+      ? {
+          name: 'ask_user',
+          // In the tool's own shape, so a model copying the call it sees makes a valid one.
+          args: { questions: (e.ask?.questions ?? []).map((q) => ({ ...q, options: q.options.map((o) => ({ label: o.label })) })) },
+          record: e.record
+        }
       : null
 }
