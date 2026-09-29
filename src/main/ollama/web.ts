@@ -51,7 +51,13 @@ async function call<T>(path: string, body: Record<string, unknown>, signal?: Abo
     const message = messageOf(errorDetail(await res.text().catch(() => '')))
     throw new OllamaError(message || `ollama.com answered HTTP ${res.status}.`, res.status)
   }
-  return (await res.json()) as T
+  try {
+    return (await res.json()) as T
+  } catch (err) {
+    // A sign-in page or a changed API, not a connection problem. Anything else (a stop) goes through as it is.
+    if (err instanceof SyntaxError) throw new OllamaError("ollama.com sent a reply Ollmost couldn't read.", undefined, { cause: err })
+    throw err
+  }
 }
 
 export async function webSearch(query: string, maxResults = 5, signal?: AbortSignal): Promise<SearchResult[]> {

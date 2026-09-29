@@ -82,11 +82,13 @@ async function load(): Promise<AccountUsage> {
       return { ...base, needsKey: true, error: 'ollama.com rejected the API key. Create a new one at ollama.com/settings/keys.' }
     if (!res.ok) return { ...base, needsKey: false, error: `ollama.com answered HTTP ${res.status} for usage.` }
     json = await res.json()
-    // The endpoint is undocumented: keep the last response so its shape can be inspected in Settings.
-    writeSetting('usageRaw', { at: now, json })
   } catch (err) {
+    // A body that isn't JSON (a sign-in page, or the endpoint changed) isn't a connection problem.
+    if (err instanceof SyntaxError) return { ...base, needsKey: false, error: "ollama.com sent usage Ollmost couldn't read." }
     return { ...base, needsKey: false, error: cloudUnreachableMessage(err, USAGE_TIMEOUT_MS / 1000) }
   }
+  // The endpoint is undocumented: keep the last response so its shape can be inspected in Settings.
+  writeSetting('usageRaw', { at: now, json })
 
   const { windows, spend } = parseUsageResponse(json)
   const settings = getSettings().usage

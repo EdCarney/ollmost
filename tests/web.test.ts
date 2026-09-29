@@ -60,6 +60,26 @@ describe('web search and fetch when ollama.com can’t be reached', () => {
   })
 })
 
+describe('web search and fetch when ollama.com answers with something that isn’t JSON', () => {
+  it('says the reply couldn’t be read, and keeps the parse error as the cause', async () => {
+    for (const body of ['<html><body>Sign in to continue</body></html>', '', 'not json']) {
+      answer(200, body)
+      const err = await webSearch('llamas').catch((e: unknown) => e)
+      expect(err).toBeInstanceOf(OllamaError)
+      expect((err as Error).message).toBe("ollama.com sent a reply Ollmost couldn't read.")
+      expect((err as Error).cause).toBeInstanceOf(SyntaxError)
+    }
+    answer(200, '<html></html>')
+    expect(await message(() => webFetch('https://example.com'))).toBe("ollama.com sent a reply Ollmost couldn't read.")
+  })
+
+  it('lets a stop while the reply is being read through as it is', async () => {
+    const stop = new DOMException('This operation was aborted', 'AbortError')
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(Object.assign(new Response('{}'), { json: () => Promise.reject(stop) })))
+    await expect(webSearch('llamas')).rejects.toBe(stop)
+  })
+})
+
 describe('web search and fetch when ollama.com answers with an error', () => {
   it('names ollama.com and the status when there is no message: an empty body, blank, HTML, or an error that isn’t text', async () => {
     for (const body of [

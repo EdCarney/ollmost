@@ -266,6 +266,17 @@ describe('the account’s usage', () => {
       expect(offline).toMatchObject({ needsKey: false, error: "Can't reach https://ollama.com. Check your internet connection." })
     })
 
+    it('says the usage couldn’t be read, not that ollama.com is offline, when a 200 isn’t JSON', async () => {
+      for (const body of ['<html><body>Sign in to continue</body></html>', '', 'not json'])
+        expect(await answered(200, body)).toMatchObject({ needsKey: false, error: "ollama.com sent usage Ollmost couldn't read." })
+    })
+
+    it('still says ollama.com didn’t answer when the wait runs out while the usage is being read', async () => {
+      const timeout = new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+      const usage = await loadWith(() => Promise.resolve(Object.assign(new Response('{}'), { json: () => Promise.reject(timeout) })))
+      expect(usage).toMatchObject({ needsKey: false, error: "ollama.com didn't answer within 10 seconds." })
+    })
+
     it('names ollama.com when it answers with an error status', async () => {
       expect(await answered(502, '<html>Bad Gateway</html>')).toMatchObject({
         needsKey: false,

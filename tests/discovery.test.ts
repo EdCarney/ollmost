@@ -170,6 +170,18 @@ describe('discoverModels', () => {
     }
   })
 
+  it('says it took too long when the request times out, and keeps the timeout as the cause', async () => {
+    const timeout = new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+    try {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(timeout))
+      const err = await discoverModels(ep('vllm', { name: 'GPU box', baseUrl: 'https://gpu.lan:8000/v1' }), null).catch((e: unknown) => e)
+      expect((err as Error).message).toBe('GPU box took too long to list its models. Try again in a moment.')
+      expect((err as Error).cause).toBe(timeout)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('names the endpoint when it can’t be reached, or sends something that isn’t a list', async () => {
     await expect(discoverModels(ep('vllm', { name: 'GPU box', baseUrl: 'http://127.0.0.1:9/v1' }), null)).rejects.toThrow(
       "Can't reach GPU box at 127.0.0.1:9. Is its server started? Start it with `vllm serve`."

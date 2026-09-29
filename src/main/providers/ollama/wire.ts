@@ -1,5 +1,6 @@
-// Ollama's HTTP API: /api/chat as NDJSON, /api/tags and /api/show. Only the adapter (adapter.ts) and the model list
-// (models.ts) call it; everything else speaks the neutral types in ../types.ts.
+// Ollama's HTTP API: /api/chat as NDJSON, /api/tags and /api/show. The adapter (adapter.ts) and the model list (models.ts) call
+// it, and probe.ts reads ollama.com's catalog through it; web.ts and usage/account.ts borrow its error wording and ollama.com's
+// address. Everything else speaks the neutral types in ../types.ts.
 import { displayAddress, hostnameOf, OLLAMA_CLOUD_URL } from '@shared/endpoints'
 import type { ModelWhere } from '@shared/types'
 import { cloudUnreachableMessage, fetchFailureMessage } from '../fetchFailure'
@@ -118,7 +119,8 @@ function friendly(t: OllamaTarget, status: number, body: string, model?: string)
       status
     )
   if (status === 429) return new OllamaError('Ollama cloud usage limit reached. Try again later, or switch to a local model.', status)
-  if (status === 404 && /not found/i.test(detail))
+  // A 404 is a missing model when the server says so; a proxy's error page or a bare status says nothing of the model.
+  if (status === 404 && /not found/i.test(message))
     return new OllamaError(model ? `Model “${model}” was not found by ${t.name}.` : message || answered, status)
   // 4b69183: Ollama's "model requires more system memory" in plain English, naming the model.
   return new OllamaError(notEnoughMemory(detail, model) ?? (message || answered), status)

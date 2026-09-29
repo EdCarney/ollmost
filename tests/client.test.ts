@@ -217,6 +217,15 @@ describe('a failed request', () => {
     }
   })
 
+  it('says the server took too long when the request times out, and keeps the timeout as the cause', async () => {
+    const timeout = new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+    stubFetch(timeout)
+    const err = await chatOnce(gpu, body, { timeoutMs: 2_000 }).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(OllamaError)
+    expect((err as Error).message).toBe('GPU box took too long to respond. Try again in a moment.')
+    expect((err as Error).cause).toBe(timeout)
+  })
+
   it('keeps the cause on the error, and lets a stop through as it is', async () => {
     const cause = fetchFailed('ENOTFOUND')
     stubFetch(cause)
@@ -257,5 +266,32 @@ describe('a failed request', () => {
     expect(await message(() => listCloudCatalog())).toBe('ollama.com answered HTTP 500.')
     answer(500, 'upstream timed out')
     expect(await reach()).toBe('upstream timed out')
+  })
+
+  it('reads a 404 as a missing model only when the server says so', async () => {
+    // A new Response for each ask: a body reads once.
+    const answer = (text: string) =>
+      vi.stubGlobal(
+        'fetch',
+        vi.fn(() => Promise.resolve(new Response(text, { status: 404 })))
+      )
+    // A chat names its model; listing the models doesn't.
+    const chat = () => message(() => chatOnce(gpu, body, { timeoutMs: 2_000 }))
+    const bare = 'GPU box at gpu.lan:11434 answered HTTP 404.'
+    // What Ollama says of a model it doesn't have.
+    answer('{"error":"model \'llama3.2\' not found"}')
+    expect(await chat()).toBe('Model “llama3.2” was not found by GPU box.')
+    // A proxy's own 404 page, or JSON with no error text, says nothing about the model.
+    answer('<html><head><title>404 Not Found</title></head><body>nginx</body></html>')
+    expect(await chat()).toBe(bare)
+    answer('{"message":"model not found"}')
+    expect(await chat()).toBe(bare)
+    answer('{"error":{"code":404}}')
+    expect(await chat()).toBe(bare)
+    // Go's own plain-text 404 is ambiguous (a missing route, or a missing model), so it reads as it always has: a missing
+    // model when the request names one, its own words when not.
+    answer('404 page not found\n')
+    expect(await chat()).toBe('Model “llama3.2” was not found by GPU box.')
+    expect(await message(() => listTags(gpu))).toBe('404 page not found\n')
   })
 })
