@@ -1,8 +1,8 @@
 // Ollama's HTTP API: /api/chat as NDJSON, /api/tags and /api/show. Only the adapter (adapter.ts) and the model list
 // (models.ts) call it; everything else speaks the neutral types in ../types.ts.
-import { displayAddress, OLLAMA_CLOUD_URL } from '@shared/endpoints'
+import { displayAddress, hostnameOf, OLLAMA_CLOUD_URL } from '@shared/endpoints'
 import type { ModelWhere } from '@shared/types'
-import { fetchFailure, fetchFailureMessage, hostOf } from '../fetchFailure'
+import { cloudUnreachableMessage, fetchFailureMessage } from '../fetchFailure'
 import { createStallTimer, STREAM_TIMEOUTS, type StreamTimeouts } from '../stream'
 import type { ToolDef } from '../types'
 
@@ -96,7 +96,8 @@ function friendly(t: OllamaTarget, status: number, body: string, model?: string)
   }
   // With nothing to say, a server is named by its address. A proxy's error page is HTML: not a message for anyone to read.
   const answered = t.cloud ? `ollama.com answered HTTP ${status}.` : `${t.name} at ${displayAddress(t.base)} answered HTTP ${status}.`
-  const message = detail.trim().startsWith('<') ? '' : detail
+  const shown = detail.trim()
+  const message = shown === '' || shown.startsWith('<') ? '' : detail
   if (status === 401 || status === 403)
     return new OllamaError(
       t.cloud
@@ -118,15 +119,9 @@ const METADATA_TIMEOUT_MS = 30_000
 
 /** A request that never got an answer, in words that name the server; `err` is what fetch threw. */
 function unreachable(t: OllamaTarget, err: unknown): string {
-  if (t.cloud) {
-    // Offline is the usual cause of anything ollama.com doesn't answer; only a certificate says otherwise.
-    const failure = fetchFailure(err)
-    return failure.kind === 'certificate'
-      ? `ollama.com's certificate isn't trusted (${failure.code}).`
-      : `Can't reach ${OLLAMA_CLOUD}. Check your internet connection.`
-  }
+  if (t.cloud) return cloudUnreachableMessage(err)
   const refused = `Can't reach ${t.name} at ${t.base}. Is the Ollama app running?`
-  return fetchFailureMessage(err, { subject: t.name, address: displayAddress(t.base), host: hostOf(t.base) }, refused)
+  return fetchFailureMessage(err, { subject: t.name, address: displayAddress(t.base), host: hostnameOf(t.base) ?? t.base }, refused)
 }
 
 async function request(t: OllamaTarget, path: string, init: RequestInit & { model?: string } = {}): Promise<Response> {
@@ -139,7 +134,8 @@ async function request(t: OllamaTarget, path: string, init: RequestInit & { mode
     })
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err
-    if ((err as Error).name === 'TimeoutError') throw new OllamaError(`${t.name} took too long to respond. Try again in a moment.`)
+    if ((err as Error).name === 'TimeoutError')
+      throw new OllamaError(`${t.name} took too long to respond. Try again in a moment.`, undefined, { cause: err })
     throw new OllamaError(unreachable(t, err), undefined, { cause: err })
   }
   if (!res.ok) throw friendly(t, res.status, await res.text().catch(() => ''), init.model)

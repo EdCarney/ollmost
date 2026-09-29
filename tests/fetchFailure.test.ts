@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { fetchFailure, fetchFailureMessage, hostOf } from '../src/main/providers/fetchFailure'
+import { cloudUnreachableMessage, fetchFailure, fetchFailureMessage } from '../src/main/providers/fetchFailure'
 import { fetchFailed } from './fetchFailed'
 
 // Every code Node's TLS layer gives for a certificate it won't trust.
@@ -85,10 +85,32 @@ describe('fetchFailureMessage', () => {
   })
 })
 
-describe('hostOf', () => {
-  it('is the URL’s hostname, or the text when it isn’t a URL', () => {
-    expect(hostOf('http://localhost:1234/v1')).toBe('localhost')
-    expect(hostOf('https://gpu.lan:8443')).toBe('gpu.lan')
-    expect(hostOf('not a url')).toBe('not a url')
+describe('cloudUnreachableMessage', () => {
+  const offline = "Can't reach https://ollama.com. Check your internet connection."
+  const timeout = () => new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+
+  it('says which certificate problem it was', () => {
+    for (const code of CERTIFICATE_CODES)
+      expect(cloudUnreachableMessage(fetchFailed(code))).toBe(`ollama.com's certificate isn't trusted (${code}).`)
+    // Whatever the deadline: a certificate is the cause even when a timeout is named.
+    expect(cloudUnreachableMessage(fetchFailed('CERT_HAS_EXPIRED'), 30)).toBe("ollama.com's certificate isn't trusted (CERT_HAS_EXPIRED).")
+  })
+
+  it('says ollama.com didn’t answer when a deadline is named and passed', () => {
+    expect(cloudUnreachableMessage(timeout(), 30)).toBe("ollama.com didn't answer within 30 seconds.")
+    expect(cloudUnreachableMessage(timeout(), 10)).toBe("ollama.com didn't answer within 10 seconds.")
+  })
+
+  it('reads a timeout as being offline when no deadline is named', () => {
+    expect(cloudUnreachableMessage(timeout())).toBe(offline)
+  })
+
+  it('reads a refused connection, a host that isn’t found, or anything else as being offline', () => {
+    for (const code of ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN', 'ECONNRESET']) {
+      expect(cloudUnreachableMessage(fetchFailed(code))).toBe(offline)
+      expect(cloudUnreachableMessage(fetchFailed(code), 30)).toBe(offline)
+    }
+    expect(cloudUnreachableMessage(new TypeError('fetch failed'), 30)).toBe(offline)
+    expect(cloudUnreachableMessage('boom')).toBe(offline)
   })
 })

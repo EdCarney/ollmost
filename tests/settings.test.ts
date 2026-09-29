@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { DeepPartial } from '@shared/ipc'
 import type { Settings } from '@shared/types'
-import { displayAddress, isOllamaCloudUrl, whereOf } from '../src/shared/endpoints'
+import { displayAddress, hostnameOf, isOllamaCloudUrl, whereOf } from '../src/shared/endpoints'
 
 // The keychain is faked, as in migrate.test.ts: Electron isn't running under vitest.
 vi.mock('electron', () => ({
@@ -132,5 +132,11 @@ describe('addresses', () => {
     expect(displayAddress('http://localhost:1234/v1')).toBe('localhost:1234')
     expect(displayAddress('http://192.168.1.20:8000')).toBe('192.168.1.20:8000')
     expect(displayAddress('https://gpu.example.com/api/openai/v1')).toBe('gpu.example.com/api/openai')
+  })
+
+  it('give the hostname of an address, or null when it isn’t one', () => {
+    expect(hostnameOf('http://localhost:1234/v1')).toBe('localhost')
+    expect(hostnameOf('https://GPU.lan:8443')).toBe('gpu.lan')
+    expect(hostnameOf('not a url')).toBeNull()
   })
 })

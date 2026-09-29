@@ -4,6 +4,7 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { Endpoint } from '@shared/types'
 import { openDatabase } from '../src/main/db/index'
 import { getAccountUsage, invalidateAccountUsage, planEndpoint } from '../src/main/usage/account'
+import { fetchFailed } from './fetchFailed'
 
 vi.mock('electron', () => ({ app: { getPath: () => '' }, safeStorage: { isEncryptionAvailable: () => false } }))
 const state = vi.hoisted(() => ({ endpoints: [] as Endpoint[], key: null as string | null }))
@@ -234,5 +235,50 @@ describe('the account’s usage', () => {
       usage.mockRestore()
       state.key = null
     }
+  })
+
+  describe('when ollama.com won’t give it', () => {
+    /** The usage request, answered by `reply` (a rejection is what fetch does when a connection fails). */
+    async function loadWith(reply: () => Promise<Response>) {
+      state.endpoints = []
+      state.key = 'a-secret-key'
+      const ask = vi.spyOn(globalThis, 'fetch').mockImplementation(reply)
+      try {
+        return await getAccountUsage(true)
+      } finally {
+        ask.mockRestore()
+        state.key = null
+        invalidateAccountUsage()
+      }
+    }
+    const answered = (status: number, body = '') => loadWith(() => Promise.resolve(new Response(body, { status })))
+
+    it('says which certificate problem it was', async () => {
+      const usage = await loadWith(() => Promise.reject(fetchFailed('CERT_HAS_EXPIRED')))
+      expect(usage).toMatchObject({ needsKey: false, error: "ollama.com's certificate isn't trusted (CERT_HAS_EXPIRED)." })
+      expect(usage.error).not.toContain('a-secret-key')
+    })
+
+    it('says ollama.com didn’t answer within 10 seconds, or to check the connection', async () => {
+      const slow = await loadWith(() => Promise.reject(new DOMException('The operation was aborted due to timeout', 'TimeoutError')))
+      expect(slow.error).toBe("ollama.com didn't answer within 10 seconds.")
+      const offline = await loadWith(() => Promise.reject(fetchFailed('ENOTFOUND')))
+      expect(offline).toMatchObject({ needsKey: false, error: "Can't reach https://ollama.com. Check your internet connection." })
+    })
+
+    it('names ollama.com when it answers with an error status', async () => {
+      expect(await answered(502, '<html>Bad Gateway</html>')).toMatchObject({
+        needsKey: false,
+        error: 'ollama.com answered HTTP 502 for usage.'
+      })
+    })
+
+    it('says ollama.com rejected the key, and asks for a new one', async () => {
+      for (const status of [401, 403])
+        expect(await answered(status)).toMatchObject({
+          needsKey: true,
+          error: 'ollama.com rejected the API key. Create a new one at ollama.com/settings/keys.'
+        })
+    })
   })
 })

@@ -1,7 +1,7 @@
-import { displayAddress } from '@shared/endpoints'
+import { displayAddress, hostnameOf } from '@shared/endpoints'
 import { contextSizeLabel } from '@shared/format'
 import type { Endpoint, EndpointFlavor, ModelDetected } from '@shared/types'
-import { fetchFailureMessage, hostOf } from '../fetchFailure'
+import { fetchFailureMessage } from '../fetchFailure'
 import { isRecord } from '../json'
 
 export class OpenAIError extends Error {
@@ -27,7 +27,11 @@ const START_HINTS: Record<EndpointFlavor, string> = {
 export function unreachableError(endpoint: Pick<Endpoint, 'name' | 'baseUrl' | 'flavor'>, cause?: unknown): OpenAIError {
   const address = displayAddress(endpoint.baseUrl)
   const refused = `Can't reach ${endpoint.name} at ${address}. Is its server started?${START_HINTS[endpoint.flavor]}`
-  const message = fetchFailureMessage(cause, { subject: endpoint.name, address, host: hostOf(endpoint.baseUrl) }, refused)
+  const message = fetchFailureMessage(
+    cause,
+    { subject: endpoint.name, address, host: hostnameOf(endpoint.baseUrl) ?? endpoint.baseUrl },
+    refused
+  )
   return new OpenAIError(message, undefined, cause === undefined ? undefined : { cause })
 }
 

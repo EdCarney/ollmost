@@ -1,4 +1,6 @@
 import { getApiKey } from '../settings'
+import { cloudUnreachableMessage } from '../providers/fetchFailure'
+import { isRecord } from '../providers/json'
 import { OLLAMA_CLOUD, OllamaError } from '../providers/ollama/wire'
 
 // Tests point this at a mock server.
@@ -24,6 +26,19 @@ export function webAvailable(): boolean {
 
 const TIMEOUT_MS = 30_000
 
+/** What ollama.com said was wrong: its `error` text. A proxy's error page (HTML), a body with no such text, or nothing reads as no message. */
+function messageOf(body: string): string {
+  let detail = body
+  try {
+    const parsed: unknown = JSON.parse(body)
+    detail = isRecord(parsed) && typeof parsed.error === 'string' ? parsed.error : ''
+  } catch {
+    /* not JSON */
+  }
+  const shown = detail.trim()
+  return shown === '' || shown.startsWith('<') ? '' : detail
+}
+
 /**
  * Ollama's web search/fetch run on ollama.com (pages are fetched by Ollama, not this Mac) and are
  * authorised with the ollama.com API key, which stays in the main process.
@@ -42,19 +57,13 @@ async function call<T>(path: string, body: Record<string, unknown>, signal?: Abo
     })
   } catch (err) {
     if (signal?.aborted) throw err
-    throw new OllamaError(`Couldn't reach ollama.com: ${(err as Error).message}`)
+    throw new OllamaError(cloudUnreachableMessage(err, TIMEOUT_MS / 1000), undefined, { cause: err })
   }
   if (res.status === 401 || res.status === 403) throw new OllamaError('ollama.com rejected the API key.', res.status)
   if (res.status === 429) throw new OllamaError('Web search limit reached on ollama.com. Try again later.', res.status)
   if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    let detail = text
-    try {
-      detail = (JSON.parse(text) as { error?: string }).error ?? text
-    } catch {
-      /* not JSON */
-    }
-    throw new OllamaError(detail || `ollama.com returned HTTP ${res.status}`, res.status)
+    const message = messageOf(await res.text().catch(() => ''))
+    throw new OllamaError(message || `ollama.com answered HTTP ${res.status}.`, res.status)
   }
   return (await res.json()) as T
 }

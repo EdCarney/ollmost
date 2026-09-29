@@ -235,6 +235,11 @@ describe('a failed request', () => {
     const reach = () => message(() => chatOnce(gpu, body, { timeoutMs: 2_000 }))
     answer(502, '')
     expect(await reach()).toBe('GPU box at gpu.lan:11434 answered HTTP 502.')
+    // A body of only whitespace says as little.
+    answer(502, '\n')
+    expect(await reach()).toBe('GPU box at gpu.lan:11434 answered HTTP 502.')
+    answer(502, '{"error":" \\n"}')
+    expect(await reach()).toBe('GPU box at gpu.lan:11434 answered HTTP 502.')
     answer(502, '<html><body><h1>502 Bad Gateway</h1></body></html>')
     expect(await reach()).toBe('GPU box at gpu.lan:11434 answered HTTP 502.')
     answer(404, '<html>404 Not Found</html>')

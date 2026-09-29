@@ -1,12 +1,13 @@
 import { creditPool, describeWindows, detectReset, effectiveSpend, parseUsageResponse } from '@shared/usage'
 import type { AccountUsage, Endpoint } from '@shared/types'
 import { readSetting, writeSetting } from '../db/kv'
+import { cloudUnreachableMessage } from '../providers/fetchFailure'
 import { OLLAMA_CLOUD } from '../providers/ollama/wire'
 import { whereOf } from '../providers/where'
 import { getApiKey, getSettings, updateSettings } from '../settings'
-import { errorMessage } from '../util'
 
 const CACHE_MS = 30_000
+const USAGE_TIMEOUT_MS = 10_000
 // Tests point this at a mock server; the real endpoint is undocumented, so a mock is the only stable target.
 const USAGE_URL = process.env.OLLMOST_USAGE_URL ?? `${OLLAMA_CLOUD}/api/usage`
 let cache: AccountUsage | null = null
@@ -75,16 +76,16 @@ async function load(): Promise<AccountUsage> {
   try {
     const res = await fetch(USAGE_URL, {
       headers: { Authorization: `Bearer ${key}`, Accept: 'application/json' },
-      signal: AbortSignal.timeout(10_000)
+      signal: AbortSignal.timeout(USAGE_TIMEOUT_MS)
     })
     if (res.status === 401 || res.status === 403)
-      return { ...base, needsKey: true, error: 'Ollama rejected the API key. Create a new one at ollama.com/settings/keys.' }
-    if (!res.ok) return { ...base, needsKey: false, error: `Ollama returned HTTP ${res.status} for usage.` }
+      return { ...base, needsKey: true, error: 'ollama.com rejected the API key. Create a new one at ollama.com/settings/keys.' }
+    if (!res.ok) return { ...base, needsKey: false, error: `ollama.com answered HTTP ${res.status} for usage.` }
     json = await res.json()
     // The endpoint is undocumented: keep the last response so its shape can be inspected in Settings.
     writeSetting('usageRaw', { at: now, json })
   } catch (err) {
-    return { ...base, needsKey: false, error: `Couldn't reach ollama.com: ${errorMessage(err)}` }
+    return { ...base, needsKey: false, error: cloudUnreachableMessage(err, USAGE_TIMEOUT_MS / 1000) }
   }
 
   const { windows, spend } = parseUsageResponse(json)

@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Endpoint } from '@shared/types'
 import type { ChatEvent, ChatRequest } from '../src/main/providers/types'
+import { fetchFailed } from './fetchFailed'
 import {
   byteChunks,
   capturedChunks,
@@ -16,7 +17,6 @@ import {
   startMockOllama,
   streamSse
 } from './ollamaMock'
-import { fetchFailed } from './fetchFailed'
 
 // The adapter's own dependencies are faked: model_profiles (a Map), the endpoint store and the endpoint key. The server
 // is a local mock speaking OpenAI's SSE.

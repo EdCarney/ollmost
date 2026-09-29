@@ -1,3 +1,4 @@
+import { OLLAMA_CLOUD_URL } from '@shared/endpoints'
 import { isRecord } from './json'
 
 export type FetchFailure = { kind: 'certificate'; code: string } | { kind: 'refused' | 'not-found' | 'other'; code?: string }
@@ -27,15 +28,6 @@ export function fetchFailure(err: unknown): FetchFailure {
   return { kind: 'other', code }
 }
 
-/** The host of an address, or the text itself when it isn't one. */
-export function hostOf(url: string): string {
-  try {
-    return new URL(url).hostname
-  } catch {
-    return url
-  }
-}
-
 /**
  * A failed fetch in words: what its cause says when that points at the fix (a host that isn't there, a certificate
  * that isn't trusted), else `fallback`, the site's own words. `subject` is the endpoint's name; null while an address is
@@ -57,4 +49,16 @@ export function fetchFailureMessage(
       ? `${subject}'s certificate at ${address} isn't trusted (${failure.code}).`
       : `The certificate at ${address} isn't trusted (${failure.code}).`
   return fallback
+}
+
+/**
+ * A failed request to ollama.com in words. Offline is the usual cause of anything it doesn't answer, so only a certificate
+ * (and, where the caller has a deadline, running out of time) says otherwise. `timeoutSeconds` is that deadline.
+ */
+export function cloudUnreachableMessage(err: unknown, timeoutSeconds?: number): string {
+  const failure = fetchFailure(err)
+  if (failure.kind === 'certificate') return `ollama.com's certificate isn't trusted (${failure.code}).`
+  if (timeoutSeconds !== undefined && err instanceof Error && err.name === 'TimeoutError')
+    return `ollama.com didn't answer within ${timeoutSeconds} seconds.`
+  return `Can't reach ${OLLAMA_CLOUD_URL}. Check your internet connection.`
 }

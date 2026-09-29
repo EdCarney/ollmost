@@ -41,6 +41,12 @@ describe('unreachableError', () => {
     )
   })
 
+  it('names an address that isn’t a URL as it was written', () => {
+    expect(unreachableError({ ...lm, baseUrl: 'not a url' }, fetchFailed('ENOTFOUND')).message).toBe(
+      "LM Studio's host not a url wasn't found. Check the address in Settings → Models → LM Studio."
+    )
+  })
+
   it('words a refused connection, or a cause it can’t read, as before, and keeps the cause', () => {
     const refused = fetchFailed('ECONNREFUSED', 'aggregate-no-code')
     const err = unreachableError(lm, refused)

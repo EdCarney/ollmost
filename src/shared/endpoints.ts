@@ -17,7 +17,8 @@ export const FLAVOR_LABELS: Record<EndpointFlavor, string> = {
   generic: 'OpenAI-compatible'
 }
 
-function hostnameOf(url: string): string | null {
+/** The hostname of an address, lower-cased; null when the text isn't one. */
+export function hostnameOf(url: string): string | null {
   try {
     return new URL(url).hostname.toLowerCase()
   } catch {
