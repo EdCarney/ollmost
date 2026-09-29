@@ -284,6 +284,11 @@ describe('billing and context windows', () => {
     expect(contextWindowFor(m(null), { kind: 'ollama' })).toBe(32_768)
   })
 
+  it('leaves the window Ollmost sends to Ollama at num_ctx, whatever the override says', () => {
+    const local = { contextControl: 'client' as const, contextLength: 131_072, overrides: { contextLength: 8_192 }, detected: {} }
+    expect(contextWindowFor(local, { kind: 'ollama', numCtx: 32_768 })).toBe(32_768)
+  })
+
   it('takes a window the server sets by precedence: override, detected, reported, the endpoint’s default', () => {
     const m = (over: object) => ({ contextControl: 'server' as const, contextLength: 262_144, overrides: {}, detected: {}, ...over })
     expect(contextWindowFor(m({}), { kind: 'ollama' })).toBe(262_144)
