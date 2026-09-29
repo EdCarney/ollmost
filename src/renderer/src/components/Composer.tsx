@@ -349,7 +349,9 @@ export function Composer({
         content: text.trim(),
         attachmentIds: pending.flatMap((p) => (p.attachment ? [p.attachment.id] : [])),
         model: settings.model,
-        think: normalizeThinkSetting(profile, settings.think),
+        // A model whose endpoint is still listing has no profile here yet: send the setting as stored, and main (which reads
+        // the real profile at reply time) and the adapters normalise it, so the chat's thinking choice isn't reset.
+        think: model ? normalizeThinkSetting(profile, settings.think) : settings.think,
         skills: settings.skills,
         toolSources: settings.toolSources
       })

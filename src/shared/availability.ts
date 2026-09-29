@@ -1,5 +1,5 @@
-// Whether a chat's model can be used right now, and if not, why: the composer says so and won't send until another
-// model is picked.
+// Whether a chat's model can be used right now, and if not, why: the composer says so and, unless its endpoint is still
+// answering, won't send until another model is picked.
 import { labelForKey } from './modelLabel'
 import { keyPrefix, splitModelKey } from './modelKey'
 import type { Endpoint, ModelInfo, ModelListResult } from './types'
