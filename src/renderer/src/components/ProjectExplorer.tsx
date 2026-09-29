@@ -1,5 +1,5 @@
 import { ChevronRight, FileText, FolderClosed, FolderOpen, FolderPlus, MoreHorizontal } from 'lucide-react'
-import { type DragEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useState } from 'react'
+import { type DragEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { buildTree, folderAfterRemoving, normalizeFolder, type TreeNode } from '@shared/fileTree'
 import type { Project, ProjectFile } from '@shared/types'
 import { api } from '@/lib/api'
@@ -19,6 +19,8 @@ export function ProjectExplorer({ project }: { project: Project }) {
   const [files, setFiles] = useState<ProjectFile[] | null>(null)
   const [naming, setNaming] = useState<{ parent: string; name: string } | null>(null)
   const [over, setOver] = useState<string | null>(null)
+  // The folder whose New folder… was chosen, until its menu has closed.
+  const namingFrom = useRef<string | null>(null)
 
   const key = (folder: string) => (folder ? `${project.id}/${folder}` : project.id)
   const isOpen = (folder: string) => expanded.includes(key(folder))
@@ -128,10 +130,28 @@ export function ProjectExplorer({ project }: { project: Project }) {
     setNaming(null)
   }
 
+  // The name box opens once its menu has closed, not as New folder… is chosen: the menu is still mounted for a moment after
+  // that, and its focus trap pulls focus back from a box that mounts inside that moment, which blurs it and cancels the
+  // folder. Radix also hands focus back to the "…" button as it closes; keeping that back only for New folder… leaves it
+  // there for any other way out of the menu.
+  const nameAfterMenu = (e: Event) => {
+    const parent = namingFrom.current
+    if (parent === null) return
+    namingFrom.current = null
+    e.preventDefault()
+    startNaming(parent)
+  }
+
   const folderMenu = (folder: string) => (
     <>
       <MenuItem onSelect={() => void addTo(folder)}>Add files here…</MenuItem>
-      <MenuItem onSelect={() => startNaming(folder)}>New folder…</MenuItem>
+      <MenuItem
+        onSelect={() => {
+          namingFrom.current = folder
+        }}
+      >
+        New folder…
+      </MenuItem>
       {folder && (
         <>
           <MenuSeparator />
@@ -159,6 +179,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
             label={n.name}
             chevron={isOpen(n.path)}
             menu={folderMenu(n.path)}
+            onMenuCloseAutoFocus={nameAfterMenu}
           />
           {isOpen(n.path) && (
             <div>
@@ -220,6 +241,7 @@ export function ProjectExplorer({ project }: { project: Project }) {
         icon={<FolderClosed className="size-3.5 shrink-0" />}
         label={project.name}
         chevron={open}
+        onMenuCloseAutoFocus={nameAfterMenu}
         menu={
           <>
             {folderMenu('')}
@@ -275,6 +297,7 @@ function Row({
   onClick,
   onToggle,
   menu,
+  onMenuCloseAutoFocus,
   testid,
   ...drop
 }: {
@@ -289,6 +312,8 @@ function Row({
   /** For the project row, whose click opens its page: the chevron opens the tree instead. */
   onToggle?: () => void
   menu: React.ReactNode
+  /** Runs once the menu has closed, for an item that opens something needing focus (the name box): see MenuContent. */
+  onMenuCloseAutoFocus?: (e: Event) => void
   testid: string
   onDragOver?: (e: DragEvent) => void
   onDragLeave?: () => void
@@ -333,7 +358,9 @@ function Row({
             <MoreHorizontal className="size-3.5" />
           </button>
         </MenuTrigger>
-        <MenuContent align="end">{menu}</MenuContent>
+        <MenuContent align="end" onCloseAutoFocus={onMenuCloseAutoFocus}>
+          {menu}
+        </MenuContent>
       </Menu>
     </div>
   )

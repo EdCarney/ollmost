@@ -430,6 +430,13 @@ try {
   check('expanding it lists its files', (await explorer.locator('[data-testid="explorer-file"]').innerText()).includes('brief.txt'))
   await explorer.locator('[data-testid="explorer-root"] button[aria-label="Heron launch menu"]').click()
   await win.getByRole('menuitem', { name: 'New folder…' }).click()
+  // Radix hands focus back to the "…" button a tick after its menu closes; the box has to still have focus after that.
+  await win.waitForSelector('[data-testid="explorer-new-folder"]', { timeout: 5000 }).catch(() => {})
+  await win.waitForTimeout(300)
+  check(
+    'the new folder box keeps focus after its menu closes',
+    await win.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'explorer-new-folder')
+  )
   await win.fill('[data-testid="explorer-new-folder"]', 'docs')
   await win.keyboard.press('Enter')
   await win.waitForSelector('[data-testid="explorer-folder"]')
