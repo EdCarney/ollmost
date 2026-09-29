@@ -471,12 +471,12 @@ try {
   const costChip = await win.locator('button[aria-label="Chat usage"]').innerText()
   check('title bar shows chat tokens and cost', /tokens · (≈?\$[\d.]+|local|not tracked|cost unknown)/.test(costChip), costChip)
 
-  // 8. Account quota: with an Ollama endpoint and no key it asks for one; with the key it shows usage and dates a reset
-  // from a drop. With neither there's no chip at all.
+  // 8. Account quota: with an Ollama endpoint turned on and no key it asks for one; with the key it shows usage and dates a reset
+  // from a drop. With no key and no Ollama endpoint turned on there's no chip at all.
   const quota = await expectedQuota(win)
   if (quota === 'hidden') {
     check(
-      'no quota chip without an Ollama endpoint or an ollama.com key',
+      'with no Ollama endpoint turned on and no ollama.com key, there is no quota chip',
       (await win.locator('button[aria-label^="Ollama usage"]').count()) === 0
     )
   } else {
@@ -2154,18 +2154,24 @@ const evilSvg = (port) =>
       /Skill says: E2E-ENDPOINT-MARKER/.test(reply),
       reply.slice(0, 80)
     )
-    const [first, second] = openaiRequests.filter((r) => r.path === '/v1/chat/completions' && r.body.stream)
-    const echo = second?.body.messages.find((m) => m.role === 'assistant' && m.tool_calls)
-    const result = second?.body.messages.find((m) => m.role === 'tool')
+    const [round1, round2] = openaiRequests.filter((r) => r.path === '/v1/chat/completions' && r.body.stream)
+    const echo = round2?.body.messages.find((m) => m.role === 'assistant' && m.tool_calls)
+    const result = round2?.body.messages.find((m) => m.role === 'tool')
+    let echoedSkill = null
+    try {
+      echoedSkill = JSON.parse(echo?.tool_calls[0].function.arguments).name
+    } catch {
+      // No call echoed, or its arguments aren't JSON: the check below fails.
+    }
     check(
       "the round goes back in OpenAI's shape: the call with its id and JSON arguments, the result with that id",
-      !!first?.body.tools?.some((t) => t.function.name === 'load_skill') &&
+      !!round1?.body.tools?.some((t) => t.function.name === 'load_skill') &&
         echo?.tool_calls[0].id === 'call_e2e_0' &&
-        typeof echo?.tool_calls[0].function.arguments === 'string' &&
+        echoedSkill === 'endpoint-helper' &&
         result?.tool_call_id === 'call_e2e_0',
       JSON.stringify(echo?.tool_calls ?? null).slice(0, 120)
     )
-    check('the stream asks for usage', first?.body.stream_options?.include_usage === true)
+    check('the stream asks for usage', round1?.body.stream_options?.include_usage === true)
     check('the skill load shows in the reply', (await win.locator('text=Using skill').count()) > 0)
 
     // The "local" label: a server on this Mac costs nothing Ollmost tracks.
@@ -2190,9 +2196,9 @@ const evilSvg = (port) =>
     )
     await win.screenshot({ path: join(SHOTS, 'endpoint-switch.png') })
 
-    // The quota chip: offered with an Ollama endpoint and no key; gone once there's neither.
+    // The quota chip: offered with an Ollama endpoint turned on and no key; gone once none is turned on.
     check(
-      'with an Ollama endpoint and no key, the quota chip asks for one',
+      'with an Ollama endpoint turned on and no key, the quota chip asks for one',
       (await expectedQuota(win)) === 'add-key' && /Quota/.test(await win.locator('button[aria-label^="Ollama usage"]').innerText())
     )
     await win.evaluate(() => window.ollmost.endpoints.update('ollama', { enabled: false }))
@@ -2200,7 +2206,7 @@ const evilSvg = (port) =>
     await win.waitForSelector('textarea')
     await win.waitForTimeout(1500)
     check(
-      'with no Ollama endpoint and no key, there is no quota chip',
+      'with no Ollama endpoint turned on and no key, there is no quota chip',
       (await expectedQuota(win)) === 'hidden' && (await win.locator('button[aria-label^="Ollama usage"]').count()) === 0
     )
   } catch (err) {
