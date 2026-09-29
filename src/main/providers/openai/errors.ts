@@ -49,7 +49,7 @@ const TOOL_FLAGS = [
 // isn't one of them: with just-in-time loading off it means "load a model", so its own words go through.
 const MISSING_MODEL = /not found|does not exist|no such|invalid model|unknown model/i
 
-/** The message in any of the error shapes servers send, and the error object itself when there is one. */
+/** The message in any of the error shapes servers send, trimmed (a blank one is none), and the error object itself when there is one. */
 function readError(body: string): { detail: string; error: Record<string, unknown> } {
   let json: unknown
   try {
@@ -58,10 +58,10 @@ function readError(body: string): { detail: string; error: Record<string, unknow
     return { detail: body.trim(), error: {} }
   }
   const obj = isRecord(json) ? json : {}
-  if (typeof obj.error === 'string') return { detail: obj.error, error: {} }
-  if (isRecord(obj.error)) return { detail: typeof obj.error.message === 'string' ? obj.error.message : body.trim(), error: obj.error }
-  const detail = typeof obj.message === 'string' ? obj.message : typeof obj.detail === 'string' ? obj.detail : body.trim()
-  return { detail, error: obj }
+  if (typeof obj.error === 'string') return { detail: obj.error.trim(), error: {} }
+  if (isRecord(obj.error)) return { detail: (typeof obj.error.message === 'string' ? obj.error.message : body).trim(), error: obj.error }
+  const detail = typeof obj.message === 'string' ? obj.message : typeof obj.detail === 'string' ? obj.detail : body
+  return { detail: detail.trim(), error: obj }
 }
 
 // vLLM: "maximum context length is 32768 tokens"; llama.cpp: an exceed_context_size_error with n_ctx.
@@ -104,6 +104,6 @@ export function friendlyOpenAIError(
   if (model && /model/i.test(detail) && (status === 404 || MISSING_MODEL.test(detail)))
     return fail(`${name} doesn't have a model called ${model}.`)
   // A proxy's error page is HTML: not a message for anyone to read.
-  const message = detail.trim().startsWith('<') ? '' : detail
+  const message = detail.startsWith('<') ? '' : detail
   return fail(message ? `${name}: ${message}` : `${name} at ${displayAddress(endpoint.baseUrl)} answered HTTP ${status}.`)
 }

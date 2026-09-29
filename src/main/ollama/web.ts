@@ -1,7 +1,6 @@
 import { getApiKey } from '../settings'
 import { cloudUnreachableMessage } from '../providers/fetchFailure'
-import { isRecord } from '../providers/json'
-import { OLLAMA_CLOUD, OllamaError } from '../providers/ollama/wire'
+import { errorDetail, messageOf, OLLAMA_CLOUD, OllamaError } from '../providers/ollama/wire'
 
 // Tests point this at a mock server.
 const WEB_BASE = process.env.OLLMOST_WEB_URL ?? OLLAMA_CLOUD
@@ -26,19 +25,6 @@ export function webAvailable(): boolean {
 
 const TIMEOUT_MS = 30_000
 
-/** What ollama.com said was wrong: its `error` text. A proxy's error page (HTML), a body with no such text, or nothing reads as no message. */
-function messageOf(body: string): string {
-  let detail = body
-  try {
-    const parsed: unknown = JSON.parse(body)
-    detail = isRecord(parsed) && typeof parsed.error === 'string' ? parsed.error : ''
-  } catch {
-    /* not JSON */
-  }
-  const shown = detail.trim()
-  return shown === '' || shown.startsWith('<') ? '' : detail
-}
-
 /**
  * Ollama's web search/fetch run on ollama.com (pages are fetched by Ollama, not this Mac) and are
  * authorised with the ollama.com API key, which stays in the main process.
@@ -62,7 +48,7 @@ async function call<T>(path: string, body: Record<string, unknown>, signal?: Abo
   if (res.status === 401 || res.status === 403) throw new OllamaError('ollama.com rejected the API key.', res.status)
   if (res.status === 429) throw new OllamaError('Web search limit reached on ollama.com. Try again later.', res.status)
   if (!res.ok) {
-    const message = messageOf(await res.text().catch(() => ''))
+    const message = messageOf(errorDetail(await res.text().catch(() => '')))
     throw new OllamaError(message || `ollama.com answered HTTP ${res.status}.`, res.status)
   }
   return (await res.json()) as T

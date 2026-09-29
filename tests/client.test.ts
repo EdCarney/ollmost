@@ -248,8 +248,14 @@ describe('a failed request', () => {
     expect(await message(() => listCloudCatalog())).toBe('ollama.com answered HTTP 502.')
     answer(500, '{"error":"model runner crashed"}')
     expect(await reach()).toBe('model runner crashed')
-    // An error that isn't a string is read as the text it came in.
+    // JSON with no error text says nothing, whatever else it holds; text that isn't JSON is read as it came.
+    for (const json of ['{"error":{"code":500}}', '{"error":null}', '{"message":"runner crashed"}', '{}', '[]']) {
+      answer(500, json)
+      expect(await reach()).toBe('GPU box at gpu.lan:11434 answered HTTP 500.')
+    }
     answer(500, '{"error":{"code":500}}')
-    expect(await reach()).toBe('{"error":{"code":500}}')
+    expect(await message(() => listCloudCatalog())).toBe('ollama.com answered HTTP 500.')
+    answer(500, 'upstream timed out')
+    expect(await reach()).toBe('upstream timed out')
   })
 })

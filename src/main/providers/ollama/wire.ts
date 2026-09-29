@@ -3,6 +3,7 @@
 import { displayAddress, hostnameOf, OLLAMA_CLOUD_URL } from '@shared/endpoints'
 import type { ModelWhere } from '@shared/types'
 import { cloudUnreachableMessage, fetchFailureMessage } from '../fetchFailure'
+import { isRecord } from '../json'
 import { createStallTimer, STREAM_TIMEOUTS, type StreamTimeouts } from '../stream'
 import type { ToolDef } from '../types'
 
@@ -86,18 +87,27 @@ function notEnoughMemory(detail: string, model?: string): string | undefined {
     : `Not enough memory to load the model. Lower the context window in Settings → Models, or pick a smaller or more quantized model.`
 }
 
-function friendly(t: OllamaTarget, status: number, body: string, model?: string): OllamaError {
-  let detail = body
+/** What an error body says: Ollama's `error` text, or the body as it came when it isn't JSON. JSON with no such text says nothing. */
+export function errorDetail(body: string): string {
   try {
-    const error = (JSON.parse(body) as { error?: unknown }).error
-    if (typeof error === 'string') detail = error
+    const parsed: unknown = JSON.parse(body)
+    return isRecord(parsed) && typeof parsed.error === 'string' ? parsed.error : ''
   } catch {
-    /* not JSON */
+    return body
   }
-  // With nothing to say, a server is named by its address. A proxy's error page is HTML: not a message for anyone to read.
-  const answered = t.cloud ? `ollama.com answered HTTP ${status}.` : `${t.name} at ${displayAddress(t.base)} answered HTTP ${status}.`
+}
+
+/** What `detail` says to a person, or '' for nothing: blank, or a proxy's error page (HTML). */
+export function messageOf(detail: string): string {
   const shown = detail.trim()
-  const message = shown === '' || shown.startsWith('<') ? '' : detail
+  return shown === '' || shown.startsWith('<') ? '' : detail
+}
+
+function friendly(t: OllamaTarget, status: number, body: string, model?: string): OllamaError {
+  const detail = errorDetail(body)
+  // With nothing to say, a server is named by its address.
+  const answered = t.cloud ? `ollama.com answered HTTP ${status}.` : `${t.name} at ${displayAddress(t.base)} answered HTTP ${status}.`
+  const message = messageOf(detail)
   if (status === 401 || status === 403)
     return new OllamaError(
       t.cloud

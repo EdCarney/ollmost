@@ -151,6 +151,31 @@ describe('friendlyOpenAIError', () => {
     expect(friendlyOpenAIError(gpu, 502, 'upstream timed out').error.message).toBe('GPU box: upstream timed out')
   })
 
+  it('counts a blank message, in any of the shapes servers send, as none', () => {
+    const answered = 'GPU box at 192.168.1.20:8000 answered HTTP 502.'
+    for (const body of [
+      { error: ' ' },
+      { error: '\n' },
+      { message: ' \t ' },
+      { detail: '  ' },
+      { error: { message: ' ' } },
+      { error: '<html>Bad Gateway</html>' }
+    ])
+      expect(friendlyOpenAIError(gpu, 502, JSON.stringify(body)).error.message).toBe(answered)
+    // A message with spaces around it is shown without them.
+    expect(friendlyOpenAIError(gpu, 502, JSON.stringify({ error: ' upstream timed out\n' })).error.message).toBe(
+      'GPU box: upstream timed out'
+    )
+    // What the message says still decides what the failure means.
+    expect(friendlyOpenAIError(gpu, 400, JSON.stringify({ error: '  --jinja is needed \n' })).detected).toEqual({
+      tools: false,
+      reason: 'server lacks --jinja'
+    })
+    expect(friendlyOpenAIError(gpu, 404, '{"error":{"message":" model not found "}}', 'qwen3').error.message).toBe(
+      "GPU box doesn't have a model called qwen3."
+    )
+  })
+
   it('is an OpenAIError carrying the status', () => {
     const { error } = friendlyOpenAIError(lm, 418, 'teapot')
     expect(error).toBeInstanceOf(OpenAIError)
