@@ -111,8 +111,14 @@ export function ModelPicker({
           <ChevronDown className="size-3.5 shrink-0" />
         </button>
       </PopoverTrigger>
-      <PopoverContent align="end" side="top" className="w-[340px]" onOpenAutoFocus={(e) => e.preventDefault()}>
-        <div className="flex items-center gap-2 border-b border-line px-3">
+      <PopoverContent
+        align="end"
+        side="top"
+        // Shrinks to the room Radix measured, so a short window cuts the list rather than the search box.
+        className="flex max-h-[var(--radix-popover-content-available-height)] w-[340px] flex-col"
+        onOpenAutoFocus={(e) => e.preventDefault()}
+      >
+        <div className="flex shrink-0 items-center gap-2 border-b border-line px-3">
           <Search className="size-4 text-subtle" />
           <input
             autoFocus
@@ -123,7 +129,7 @@ export function ModelPicker({
           />
         </div>
         {showChips && (
-          <div role="group" aria-label="Endpoints" className="flex flex-wrap gap-1.5 px-2.5 pb-1 pt-2">
+          <div role="group" aria-label="Endpoints" className="flex shrink-0 flex-wrap gap-1.5 px-2.5 pb-1 pt-2">
             {chips.map((c) => (
               <button
                 key={c.id}
@@ -145,7 +151,7 @@ export function ModelPicker({
             ))}
           </div>
         )}
-        <div className="max-h-[360px] overflow-y-auto p-1">
+        <div className="max-h-[360px] min-h-0 overflow-y-auto p-1">
           {groups.map((g) => (
             <div key={g.id} className="py-1">
               <GroupHeading group={g} endpoint={endpoints.find((e) => e.id === g.endpointId)} />
@@ -168,7 +174,7 @@ export function ModelPicker({
             </div>
           )}
         </div>
-        <div className="flex items-center justify-between border-t border-line px-2 py-1.5">
+        <div className="flex shrink-0 items-center justify-between border-t border-line px-2 py-1.5">
           <button
             onClick={() => loadModels(true)}
             className="flex items-center gap-1.5 rounded-md px-2 py-1 text-xs text-muted hover:bg-hover hover:text-fg"
