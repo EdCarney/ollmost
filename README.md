@@ -71,7 +71,7 @@ src/preload/     typed contextBridge exposing window.ollmost (contract in src/sh
                  only Ollmost's own windows (src/main/ipcSender.ts)
 src/shared/      types, artifact parser, thinking profiles, built-in themes (used by both sides)
 src/renderer/    React UI: views/, components/, stores/ (zustand), theme/
-tests/           Vitest unit tests      e2e/   live Playwright run against real models
+tests/           Vitest unit tests      e2e/   live Playwright run against real models and stand-in servers
 ```
 
 - **Models.** Each endpoint lists its own models (see [Model endpoints](#model-endpoints)). For Ollama, the daemon's `/api/tags` is merged with the ollama.com catalog when the endpoint's "Show the Ollama cloud catalog" is on. Cloud models are addressed as `name:cloud` / `name:tag-cloud`, so nothing needs pulling. `/api/show` capabilities drive the UI: the image warning, the thinking control, and automatic skills.
@@ -164,6 +164,7 @@ npm run typecheck
 npm run lint                # ESLint (typescript-eslint, React hook rules)
 npm run format              # Prettier; format:check only reports
 npm run build && npm run e2e   # live: needs Ollama running; uses a throwaway data folder
+OLLMOST_E2E_OPENAI_URL=http://localhost:1234/v1 npm run e2e   # also a live check against LM Studio (or any OpenAI-compatible server that needs no key); OLLMOST_E2E_OPENAI_MODEL picks the model
 ```
 
 `npm test` needs no model server: `tests/ollamaMock.ts` is a stand-in server that streams scripted Ollama NDJSON or OpenAI-compatible SSE (LM Studio's streams are replayed from captures in `tests/fixtures/sse/`; llama.cpp's and vLLM's are written from their documentation). The client and reply-loop tests use it to cover split lines, dropped and stalled streams, error chunks, Stop, tool rounds and saving partial replies. CI (`.github/workflows/ci.yml`) runs the typecheck, lint, format check and unit tests on every pull request.
@@ -187,6 +188,7 @@ The e2e run checks:
 - code sessions: reading, editing and running commands in a folder of the user's with approvals, the diff an edit's approval shows, the folder left untouched by a deleted session, and the Changes panel's git status and diff
 - a live model asking to edit a file in a code session, and denying it
 - the command palette: a theme previewed live from its choice list, put back on Escape and on a click outside, kept on Enter, and a theme picked in Settings showing after one chosen in the palette
+- model endpoints: adding an OpenAI-compatible server in Settings (Check, then Add), its chip in the picker, a tool round in OpenAI's shape, the `local` label, switching a chat to the Ollama endpoint, and the quota chip going when there's no Ollama endpoint turned on and no key
 - coming from Kiln: migrating data on first launch, waiting for Kiln to quit, and the one-time notice
 
 Screenshots go to `e2e/shots/`. Set `OLLMOST_DEBUG=1` to log every request Ollmost sends to a model server to `debug.log` in the data folder, along with the PATH Ollmost gives processes it starts. Apps opened from the Dock get a bare PATH, so Ollmost reads the one your login shell sets up.

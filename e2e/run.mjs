@@ -1,5 +1,8 @@
-// Live end-to-end smoke test: drives the built app with Playwright against real Ollama models.
-// Usage: npm run build && npm run e2e   (needs the Ollama app running and `ollama signin` for cloud models)
+// End-to-end run: drives the built app with Playwright against real Ollama models, and against stand-in model servers
+// (Ollama's API and an OpenAI-compatible one) for the deterministic sections.
+// Usage: npm run build && npm run e2e   (needs the Ollama app running and `ollama signin` for cloud models;
+// OLLMOST_E2E_OPENAI_URL=http://localhost:1234/v1 adds a live check against an OpenAI-compatible server such as LM Studio,
+// and OLLMOST_E2E_OPENAI_MODEL picks that check's model)
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
@@ -93,11 +96,14 @@ async function stubOpenDialog(app, paths) {
   }, paths)
 }
 
-async function pickModel(win, name) {
+async function pickModel(win, name, endpoint) {
   await win.click('button[aria-label="Choose model"]')
+  const picker = win.locator('[data-radix-popper-content-wrapper]')
+  // An endpoint's chip (under the search box) narrows the list to its models.
+  if (endpoint) await picker.getByRole('button', { name: endpoint, exact: true }).first().click()
   await win.fill('input[placeholder="Search models"]', name)
   await win.waitForTimeout(300)
-  await win.locator('[data-radix-popper-content-wrapper] button').filter({ hasText: name }).first().click()
+  await picker.locator('button').filter({ hasText: name }).first().click()
 }
 
 async function send(win, text) {
@@ -117,6 +123,98 @@ async function send(win, text) {
 async function newChat(win) {
   await win.getByRole('button', { name: 'New chat' }).first().click()
   await win.waitForSelector('textarea[placeholder="How can I help you today?"]')
+}
+
+/**
+ * A stand-in model server. 'ollama' speaks Ollama's API (/api/version, /api/tags, /api/show, NDJSON /api/chat); 'openai'
+ * speaks the OpenAI-compatible one under /v1 (/v1/models, SSE /v1/chat/completions) as a generic server that reports no
+ * capabilities. `reply(body)` scripts each streamed reply from the request as sent and returns an assistant message in
+ * Ollama's shape ({ content, tool_calls: [{ function: { name, arguments } }] }), encoded here for the dialect; an Ollama
+ * reply with `hold` (a function returning a promise) streams its `thinking` first and the rest once `hold()` settles;
+ * OpenAI tool calls get the ids call_e2e_<n> and arrive in two pieces. Non-streaming requests (titles, debugger replays)
+ * get `once(body)`'s message, else `title`. `route(req, res)` answers other paths first (pages, beacons) and returns true
+ * when it did. `requests`, when given, collects { path, body } for every request `route` doesn't answer.
+ */
+async function fakeServer({ dialect, models, capabilities = ['completion', 'tools'], reply, once, title = 'Mock title', route, requests }) {
+  const server = createServer(async (req, res) => {
+    if (route && (await route(req, res))) return
+    let raw = ''
+    for await (const chunk of req) raw += chunk
+    const body = raw ? JSON.parse(raw) : {}
+    requests?.push({ path: req.url, body })
+    const json = (obj) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(obj))
+    if (dialect === 'ollama') {
+      if (req.url === '/api/version') return json({ version: '0.12.0' })
+      if (req.url === '/api/tags') return json({ models: models.map((name) => ({ name })) })
+      if (req.url === '/api/show') return json({ capabilities, model_info: { 'mock.context_length': 32768 }, details: {} })
+      if (req.url !== '/api/chat') return res.writeHead(404).end()
+      if (!body.stream) {
+        const message = (await once?.(body)) ?? { content: title }
+        return json({ message: { role: 'assistant', ...message }, done: true, done_reason: 'stop', prompt_eval_count: 100, eval_count: 12 })
+      }
+      const { hold, ...message } = await reply(body)
+      res.writeHead(200, { 'content-type': 'application/x-ndjson' })
+      const line = (m) => res.write(JSON.stringify({ message: { role: 'assistant', ...m }, done: false }) + '\n')
+      if (hold) {
+        // Thinking first, then the answer once hold() settles, so a test can act while the reply is mid-thought.
+        const { thinking, ...answer } = message
+        line({ content: '', thinking })
+        await hold()
+        line(answer)
+      } else line(message)
+      return res.end(JSON.stringify({ done: true, done_reason: 'stop', prompt_eval_count: 100, eval_count: 12, eval_duration: 1e8 }) + '\n')
+    }
+    if (req.url === '/v1/models') return json({ object: 'list', data: models.map((id) => ({ id, object: 'model', owned_by: 'e2e' })) })
+    if (req.url !== '/v1/chat/completions') return res.writeHead(404).end()
+    const message = body.stream ? await reply(body) : ((await once?.(body)) ?? { content: title })
+    const calls = (message.tool_calls ?? []).map((c, i) => ({
+      id: `call_e2e_${i}`,
+      type: 'function',
+      function: { name: c.function.name, arguments: JSON.stringify(c.function.arguments) }
+    }))
+    const finish = calls.length ? 'tool_calls' : 'stop'
+    const usage = { prompt_tokens: 100, completion_tokens: 12, total_tokens: 112 }
+    if (!body.stream) {
+      const out = { role: 'assistant', content: message.content ?? '', ...(calls.length ? { tool_calls: calls } : {}) }
+      return json({ id: 'chatcmpl-e2e', object: 'chat.completion', choices: [{ index: 0, message: out, finish_reason: finish }], usage })
+    }
+    res.writeHead(200, { 'content-type': 'text/event-stream' })
+    const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`)
+    const chunk = (delta, finishReason = null) => ({
+      id: 'chatcmpl-e2e',
+      object: 'chat.completion.chunk',
+      choices: [{ index: 0, delta, finish_reason: finishReason }]
+    })
+    send(chunk({ role: 'assistant', content: '' }))
+    if (message.content) send(chunk({ content: message.content }))
+    // Each call in two pieces, as servers stream them: the id and name, then the arguments.
+    calls.forEach((c, index) => {
+      send(chunk({ tool_calls: [{ index, id: c.id, type: 'function', function: { name: c.function.name, arguments: '' } }] }))
+      send(chunk({ tool_calls: [{ index, function: { arguments: c.function.arguments } }] }))
+    })
+    send(chunk({}, finish))
+    if (body.stream_options?.include_usage) send({ id: 'chatcmpl-e2e', object: 'chat.completion.chunk', choices: [], usage })
+    res.end('data: [DONE]\n\n')
+  })
+  await new Promise((r) => server.listen(0, '127.0.0.1', r))
+  const { port } = server.address()
+  const root = `http://127.0.0.1:${port}`
+  return { port, url: dialect === 'openai' ? `${root}/v1` : root, close: () => server.close() }
+}
+
+/** Point the migrated Ollama endpoint at a stand-in (cloud catalog off, so only its models list), then reload. */
+async function useOllamaAt(win, url) {
+  await win.evaluate((baseUrl) => window.ollmost.endpoints.update('ollama', { baseUrl, showCloudCatalog: false }), url)
+  await win.reload()
+  await win.waitForSelector('textarea')
+  await win.waitForTimeout(1500)
+}
+
+/** What the quota chip should do, by the app's own rule (quotaMode in src/shared/usage.ts). */
+async function expectedQuota(win) {
+  const s = await win.evaluate(() => window.ollmost.settings.get())
+  if (s.ollamaAccount.hasKey) return 'show'
+  return s.endpoints.some((e) => e.kind === 'ollama' && e.enabled) ? 'add-key' : 'hidden'
 }
 
 const { app, win } = await launch()
@@ -371,61 +469,70 @@ try {
   await win.locator('aside [role="button"]').first().click()
   await win.waitForSelector('button[aria-label="Chat usage"]', { timeout: 10000 })
   const costChip = await win.locator('button[aria-label="Chat usage"]').innerText()
-  check('title bar shows chat tokens and cost', /tokens · (≈?\$[\d.]+|local)/.test(costChip), costChip)
+  check('title bar shows chat tokens and cost', /tokens · (≈?\$[\d.]+|local|not tracked|cost unknown)/.test(costChip), costChip)
 
-  // 8. Account quota: prompt for a key, then show usage and date a reset from a drop
-  const before = await win.locator('button[aria-label^="Ollama usage"]').innerText()
-  check('quota chip asks for an API key first', /Quota/.test(before), before)
-  await win
-    .getByRole('button', { name: /Set your name|Settings/ })
-    .last()
-    .click()
-  await win.getByRole('button', { name: 'Usage & cost' }).click()
-  await win.fill('input[placeholder="Paste your API key"]', 'ollmost-e2e-key')
-  await win.getByRole('button', { name: 'Save', exact: true }).click()
-  await win.waitForFunction(() => /40\.0%/.test(document.querySelector('button[aria-label^="Ollama usage"]')?.textContent ?? ''), null, {
-    timeout: 10000
-  })
-  check('quota chip shows weekly usage', true, await win.locator('button[aria-label^="Ollama usage"]').innerText())
-  const unknownPace = await win.locator('button[aria-label^="Ollama usage"]').getAttribute('aria-label')
-  check('pace is unknown until the reset time is known', /pace unknown/.test(unknownPace), unknownPace)
-  check('API key is sent as a bearer token', mockAuth === 'Bearer ollmost-e2e-key')
-  mockWeekly = 0.02
-  await win.getByRole('button', { name: 'Check now' }).click()
-  await win.waitForFunction(
-    () => /2\.0% · 6d 2\dh left/.test(document.querySelector('button[aria-label^="Ollama usage"]')?.textContent ?? ''),
-    null,
-    { timeout: 10000 }
-  )
-  check('a usage drop dates the weekly reset', true, await win.locator('button[aria-label^="Ollama usage"]').innerText())
-  const underPace = await win.locator('button[aria-label^="Ollama usage"]').getAttribute('aria-label')
-  check('light usage early in the week is under pace', /under pace/.test(underPace), underPace)
-  // Half the allowance gone moments into the week: on course to run out long before the reset.
-  mockWeekly = 0.5
-  await win.getByRole('button', { name: 'Check now' }).click()
-  await win.waitForFunction(
-    () => /over pace/.test(document.querySelector('button[aria-label^="Ollama usage"]')?.getAttribute('aria-label') ?? ''),
-    null,
-    { timeout: 10000 }
-  )
-  await win.click('button[aria-label^="Ollama usage"]')
-  await win.waitForTimeout(500)
-  const banner = await win.locator('[data-radix-popper-content-wrapper]').innerText()
-  check(
-    'heavy usage is over pace with a run-out estimate',
-    /Over pace/.test(banner) && /hit the limit in about/.test(banner),
-    banner.split('\n').slice(1, 4).join(' | ')
-  )
-  await win.screenshot({ path: join(SHOTS, 'usage-over-pace.png') })
-  await win.keyboard.press('Escape')
-  mockWeekly = 0.3
-  await win.getByRole('button', { name: 'Check now' }).click()
-  await win.waitForTimeout(1500)
-  await win.click('button[aria-label^="Ollama usage"]')
-  await win.waitForTimeout(500)
-  await win.screenshot({ path: join(SHOTS, 'usage-popover.png') })
-  await win.keyboard.press('Escape')
-  await win.screenshot({ path: join(SHOTS, 'usage-settings.png') })
+  // 8. Account quota: with an Ollama endpoint turned on and no key it asks for one; with the key it shows usage and dates a reset
+  // from a drop. With no key and no Ollama endpoint turned on there's no chip at all.
+  const quota = await expectedQuota(win)
+  if (quota === 'hidden') {
+    check(
+      'with no Ollama endpoint turned on and no ollama.com key, there is no quota chip',
+      (await win.locator('button[aria-label^="Ollama usage"]').count()) === 0
+    )
+  } else {
+    const before = await win.locator('button[aria-label^="Ollama usage"]').innerText()
+    check('quota chip asks for an API key first', quota === 'add-key' && /Quota/.test(before), before)
+    await win
+      .getByRole('button', { name: /Set your name|Settings/ })
+      .last()
+      .click()
+    await win.getByRole('button', { name: 'Usage & cost' }).click()
+    await win.fill('input[placeholder="Paste your API key"]', 'ollmost-e2e-key')
+    await win.getByRole('button', { name: 'Save', exact: true }).click()
+    await win.waitForFunction(() => /40\.0%/.test(document.querySelector('button[aria-label^="Ollama usage"]')?.textContent ?? ''), null, {
+      timeout: 10000
+    })
+    check('quota chip shows weekly usage', true, await win.locator('button[aria-label^="Ollama usage"]').innerText())
+    const unknownPace = await win.locator('button[aria-label^="Ollama usage"]').getAttribute('aria-label')
+    check('pace is unknown until the reset time is known', /pace unknown/.test(unknownPace), unknownPace)
+    check('API key is sent as a bearer token', mockAuth === 'Bearer ollmost-e2e-key')
+    mockWeekly = 0.02
+    await win.getByRole('button', { name: 'Check now' }).click()
+    await win.waitForFunction(
+      () => /2\.0% · 6d 2\dh left/.test(document.querySelector('button[aria-label^="Ollama usage"]')?.textContent ?? ''),
+      null,
+      { timeout: 10000 }
+    )
+    check('a usage drop dates the weekly reset', true, await win.locator('button[aria-label^="Ollama usage"]').innerText())
+    const underPace = await win.locator('button[aria-label^="Ollama usage"]').getAttribute('aria-label')
+    check('light usage early in the week is under pace', /under pace/.test(underPace), underPace)
+    // Half the allowance gone moments into the week: on course to run out long before the reset.
+    mockWeekly = 0.5
+    await win.getByRole('button', { name: 'Check now' }).click()
+    await win.waitForFunction(
+      () => /over pace/.test(document.querySelector('button[aria-label^="Ollama usage"]')?.getAttribute('aria-label') ?? ''),
+      null,
+      { timeout: 10000 }
+    )
+    await win.click('button[aria-label^="Ollama usage"]')
+    await win.waitForTimeout(500)
+    const banner = await win.locator('[data-radix-popper-content-wrapper]').innerText()
+    check(
+      'heavy usage is over pace with a run-out estimate',
+      /Over pace/.test(banner) && /hit the limit in about/.test(banner),
+      banner.split('\n').slice(1, 4).join(' | ')
+    )
+    await win.screenshot({ path: join(SHOTS, 'usage-over-pace.png') })
+    await win.keyboard.press('Escape')
+    mockWeekly = 0.3
+    await win.getByRole('button', { name: 'Check now' }).click()
+    await win.waitForTimeout(1500)
+    await win.click('button[aria-label^="Ollama usage"]')
+    await win.waitForTimeout(500)
+    await win.screenshot({ path: join(SHOTS, 'usage-popover.png') })
+    await win.keyboard.press('Escape')
+    await win.screenshot({ path: join(SHOTS, 'usage-settings.png') })
+  }
 
   // 9. Theme + mode persist across restarts
   await win
@@ -597,93 +704,80 @@ await second.app.close()
 const mockChats = []
 // A reply to "Think it over" thinks, then waits here until the test lets it answer (so it can toggle live thinking).
 const liveThinking = { sent: null, release: null }
-const fakeOllama = createServer(async (req, res) => {
-  let raw = ''
-  for await (const chunk of req) raw += chunk
-  const body = raw ? JSON.parse(raw) : {}
-  const json = (obj) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(obj))
-  if (req.url === '/api/tags') return json({ models: [{ name: 'mock-tools:latest' }] })
-  if (req.url === '/api/show')
-    return json({ capabilities: ['completion', 'tools'], model_info: { 'mock.context_length': 32768 }, details: {} })
-  if (req.url !== '/api/chat') return res.writeHead(404).end()
-  // Non-streaming: title requests (no tools) get a title; debugger replays of a tool round get its tool call.
-  if (!body.stream) {
-    if (body.tools?.length) {
-      mockChats.push({ toolNames: body.tools.map((t) => t.function.name), toolResults: [], system: body.messages[0].content, replay: true })
-      return json({
-        message: { role: 'assistant', content: '', tool_calls: [{ function: { name: 'web_search', arguments: { query: 'replayed' } } }] },
-        done: true,
-        prompt_eval_count: 100,
-        eval_count: 5
-      })
-    }
-    return json({ message: { role: 'assistant', content: 'Mock title' }, done: true, prompt_eval_count: 10, eval_count: 2 })
-  }
-  const toolNames = (body.tools ?? []).map((t) => t.function.name)
-  const toolResults = body.messages.filter((m) => m.role === 'tool').map((m) => m.content)
-  const lastUser = body.messages.filter((m) => m.role === 'user').at(-1)?.content ?? ''
-  if (lastUser.startsWith('Think it over')) {
-    res.writeHead(200, { 'content-type': 'application/x-ndjson' })
-    res.write(JSON.stringify({ message: { role: 'assistant', content: '', thinking: 'Weighing it up.' }, done: false }) + '\n')
-    await new Promise((resolve) => {
-      liveThinking.release = resolve
-      liveThinking.sent?.()
-    })
-    res.write(JSON.stringify({ message: { role: 'assistant', content: 'Thought it over.' }, done: false }) + '\n')
-    return res.end(JSON.stringify({ done: true, prompt_eval_count: 100, eval_count: 12, eval_duration: 1e8 }) + '\n')
-  }
-  const isChild = String(body.messages[0].content).includes('<sub_agent>')
-  mockChats.push({ toolNames, toolResults, system: body.messages[0].content })
-  let message
-  // A delegated task: the parent hands it off, the child (its system prompt holds <sub_agent>) searches for the
-  // codeword, and each then answers once it has a tool result.
-  if (lastUser === 'Delegate: find the codeword' && toolResults.length === 0) {
-    message = {
-      role: 'assistant',
-      content: '',
-      tool_calls: [{ function: { name: 'delegate', arguments: { task: 'Search the web for the Ollmost codeword and reply with it.' } } }]
-    }
-  } else if (isChild && toolResults.length === 0) {
-    message = {
-      role: 'assistant',
-      content: '',
-      tool_calls: [{ function: { name: 'web_search', arguments: { query: 'Ollmost codeword' } } }]
-    }
-  } else if (isChild) {
-    message = { role: 'assistant', content: 'The codeword is OLLMOST-DELEGATE-OK.' }
-  } else if (lastUser === 'Delegate: find the codeword') {
-    message = { role: 'assistant', content: 'The sub-agent reports: OLLMOST-DELEGATE-OK.' }
-  } else if (toolNames.includes('web_search')) {
-    message =
-      toolResults.length === 0
-        ? {
-            role: 'assistant',
-            content: '',
-            tool_calls: [{ function: { name: 'web_search', arguments: { query: 'top headlines today' } } }]
-          }
-        : toolResults.length === 1
+const fakeOllama = await fakeServer({
+  dialect: 'ollama',
+  models: ['mock-tools:latest'],
+  // A debugger replay of a tool round (non-streaming, with tools) gets its tool call back; titles get the default.
+  once: (body) => {
+    if (!body.tools?.length) return null
+    mockChats.push({ toolNames: body.tools.map((t) => t.function.name), toolResults: [], system: body.messages[0].content, replay: true })
+    return { content: '', tool_calls: [{ function: { name: 'web_search', arguments: { query: 'replayed' } } }] }
+  },
+  reply: (body) => {
+    const toolNames = (body.tools ?? []).map((t) => t.function.name)
+    const toolResults = body.messages.filter((m) => m.role === 'tool').map((m) => m.content)
+    const lastUser = body.messages.filter((m) => m.role === 'user').at(-1)?.content ?? ''
+    if (lastUser.startsWith('Think it over'))
+      return {
+        thinking: 'Weighing it up.',
+        content: 'Thought it over.',
+        hold: () =>
+          new Promise((resolve) => {
+            liveThinking.release = resolve
+            liveThinking.sent?.()
+          })
+      }
+    const isChild = String(body.messages[0].content).includes('<sub_agent>')
+    mockChats.push({ toolNames, toolResults, system: body.messages[0].content })
+    let message
+    // A delegated task: the parent hands it off, the child (its system prompt holds <sub_agent>) searches for the
+    // codeword, and each then answers once it has a tool result.
+    if (lastUser === 'Delegate: find the codeword' && toolResults.length === 0) {
+      message = {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ function: { name: 'delegate', arguments: { task: 'Search the web for the Ollmost codeword and reply with it.' } } }]
+      }
+    } else if (isChild && toolResults.length === 0) {
+      message = {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ function: { name: 'web_search', arguments: { query: 'Ollmost codeword' } } }]
+      }
+    } else if (isChild) {
+      message = { role: 'assistant', content: 'The codeword is OLLMOST-DELEGATE-OK.' }
+    } else if (lastUser === 'Delegate: find the codeword') {
+      message = { role: 'assistant', content: 'The sub-agent reports: OLLMOST-DELEGATE-OK.' }
+    } else if (toolNames.includes('web_search')) {
+      message =
+        toolResults.length === 0
           ? {
-              // Text before the call, so the UI has to show the page read mid-answer.
               role: 'assistant',
-              content: 'Found a likely story. Opening it.',
-              tool_calls: [{ function: { name: 'browser.open', arguments: { id: 'https://news.example.com/story' } } }]
+              content: '',
+              tool_calls: [{ function: { name: 'web_search', arguments: { query: 'top headlines today' } } }]
             }
-          : {
-              role: 'assistant',
-              content: `The lead story is OLLMOST-WEB-OK on Sept\u202F23, per [Example News](https://news.example.com/story).\n\nMore: [preview test](${pageUrl}) and [paypal.com](https://evil.example/login).`
-            }
-  } else if (toolNames.length) {
-    message = {
-      role: 'assistant',
-      content: '',
-      tool_calls: [{ function: { name: 'web.run', arguments: { url: 'https://news.google.com' } } }]
+          : toolResults.length === 1
+            ? {
+                // Text before the call, so the UI has to show the page read mid-answer.
+                role: 'assistant',
+                content: 'Found a likely story. Opening it.',
+                tool_calls: [{ function: { name: 'browser.open', arguments: { id: 'https://news.example.com/story' } } }]
+              }
+            : {
+                role: 'assistant',
+                content: `The lead story is OLLMOST-WEB-OK on Sept\u202F23, per [Example News](https://news.example.com/story).\n\nMore: [preview test](${pageUrl}) and [paypal.com](https://evil.example/login).`
+              }
+    } else if (toolNames.length) {
+      message = {
+        role: 'assistant',
+        content: '',
+        tool_calls: [{ function: { name: 'web.run', arguments: { url: 'https://news.google.com' } } }]
+      }
+    } else {
+      message = { role: 'assistant', content: "I can't browse the web from Ollmost, so I can't fetch today's headlines." }
     }
-  } else {
-    message = { role: 'assistant', content: "I can't browse the web from Ollmost, so I can't fetch today's headlines." }
+    return message
   }
-  res.writeHead(200, { 'content-type': 'application/x-ndjson' })
-  res.write(JSON.stringify({ message, done: false }) + '\n')
-  res.end(JSON.stringify({ done: true, prompt_eval_count: 100, eval_count: 12, eval_duration: 1e8 }) + '\n')
 })
 // A page with OpenGraph metadata for link hover previews (served locally; previews normally refuse
 // local addresses, so the app is launched with OLLMOST_ALLOW_PRIVATE_PREVIEWS for this test).
@@ -716,7 +810,6 @@ const fakeWeb = createServer(async (req, res) => {
     JSON.stringify({ title: 'Example story', content: 'Full article text OLLMOST-WEB-MARKER', links: ['https://news.example.com/other'] })
   )
 })
-await new Promise((r) => fakeOllama.listen(0, '127.0.0.1', r))
 await new Promise((r) => fakeWeb.listen(0, '127.0.0.1', r))
 const mockUserData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-tools-'))
 mkdirSync(join(mockUserData, 'skills', 'news-helper'), { recursive: true })
@@ -736,13 +829,7 @@ writeFileSync(
   })
   const win = await app.firstWindow()
   await win.waitForSelector('textarea', { timeout: 20000 })
-  await win.evaluate(
-    (host) => window.ollmost.endpoints.update('ollama', { baseUrl: host, showCloudCatalog: false }),
-    `http://127.0.0.1:${fakeOllama.address().port}`
-  )
-  await win.reload()
-  await win.waitForSelector('textarea')
-  await win.waitForTimeout(1500)
+  await useOllamaAt(win, fakeOllama.url)
   try {
     // Without an API key: no web tools, and the model is told why.
     const reply = await send(win, "Get me today's top headlines.")
@@ -1033,45 +1120,38 @@ const fixtureRunning = () => {
 {
   const mcpChats = []
   let mcpDelay = 0
-  const mcpOllama = createServer(async (req, res) => {
-    let raw = ''
-    for await (const chunk of req) raw += chunk
-    const body = raw ? JSON.parse(raw) : {}
-    const json = (obj) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(obj))
-    if (req.url === '/api/tags') return json({ models: [{ name: 'mock-tools:latest' }] })
-    if (req.url === '/api/show')
-      return json({ capabilities: ['completion', 'tools'], model_info: { 'mock.context_length': 32768 }, details: {} })
-    if (!body.stream) return json({ message: { role: 'assistant', content: 'Mock title' }, done: true })
-    const toolNames = (body.tools ?? []).map((t) => t.function.name)
-    const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
-    const turnResults = body.messages
-      .slice(lastUser)
-      .filter((m) => m.role === 'tool')
-      .map((m) => m.content)
-    mcpChats.push({ toolNames, system: body.messages[0].content, turnResults })
-    if (mcpDelay) await new Promise((r) => setTimeout(r, mcpDelay))
-    const asksForLink = /LINK/.test(body.messages[lastUser]?.content ?? '')
-    const asksToRewrite = /REWRITE/.test(body.messages[lastUser]?.content ?? '')
-    const message = asksForLink
-      ? { role: 'assistant', content: `Here are [the notes](${leakUrl}).` }
-      : asksToRewrite
-        ? turnResults.length === 0
-          ? { role: 'assistant', content: '', tool_calls: [{ function: { name: 'fixture__rewrite', arguments: { name: 'echo' } } }] }
-          : { role: 'assistant', content: `Tool said: ${turnResults.at(-1)}` }
-        : !toolNames.includes('fixture__echo')
-          ? { role: 'assistant', content: 'No tools here.' }
-          : turnResults.length === 0
-            ? {
-                role: 'assistant',
-                content: 'Let me check.',
-                tool_calls: [{ function: { name: 'fixture__echo', arguments: { text: 'hi' } } }]
-              }
+  const mcpOllama = await fakeServer({
+    dialect: 'ollama',
+    models: ['mock-tools:latest'],
+    reply: async (body) => {
+      const toolNames = (body.tools ?? []).map((t) => t.function.name)
+      const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
+      const turnResults = body.messages
+        .slice(lastUser)
+        .filter((m) => m.role === 'tool')
+        .map((m) => m.content)
+      mcpChats.push({ toolNames, system: body.messages[0].content, turnResults })
+      if (mcpDelay) await new Promise((r) => setTimeout(r, mcpDelay))
+      const asksForLink = /LINK/.test(body.messages[lastUser]?.content ?? '')
+      const asksToRewrite = /REWRITE/.test(body.messages[lastUser]?.content ?? '')
+      const message = asksForLink
+        ? { role: 'assistant', content: `Here are [the notes](${leakUrl}).` }
+        : asksToRewrite
+          ? turnResults.length === 0
+            ? { role: 'assistant', content: '', tool_calls: [{ function: { name: 'fixture__rewrite', arguments: { name: 'echo' } } }] }
             : { role: 'assistant', content: `Tool said: ${turnResults.at(-1)}` }
-    res.writeHead(200, { 'content-type': 'application/x-ndjson' })
-    res.write(JSON.stringify({ message, done: false }) + '\n')
-    res.end(JSON.stringify({ done: true, prompt_eval_count: 100, eval_count: 12, eval_duration: 1e8 }) + '\n')
+          : !toolNames.includes('fixture__echo')
+            ? { role: 'assistant', content: 'No tools here.' }
+            : turnResults.length === 0
+              ? {
+                  role: 'assistant',
+                  content: 'Let me check.',
+                  tool_calls: [{ function: { name: 'fixture__echo', arguments: { text: 'hi' } } }]
+                }
+              : { role: 'assistant', content: `Tool said: ${turnResults.at(-1)}` }
+      return message
+    }
   })
-  await new Promise((r) => mcpOllama.listen(0, '127.0.0.1', r))
   // Where a model-written link in a tool chat points: hovering it must not fetch a preview from here (#63).
   let leakHits = 0
   const leakPages = createServer((req, res) => {
@@ -1103,13 +1183,7 @@ const fixtureRunning = () => {
   let quit = false
   try {
     await win.waitForSelector('textarea', { timeout: 20000 })
-    await win.evaluate(
-      (host) => window.ollmost.endpoints.update('ollama', { baseUrl: host, showCloudCatalog: false }),
-      `http://127.0.0.1:${mcpOllama.address().port}`
-    )
-    await win.reload()
-    await win.waitForSelector('textarea')
-    await win.waitForTimeout(1500)
+    await useOllamaAt(win, mcpOllama.url)
 
     // Add the fixture server through Settings → Tools.
     await win
@@ -1399,61 +1473,56 @@ const evilSvg = (port) =>
 {
   const runnerChats = []
   const svgHits = []
-  const runnerOllama = createServer(async (req, res) => {
+  const runnerOllama = await fakeServer({
+    dialect: 'ollama',
+    models: ['mock-tools:latest'],
     // A scripted SVG a run writes calls home here if anything runs it (#67).
-    if (req.url.startsWith('/svg-')) {
+    route: (req, res) => {
+      if (!req.url.startsWith('/svg-')) return false
       svgHits.push(req.url)
-      return res.writeHead(200).end()
+      res.writeHead(200).end()
+      return true
+    },
+    reply: (body) => {
+      const toolNames = (body.tools ?? []).map((t) => t.function.name)
+      const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
+      const question = body.messages[lastUser].content
+      const results = body.messages
+        .slice(lastUser)
+        .filter((m) => m.role === 'tool')
+        .map((m) => m.content)
+      runnerChats.push({ toolNames, system: body.messages[0].content, results })
+      const call = (name, args, content = '') => ({ role: 'assistant', content, tool_calls: [{ function: { name, arguments: args } }] })
+      let message
+      if (/sales/.test(question)) {
+        message = !results.length
+          ? call('run_code', {
+              language: 'python',
+              code: [
+                'import base64, csv, os',
+                "rows = list(csv.DictReader(open('uploads/sales.csv')))",
+                "total = sum(int(r['amount']) for r in rows)",
+                "open('total.txt', 'w').write(str(total))",
+                `open('chart.png', 'wb').write(base64.b64decode('${PNG.toString('base64')}'))`,
+                "open('run.command', 'w').write('echo hi')",
+                // Executable and read-only: the quarantine mark needs write permission (#67).
+                "os.chmod('run.command', 0o555)",
+                `open('evil.svg', 'w').write('${evilSvg(runnerOllama.port)}')`,
+                "print('TOTAL', total)"
+              ].join('\n')
+            })
+          : { role: 'assistant', content: `Result: ${results.at(-1).split('\n').slice(0, 3).join(' ')}` }
+      } else if (/note skill/.test(question)) {
+        const dir = results[0]?.match(/This skill's files are in (.+?)\. To run one of its scripts/)?.[1]
+        message = !results.length
+          ? call('load_skill', { name: 'note-maker' })
+          : results.length === 1
+            ? call('run_code', { language: 'bash', code: `python "${dir}/scripts/make_note.py"` })
+            : { role: 'assistant', content: `Skill said: ${results.at(-1).split('\n').slice(0, 3).join(' ')}` }
+      } else message = { role: 'assistant', content: 'Plain answer.' }
+      return message
     }
-    let raw = ''
-    for await (const chunk of req) raw += chunk
-    const body = raw ? JSON.parse(raw) : {}
-    const json = (obj) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(obj))
-    if (req.url === '/api/tags') return json({ models: [{ name: 'mock-tools:latest' }] })
-    if (req.url === '/api/show')
-      return json({ capabilities: ['completion', 'tools'], model_info: { 'mock.context_length': 32768 }, details: {} })
-    if (!body.stream) return json({ message: { role: 'assistant', content: 'Mock title' }, done: true })
-    const toolNames = (body.tools ?? []).map((t) => t.function.name)
-    const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
-    const question = body.messages[lastUser].content
-    const results = body.messages
-      .slice(lastUser)
-      .filter((m) => m.role === 'tool')
-      .map((m) => m.content)
-    runnerChats.push({ toolNames, system: body.messages[0].content, results })
-    const call = (name, args, content = '') => ({ role: 'assistant', content, tool_calls: [{ function: { name, arguments: args } }] })
-    let message
-    if (/sales/.test(question)) {
-      message = !results.length
-        ? call('run_code', {
-            language: 'python',
-            code: [
-              'import base64, csv, os',
-              "rows = list(csv.DictReader(open('uploads/sales.csv')))",
-              "total = sum(int(r['amount']) for r in rows)",
-              "open('total.txt', 'w').write(str(total))",
-              `open('chart.png', 'wb').write(base64.b64decode('${PNG.toString('base64')}'))`,
-              "open('run.command', 'w').write('echo hi')",
-              // Executable and read-only: the quarantine mark needs write permission (#67).
-              "os.chmod('run.command', 0o555)",
-              `open('evil.svg', 'w').write('${evilSvg(runnerOllama.address().port)}')`,
-              "print('TOTAL', total)"
-            ].join('\n')
-          })
-        : { role: 'assistant', content: `Result: ${results.at(-1).split('\n').slice(0, 3).join(' ')}` }
-    } else if (/note skill/.test(question)) {
-      const dir = results[0]?.match(/This skill's files are in (.+?)\. To run one of its scripts/)?.[1]
-      message = !results.length
-        ? call('load_skill', { name: 'note-maker' })
-        : results.length === 1
-          ? call('run_code', { language: 'bash', code: `python "${dir}/scripts/make_note.py"` })
-          : { role: 'assistant', content: `Skill said: ${results.at(-1).split('\n').slice(0, 3).join(' ')}` }
-    } else message = { role: 'assistant', content: 'Plain answer.' }
-    res.writeHead(200, { 'content-type': 'application/x-ndjson' })
-    res.write(JSON.stringify({ message, done: false }) + '\n')
-    res.end(JSON.stringify({ done: true, prompt_eval_count: 100, eval_count: 12, eval_duration: 1e8 }) + '\n')
   })
-  await new Promise((r) => runnerOllama.listen(0, '127.0.0.1', r))
   const runnerData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-runner-'))
   // A skill with a script, loaded by the model and run from its own folder.
   mkdirSync(join(runnerData, 'skills', 'note-maker', 'scripts'), { recursive: true })
@@ -1470,13 +1539,7 @@ const evilSvg = (port) =>
   const win = await app.firstWindow()
   try {
     await win.waitForSelector('textarea', { timeout: 20000 })
-    await win.evaluate(
-      (host) => window.ollmost.endpoints.update('ollama', { baseUrl: host, showCloudCatalog: false }),
-      `http://127.0.0.1:${runnerOllama.address().port}`
-    )
-    await win.reload()
-    await win.waitForSelector('textarea')
-    await win.waitForTimeout(1500)
+    await useOllamaAt(win, runnerOllama.url)
     const status = await win.evaluate(() => window.ollmost.runner.status())
     check('the code runner is available (sandbox and Python found)', status.available, status.reason ?? status.python?.version)
 
@@ -1704,55 +1767,44 @@ const evilSvg = (port) =>
     git(['commit', '-q', '-m', 'Initial commit'], repo)
 
     const sessionChats = []
-    const sessionOllama = createServer(async (req, res) => {
-      let raw = ''
-      for await (const chunk of req) raw += chunk
-      const body = raw ? JSON.parse(raw) : {}
-      const json = (obj) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(obj))
-      if (req.url === '/api/tags') return json({ models: [{ name: 'mock-tools:latest' }] })
-      if (req.url === '/api/show')
-        return json({ capabilities: ['completion', 'tools'], model_info: { 'mock.context_length': 32768 }, details: {} })
+    const sessionOllama = await fakeServer({
+      dialect: 'ollama',
+      models: ['mock-tools:latest'],
       // A /compact summary takes a moment, so the next message can be typed while it runs, and comes in Markdown, as
-      // models often write it whatever the prompt asks.
-      const summary = '**Goal:** greet in French.\n\n- Read README.md.\n- Changed Hello to Bonjour.'
-      if (!body.stream && String(body.messages[0]?.content).startsWith('You compact'))
-        return setTimeout(() => json({ message: { role: 'assistant', content: summary }, done: true }), 2000)
-      if (!body.stream) return json({ message: { role: 'assistant', content: 'Mock title' }, done: true })
-      const toolNames = (body.tools ?? []).map((t) => t.function.name)
-      const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
-      const results = body.messages
-        .slice(lastUser)
-        .filter((m) => m.role === 'tool')
-        .map((m) => m.content)
-      sessionChats.push({ toolNames, system: body.messages[0].content, results })
-      const call = (name, args) => ({ role: 'assistant', content: '', tool_calls: [{ function: { name, arguments: args } }] })
-      // Only a session offers edit_file, so its presence is what tells this fake apart from the other mock chats.
-      const message = !toolNames.includes('edit_file')
-        ? { role: 'assistant', content: 'Plain answer.' }
-        : results.length === 0
-          ? call('read_file', { path: 'README.md' })
-          : results.length === 1
-            ? call('edit_file', { path: 'README.md', old_string: 'Hello', new_string: 'Bonjour' })
-            : results.length === 2
-              ? call('run_command', { command: 'echo done' })
-              : { role: 'assistant', content: 'Changed the greeting and checked it.' }
-      res.writeHead(200, { 'content-type': 'application/x-ndjson' })
-      res.write(JSON.stringify({ message, done: false }) + '\n')
-      res.end(JSON.stringify({ done: true, prompt_eval_count: 100, eval_count: 12, eval_duration: 1e8 }) + '\n')
+      // models often write it whatever the prompt asks. Anything else read whole (a title) gets the default.
+      once: (body) =>
+        String(body.messages[0]?.content).startsWith('You compact')
+          ? new Promise((resolve) =>
+              setTimeout(() => resolve({ content: '**Goal:** greet in French.\n\n- Read README.md.\n- Changed Hello to Bonjour.' }), 2000)
+            )
+          : null,
+      reply: (body) => {
+        const toolNames = (body.tools ?? []).map((t) => t.function.name)
+        const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
+        const results = body.messages
+          .slice(lastUser)
+          .filter((m) => m.role === 'tool')
+          .map((m) => m.content)
+        sessionChats.push({ toolNames, system: body.messages[0].content, results })
+        const call = (name, args) => ({ content: '', tool_calls: [{ function: { name, arguments: args } }] })
+        // Only a session offers edit_file, so its presence is what tells this fake apart from the other mock chats.
+        return !toolNames.includes('edit_file')
+          ? { content: 'Plain answer.' }
+          : results.length === 0
+            ? call('read_file', { path: 'README.md' })
+            : results.length === 1
+              ? call('edit_file', { path: 'README.md', old_string: 'Hello', new_string: 'Bonjour' })
+              : results.length === 2
+                ? call('run_command', { command: 'echo done' })
+                : { content: 'Changed the greeting and checked it.' }
+      }
     })
-    await new Promise((r) => sessionOllama.listen(0, '127.0.0.1', r))
     const sessionData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-sessions-'))
     const app = await electron.launch({ args: [ROOT], env: { ...process.env, OLLMOST_USER_DATA: sessionData } })
     const win = await app.firstWindow()
     try {
       await win.waitForSelector('textarea', { timeout: 20000 })
-      await win.evaluate(
-        (host) => window.ollmost.endpoints.update('ollama', { baseUrl: host, showCloudCatalog: false }),
-        `http://127.0.0.1:${sessionOllama.address().port}`
-      )
-      await win.reload()
-      await win.waitForSelector('textarea')
-      await win.waitForTimeout(1500)
+      await useOllamaAt(win, sessionOllama.url)
 
       // 0. A file pasted or dropped on Home's composer (a chat's) is attached; the same on a session's, below, isn't.
       const attached = () => win.locator('button[aria-label="Remove attachment"]').count()
@@ -2014,27 +2066,222 @@ const evilSvg = (port) =>
   }
 }
 
+// 15. Model endpoints: an OpenAI-compatible server added in Settings (Check, then Add), picked with its chip, a tool
+// round on it, the "local" label, and the same chat switched to a model on the Ollama endpoint.
+{
+  const openaiRequests = []
+  const openai = await fakeServer({
+    dialect: 'openai',
+    // Generic discovery hides embedding models by name.
+    models: ['mock-openai-tools', 'text-embedding-mock'],
+    requests: openaiRequests,
+    // One round: load the skill; then answer with what it said.
+    reply: (body) => {
+      const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
+      const results = body.messages.slice(lastUser).filter((m) => m.role === 'tool')
+      if (!(body.tools ?? []).some((t) => t.function.name === 'load_skill')) return { content: 'No tools here.' }
+      return results.length === 0
+        ? { content: '', tool_calls: [{ function: { name: 'load_skill', arguments: { name: 'endpoint-helper' } } }] }
+        : { content: `Skill says: ${/E2E-ENDPOINT-MARKER/.test(results[0].content) ? 'E2E-ENDPOINT-MARKER' : 'nothing'}` }
+    }
+  })
+  const ollamaRequests = []
+  const ollama = await fakeServer({
+    dialect: 'ollama',
+    models: ['mock-ollama:latest'],
+    requests: ollamaRequests,
+    reply: () => ({ content: 'Ollama answered: E2E-OLLAMA-OK' })
+  })
+  const data = mkdtempSync(join(tmpdir(), 'ollmost-e2e-endpoints-'))
+  mkdirSync(join(data, 'skills', 'endpoint-helper'), { recursive: true })
+  writeFileSync(
+    join(data, 'skills', 'endpoint-helper', 'SKILL.md'),
+    '---\nname: endpoint-helper\ndescription: Use for any question about endpoints.\n---\n\nThe answer is E2E-ENDPOINT-MARKER.\n'
+  )
+  const app = await electron.launch({ args: [ROOT], env: { ...process.env, OLLMOST_USER_DATA: data } })
+  const win = await app.firstWindow()
+  try {
+    await win.waitForSelector('textarea', { timeout: 20000 })
+    await useOllamaAt(win, ollama.url)
+
+    // Settings → Models → + Add endpoint: the address, Check, what was found, a name, Add.
+    await win
+      .getByRole('button', { name: /Set your name|Settings/ })
+      .last()
+      .click()
+    await win.getByRole('button', { name: 'Models', exact: true }).click()
+    await win.getByRole('button', { name: /Add endpoint/ }).click()
+    const dialog = win.getByRole('dialog')
+    await dialog.getByLabel('Address', { exact: true }).fill(openai.url)
+    await dialog.getByRole('button', { name: 'Check' }).click()
+    const found = dialog.getByText(/^Found/)
+    await found.waitFor({ timeout: 10000 })
+    const summary = await found.innerText()
+    check('Check finds an OpenAI-compatible server and says defaults apply', /defaults apply/.test(summary), summary)
+    await win.screenshot({ path: join(SHOTS, 'endpoint-add.png') })
+    await dialog.getByLabel('Name', { exact: true }).fill('E2E Server')
+    await dialog.getByRole('button', { name: 'Add', exact: true }).click()
+    await dialog.waitFor({ state: 'detached', timeout: 10000 })
+    const added = (await win.evaluate(() => window.ollmost.endpoints.list())).find((e) => e.name === 'E2E Server')
+    check(
+      'the endpoint is saved with an id made from its name, as OpenAI-compatible, at the address checked',
+      added?.id === 'e2e-server' && added?.kind === 'openai' && added?.baseUrl === openai.url,
+      JSON.stringify(added)
+    )
+
+    // The picker: a chip for the endpoint narrows the list to its models.
+    await newChat(win)
+    await win.click('button[aria-label="Choose model"]')
+    const picker = win.locator('[data-radix-popper-content-wrapper]')
+    await picker.getByRole('button', { name: 'E2E Server', exact: true }).first().click()
+    // The dialog closes before the model list has reloaded, so wait for the endpoint's model row.
+    await picker.locator('button').filter({ hasText: 'mock-openai-tools' }).first().waitFor()
+    const listed = await picker.innerText()
+    check(
+      "the endpoint's chip lists its chat models only",
+      /mock-openai-tools/.test(listed) && !/mock-ollama/.test(listed) && !/text-embedding-mock/.test(listed),
+      listed.replace(/\s+/g, ' ').slice(0, 120)
+    )
+    await win.screenshot({ path: join(SHOTS, 'endpoint-picker.png') })
+    await picker.locator('button').filter({ hasText: 'mock-openai-tools' }).first().click()
+    const trigger = await win.locator('button[aria-label="Choose model"]').innerText()
+    check('the picker names a non-Ollama model with its endpoint', /mock-openai-tools · E2E Server/.test(trigger), trigger)
+
+    // A tool round on the OpenAI-compatible endpoint.
+    const reply = await send(win, 'What does the endpoint helper skill say?')
+    check(
+      'a model on the OpenAI-compatible endpoint loads a skill and answers from it',
+      /Skill says: E2E-ENDPOINT-MARKER/.test(reply),
+      reply.slice(0, 80)
+    )
+    const [round1, round2] = openaiRequests.filter((r) => r.path === '/v1/chat/completions' && r.body.stream)
+    const echo = round2?.body.messages.find((m) => m.role === 'assistant' && m.tool_calls)
+    const result = round2?.body.messages.find((m) => m.role === 'tool')
+    let echoedSkill = null
+    try {
+      echoedSkill = JSON.parse(echo?.tool_calls[0].function.arguments).name
+    } catch {
+      // No call echoed, or its arguments aren't JSON: the check below fails.
+    }
+    check(
+      "the round goes back in OpenAI's shape: the call with its id and JSON arguments, the result with that id",
+      !!round1?.body.tools?.some((t) => t.function.name === 'load_skill') &&
+        echo?.tool_calls[0].id === 'call_e2e_0' &&
+        echoedSkill === 'endpoint-helper' &&
+        result?.tool_call_id === 'call_e2e_0',
+      JSON.stringify(echo?.tool_calls ?? null).slice(0, 120)
+    )
+    check('the stream asks for usage', round1?.body.stream_options?.include_usage === true)
+    check('the skill load shows in the reply', (await win.locator('text=Using skill').count()) > 0)
+
+    // The "local" label: a server on this Mac costs nothing Ollmost tracks.
+    await win.waitForSelector('button[aria-label="Chat usage"]', { timeout: 10000 })
+    const chip = await win.locator('button[aria-label="Chat usage"]').innerText()
+    check("the chat's cost reads local", /tokens · local/.test(chip), chip)
+    await win.locator('span.cursor-default').filter({ hasText: 'mock-openai-tools' }).last().hover()
+    await win.waitForTimeout(700)
+    const stats = (await win.locator('[role="tooltip"]').first().textContent()) ?? ''
+    check("the reply's stats say local", /· local\b/.test(stats), stats)
+    await win.mouse.move(0, 0)
+
+    // The same chat, switched to a model on the Ollama endpoint.
+    await pickModel(win, 'mock-ollama', 'Ollama')
+    const ollamaReply = await send(win, 'And what does the Ollama model say?')
+    check('the same chat continues on the Ollama endpoint', /E2E-OLLAMA-OK/.test(ollamaReply), ollamaReply.slice(0, 60))
+    const carried = ollamaRequests.find((r) => r.path === '/api/chat' && r.body.stream)
+    check(
+      "the history goes to Ollama with the other endpoint's answer",
+      !!carried?.body.messages.some((m) => m.role === 'assistant' && /E2E-ENDPOINT-MARKER/.test(m.content)),
+      `${carried?.body.messages.length ?? 0} messages`
+    )
+    await win.screenshot({ path: join(SHOTS, 'endpoint-switch.png') })
+
+    // The quota chip: offered with an Ollama endpoint turned on and no key; gone once none is turned on.
+    check(
+      'with an Ollama endpoint turned on and no key, the quota chip asks for one',
+      (await expectedQuota(win)) === 'add-key' && /Quota/.test(await win.locator('button[aria-label^="Ollama usage"]').innerText())
+    )
+    await win.evaluate(() => window.ollmost.endpoints.update('ollama', { enabled: false }))
+    await win.reload()
+    await win.waitForSelector('textarea')
+    await win.waitForTimeout(1500)
+    check(
+      'with no Ollama endpoint turned on and no key, there is no quota chip',
+      (await expectedQuota(win)) === 'hidden' && (await win.locator('button[aria-label^="Ollama usage"]').count()) === 0
+    )
+  } catch (err) {
+    check('model endpoints run completed without errors', false, err.message.split('\n')[0])
+    await win.screenshot({ path: join(SHOTS, 'endpoints-failure.png') }).catch(() => {})
+  } finally {
+    await app.close()
+    openai.close()
+    ollama.close()
+  }
+
+  // 15b. Live: a model on a real OpenAI-compatible server (LM Studio: http://localhost:1234/v1), when one is given.
+  // OLLMOST_E2E_OPENAI_MODEL picks the model; otherwise the first that can use tools.
+  if (process.env.OLLMOST_E2E_OPENAI_URL) {
+    const baseUrl = process.env.OLLMOST_E2E_OPENAI_URL
+    const liveApp = await electron.launch({
+      args: [ROOT],
+      env: { ...process.env, OLLMOST_USER_DATA: mkdtempSync(join(tmpdir(), 'ollmost-e2e-endpoints-live-')) }
+    })
+    const liveWin = await liveApp.firstWindow()
+    try {
+      await liveWin.waitForSelector('textarea', { timeout: 20000 })
+      const live = await liveWin.evaluate(async (url) => {
+        const probe = await window.ollmost.endpoints.probe({ baseUrl: url })
+        return window.ollmost.endpoints.add({ name: 'Live server', baseUrl: probe.baseUrl, kind: probe.kind, flavor: probe.flavor })
+      }, baseUrl)
+      const { models } = await liveWin.evaluate(() => window.ollmost.models.list(true))
+      const wanted = process.env.OLLMOST_E2E_OPENAI_MODEL
+      const model = models.find((m) => m.endpoint.id === live.id && (wanted ? m.name === wanted : m.capabilities.includes('tools')))
+      check(
+        'the live server lists a model to use',
+        !!model,
+        `${live.flavor}: ${models.filter((m) => m.endpoint.id === live.id).length} models`
+      )
+      if (model) {
+        await liveWin.reload()
+        await liveWin.waitForSelector('textarea')
+        await liveWin.waitForTimeout(1500)
+        await pickModel(liveWin, model.name, 'Live server')
+        const pong = await send(liveWin, 'Reply with the single word: pong')
+        check(`${model.name} on ${live.flavor} answers`, /pong/i.test(pong), pong.slice(0, 60))
+        const onThisMac = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(live.baseUrl)
+        const liveChip = await liveWin.locator('button[aria-label="Chat usage"]').innerText()
+        check(
+          `its cost reads ${onThisMac ? 'local' : 'not tracked'}`,
+          new RegExp(`tokens · ${onThisMac ? 'local' : 'not tracked'}`).test(liveChip),
+          liveChip
+        )
+        await liveWin.screenshot({ path: join(SHOTS, 'endpoint-live.png') })
+      }
+    } catch (err) {
+      check('live endpoint run completed without errors', false, err.message.split('\n')[0])
+      await liveWin.screenshot({ path: join(SHOTS, 'endpoint-live-failure.png') }).catch(() => {})
+    } finally {
+      await liveApp.close()
+    }
+  } else {
+    console.log('SKIP  model endpoints: live check (set OLLMOST_E2E_OPENAI_URL to run it, e.g. http://localhost:1234/v1)')
+  }
+}
+
 // 14. Coming from Kiln (#60): data Kiln left next to Ollmost's data folder moves over on the first launch, with its
 // chats, files and settings. The secrets Kiln's keychain entry encrypted are asked for again, once.
 {
   const home = mkdtempSync(join(tmpdir(), 'ollmost-e2e-kiln-'))
   const DOT_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
   writeFileSync(join(fixtures, 'dot.png'), DOT_PNG)
-  const mock = createServer(async (req, res) => {
-    let raw = ''
-    for await (const chunk of req) raw += chunk
-    const body = raw ? JSON.parse(raw) : {}
-    const json = (obj) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(obj))
-    if (req.url === '/api/tags') return json({ models: [{ name: 'mock-vision:latest' }] })
-    if (req.url === '/api/show')
-      return json({ capabilities: ['completion', 'vision'], model_info: { 'mock.context_length': 32768 }, details: {} })
-    if (!body.stream) return json({ message: { role: 'assistant', content: 'Heron picture' }, done: true })
-    res.writeHead(200, { 'content-type': 'application/x-ndjson' })
-    res.write(JSON.stringify({ message: { role: 'assistant', content: 'A dot.' }, done: false }) + '\n')
-    res.end(JSON.stringify({ done: true, prompt_eval_count: 10, eval_count: 2, eval_duration: 1e8 }) + '\n')
+  const mock = await fakeServer({
+    dialect: 'ollama',
+    models: ['mock-vision:latest'],
+    capabilities: ['completion', 'vision'],
+    title: 'Heron picture',
+    reply: () => ({ content: 'A dot.' })
   })
-  await new Promise((r) => mock.listen(0, '127.0.0.1', r))
-  const host = `http://127.0.0.1:${mock.address().port}`
+  const host = mock.url
   const launchAt = async (dir) => {
     const app = await electron.launch({ args: [ROOT], env: { ...process.env, OLLMOST_USER_DATA: dir } })
     const win = await app.firstWindow()
