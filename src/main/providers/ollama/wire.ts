@@ -1,7 +1,10 @@
-// Ollama's HTTP API: /api/chat as NDJSON, /api/tags and /api/show. Only the adapter (adapter.ts) and the model list
-// (models.ts) call it; everything else speaks the neutral types in ../types.ts.
-import { OLLAMA_CLOUD_URL } from '@shared/endpoints'
+// Ollama's HTTP API: /api/chat as NDJSON, /api/tags and /api/show. The adapter (adapter.ts) and the model list (models.ts) call
+// it, and probe.ts reads ollama.com's catalog through it; web.ts and usage/account.ts borrow its error wording and ollama.com's
+// address. Everything else speaks the neutral types in ../types.ts.
+import { displayAddress, hostnameOf, OLLAMA_CLOUD_URL } from '@shared/endpoints'
 import type { ModelWhere } from '@shared/types'
+import { cloudUnreachableMessage, fetchFailureMessage } from '../fetchFailure'
+import { isRecord } from '../json'
 import { createStallTimer, STREAM_TIMEOUTS, type StreamTimeouts } from '../stream'
 import type { ToolDef } from '../types'
 
@@ -68,9 +71,10 @@ export interface ChatChunk {
 export class OllamaError extends Error {
   constructor(
     message: string,
-    readonly status?: number
+    readonly status?: number,
+    options?: ErrorOptions
   ) {
-    super(message)
+    super(message, options)
   }
 }
 
@@ -84,13 +88,27 @@ function notEnoughMemory(detail: string, model?: string): string | undefined {
     : `Not enough memory to load the model. Lower the context window in Settings → Models, or pick a smaller or more quantized model.`
 }
 
-function friendly(t: OllamaTarget, status: number, body: string, model?: string): OllamaError {
-  let detail = body
+/** What an error body says: Ollama's `error` text, or the body as it came when it isn't JSON. JSON with no such text says nothing. */
+export function errorDetail(body: string): string {
   try {
-    detail = (JSON.parse(body) as { error?: string }).error ?? body
+    const parsed: unknown = JSON.parse(body)
+    return isRecord(parsed) && typeof parsed.error === 'string' ? parsed.error : ''
   } catch {
-    /* not JSON */
+    return body
   }
+}
+
+/** What `detail` says to a person, or '' for nothing: blank, or a proxy's error page (HTML). */
+export function messageOf(detail: string): string {
+  const shown = detail.trim()
+  return shown === '' || shown.startsWith('<') ? '' : detail
+}
+
+function friendly(t: OllamaTarget, status: number, body: string, model?: string): OllamaError {
+  const detail = errorDetail(body)
+  // With nothing to say, a server is named by its address.
+  const answered = t.cloud ? `ollama.com answered HTTP ${status}.` : `${t.name} at ${displayAddress(t.base)} answered HTTP ${status}.`
+  const message = messageOf(detail)
   if (status === 401 || status === 403)
     return new OllamaError(
       t.cloud
@@ -101,14 +119,22 @@ function friendly(t: OllamaTarget, status: number, body: string, model?: string)
       status
     )
   if (status === 429) return new OllamaError('Ollama cloud usage limit reached. Try again later, or switch to a local model.', status)
-  if (status === 404 && /not found/i.test(detail))
-    return new OllamaError(model ? `Model “${model}” was not found by ${t.name}.` : detail, status)
+  // A 404 is a missing model when the server says so; a proxy's error page or a bare status says nothing of the model.
+  if (status === 404 && /not found/i.test(message))
+    return new OllamaError(model ? `Model “${model}” was not found by ${t.name}.` : message || answered, status)
   // 4b69183: Ollama's "model requires more system memory" in plain English, naming the model.
-  return new OllamaError(notEnoughMemory(detail, model) ?? (detail || `${t.name} returned HTTP ${status}`), status)
+  return new OllamaError(notEnoughMemory(detail, model) ?? (message || answered), status)
 }
 
 // Short calls (model lists, /api/show) should never hang the UI on a wedged daemon.
 const METADATA_TIMEOUT_MS = 30_000
+
+/** A request that never got an answer, in words that name the server; `err` is what fetch threw. */
+function unreachable(t: OllamaTarget, err: unknown): string {
+  if (t.cloud) return cloudUnreachableMessage(err)
+  const refused = `Can't reach ${t.name} at ${displayAddress(t.base)}. Is the Ollama app running?`
+  return fetchFailureMessage(err, { subject: t.name, address: displayAddress(t.base), host: hostnameOf(t.base) ?? t.base }, refused)
+}
 
 async function request(t: OllamaTarget, path: string, init: RequestInit & { model?: string } = {}): Promise<Response> {
   let res: Response
@@ -120,12 +146,9 @@ async function request(t: OllamaTarget, path: string, init: RequestInit & { mode
     })
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err
-    if ((err as Error).name === 'TimeoutError') throw new OllamaError(`${t.name} took too long to respond. Try again in a moment.`)
-    throw new OllamaError(
-      t.cloud
-        ? `Can't reach ${OLLAMA_CLOUD}. Check your internet connection.`
-        : `Can't reach ${t.name} at ${t.base}. Is the Ollama app running?`
-    )
+    if ((err as Error).name === 'TimeoutError')
+      throw new OllamaError(`${t.name} took too long to respond. Try again in a moment.`, undefined, { cause: err })
+    throw new OllamaError(unreachable(t, err), undefined, { cause: err })
   }
   if (!res.ok) throw friendly(t, res.status, await res.text().catch(() => ''), init.model)
   return res

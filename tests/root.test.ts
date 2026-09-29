@@ -1,15 +1,15 @@
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { validateRoot } from '../src/main/runner/root'
+import { tempDir } from './tempDir'
 
 // Which folders a code session may work in (#86). A home and a data folder made under a temp folder stand in for the
 // real ones, which a test can't change. A temp folder's path has a link in it on a Mac (/var is /private/var), so
 // what's picked and the real path it gives are told apart.
 
 const real = (path: string) => realpathSync.native(path)
-const picked = mkdtempSync(join(tmpdir(), 'ollmost-root-'))
+const picked = tempDir('ollmost-root-')
 const base = real(picked)
 const home = join(base, 'home')
 const data = join(base, 'data')
@@ -183,7 +183,7 @@ describe.each(ENVS)('the folder a code session works in, with the home and data 
 
 describe('the folder a code session works in', () => {
   it.runIf(existsSync('/System/Volumes/Data'))('isn’t a new folder reached through /System/Volumes/Data', async () => {
-    const dir = real(mkdtempSync(join(tmpdir(), 'ollmost-root-firmlink-')))
+    const dir = real(tempDir('ollmost-root-firmlink-'))
     try {
       expect(await validateRoot(dir, { home, data })).toBe(dir)
       await expect(validateRoot(`/System/Volumes/Data${dir}`, { home, data })).rejects.toThrow(/usual path/)

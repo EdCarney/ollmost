@@ -4,7 +4,7 @@ import { Composer } from '@/components/Composer'
 import { MigrationNotice } from '@/components/MigrationNotice'
 import { OllmostMark } from '@/components/OllmostMark'
 import { TopBar } from '@/components/TopBar'
-import { Button } from '@/components/ui'
+import { Button, Spinner } from '@/components/ui'
 import { sendMessage } from '@/lib/chatActions'
 import { greeting } from '@/lib/format'
 import { useApp } from '@/stores/app'
@@ -27,7 +27,7 @@ export function HomeView() {
           <MigrationNotice />
           {notice && (
             <div className="mb-4 flex items-start gap-3 rounded-ollmost border border-line bg-panel p-4 text-sm">
-              <TriangleAlert className="mt-0.5 size-4 shrink-0 text-danger" />
+              {notice.waiting ? <Spinner className="mt-0.5 shrink-0" /> : <TriangleAlert className="mt-0.5 size-4 shrink-0 text-danger" />}
               <div className="flex-1">
                 <div className="font-medium">{notice.heading}</div>
                 {modelErrors.length > 0 && (

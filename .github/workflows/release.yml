@@ -26,6 +26,9 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
+        env:
+          # As in ci.yml: a sandboxed git run can take longer than the panel's 10 s limit on this runner.
+          OLLMOST_GIT_MS: 60000
       - run: npx electron-vite build
       # Upload with gh instead of electron-builder's publisher, which makes a draft release
       # that releases/latest/download/ can't see.

@@ -1,7 +1,7 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
+import { tempDir } from './tempDir'
 
 // Real MCP servers over stdio (tests/fixtures/mcp-server.mjs), a real in-memory database. Electron's keychain is
 // faked, and spawned processes get Ollmost's environment as it is (the login-shell PATH has its own tests).
@@ -146,7 +146,7 @@ describe('trust given to a server stays with that program', () => {
 })
 
 describe('importing', () => {
-  const dir = mkdtempSync(join(tmpdir(), 'ollmost-mcp-import-'))
+  const dir = tempDir('ollmost-mcp-import-')
   afterAll(() => {
     delete process.env.OLLMOST_CLAUDE_DESKTOP_CONFIG
     delete process.env.OLLMOST_CLAUDE_CODE_CONFIG
@@ -288,7 +288,7 @@ describe('stopping a server that is still starting', () => {
 
   it("stops the process of a start that hasn't connected yet", async () => {
     // A server that starts but never answers, so it stays "starting" until its 60-second timeout.
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-mcp-silent-'))
+    const dir = tempDir('ollmost-mcp-silent-')
     const pidFile = join(dir, 'pid')
     const script = join(dir, 'silent.mjs')
     writeFileSync(

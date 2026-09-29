@@ -1,5 +1,6 @@
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { normalizeBaseUrl, probeEndpoint, sameServer } from '../src/main/providers/probe'
+import { fetchFailed } from './fetchFailed'
 import { type MockOllama, startMockOllama } from './ollamaMock'
 
 describe('normalizeBaseUrl (Review Focus #5)', () => {
@@ -69,6 +70,21 @@ describe('probeEndpoint', () => {
       models: 1,
       reportsCapabilities: false
     })
+  })
+
+  it('says why an address didn’t answer when the cause is a missing host or an untrusted certificate', async () => {
+    try {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(fetchFailed('ECONNREFUSED', 'aggregate-no-code')))
+      await expect(probeEndpoint('https://gpu.lan:8000')).rejects.toThrow("Can't reach gpu.lan:8000. Is the server started?")
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(fetchFailed('ENOTFOUND')))
+      await expect(probeEndpoint('https://gpu.lan:8000')).rejects.toThrow("The host gpu.lan wasn't found. Check the address.")
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(fetchFailed('UNABLE_TO_VERIFY_LEAF_SIGNATURE')))
+      await expect(probeEndpoint('https://gpu.lan:8000')).rejects.toThrow(
+        "The certificate at gpu.lan:8000 isn't trusted (UNABLE_TO_VERIFY_LEAF_SIGNATURE)."
+      )
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('says when nothing answers, or the server wants a key', async () => {

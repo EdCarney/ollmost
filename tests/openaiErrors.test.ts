@@ -3,6 +3,7 @@ import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import type { Endpoint } from '@shared/types'
 import { friendlyOpenAIError, OpenAIError, unreachableError } from '../src/main/providers/openai/errors'
+import { fetchFailed } from './fetchFailed'
 import { FIXTURES, fixtureText } from './ollamaMock'
 
 const lm: Endpoint = {
@@ -29,6 +30,30 @@ describe('unreachableError', () => {
     expect(unreachableError({ ...lm, name: 'Lab', flavor: 'generic' }).message).toBe(
       "Can't reach Lab at localhost:1234. Is its server started?"
     )
+  })
+
+  it('says why when the cause is a host that isn’t there or a certificate that isn’t trusted', () => {
+    expect(unreachableError(lm, fetchFailed('ENOTFOUND')).message).toBe(
+      "LM Studio's host localhost wasn't found. Check the address in Settings → Models → LM Studio."
+    )
+    expect(unreachableError(gpu, fetchFailed('CERT_HAS_EXPIRED')).message).toBe(
+      "GPU box's certificate at 192.168.1.20:8000 isn't trusted (CERT_HAS_EXPIRED)."
+    )
+  })
+
+  it('names an address that isn’t a URL as it was written', () => {
+    expect(unreachableError({ ...lm, baseUrl: 'not a url' }, fetchFailed('ENOTFOUND')).message).toBe(
+      "LM Studio's host not a url wasn't found. Check the address in Settings → Models → LM Studio."
+    )
+  })
+
+  it('words a refused connection, or a cause it can’t read, as before, and keeps the cause', () => {
+    const refused = fetchFailed('ECONNREFUSED', 'aggregate-no-code')
+    const err = unreachableError(lm, refused)
+    expect(err.message).toBe("Can't reach LM Studio at localhost:1234. Is its server started? Start it in LM Studio’s Developer tab.")
+    expect(err.cause).toBe(refused)
+    expect(unreachableError(lm, new TypeError('fetch failed')).message).toBe(unreachableError(lm).message)
+    expect(unreachableError(lm).cause).toBeUndefined()
   })
 })
 
@@ -108,8 +133,74 @@ describe('friendlyOpenAIError', () => {
     expect(friendlyOpenAIError(lm, 500, 'boom').error.message).toBe('LM Studio: boom')
     expect(friendlyOpenAIError(lm, 500, '{"error":"x"}').error.message).toBe('LM Studio: x')
     expect(friendlyOpenAIError(lm, 500, '{"detail":"y"}').error.message).toBe('LM Studio: y')
-    expect(friendlyOpenAIError(lm, 502, '').error.message).toBe('LM Studio: HTTP 502')
+    expect(friendlyOpenAIError(lm, 502, '').error.message).toBe('LM Studio at localhost:1234 answered HTTP 502.')
     expect(friendlyOpenAIError(lm, 429, '').error.message).toBe('LM Studio is busy or rate-limited. Try again in a moment.')
+  })
+
+  it('names the address when a server answers with no message, and counts a proxy’s HTML page as none', () => {
+    const answered = 'GPU box at 192.168.1.20:8000 answered HTTP 502.'
+    expect(friendlyOpenAIError(gpu, 502, '').error.message).toBe(answered)
+    expect(friendlyOpenAIError(gpu, 502, '\n  ').error.message).toBe(answered)
+    expect(friendlyOpenAIError(gpu, 502, '<html><head><title>502 Bad Gateway</title></head><body>nginx</body></html>').error.message).toBe(
+      answered
+    )
+    expect(friendlyOpenAIError(gpu, 502, '  <!DOCTYPE html><html></html>\n').error.message).toBe(answered)
+    expect(friendlyOpenAIError(gpu, 502, JSON.stringify({ detail: '<html>Bad Gateway</html>' })).error.message).toBe(answered)
+    expect((friendlyOpenAIError(gpu, 502, '<html></html>').error as OpenAIError).status).toBe(502)
+    // What a server does say passes through.
+    expect(friendlyOpenAIError(gpu, 502, 'upstream timed out').error.message).toBe('GPU box: upstream timed out')
+  })
+
+  it('counts a blank message, in any of the shapes servers send, as none', () => {
+    const answered = 'GPU box at 192.168.1.20:8000 answered HTTP 502.'
+    for (const body of [
+      { error: ' ' },
+      { error: '\n' },
+      { message: ' \t ' },
+      { detail: '  ' },
+      { error: { message: ' ' } },
+      { error: '<html>Bad Gateway</html>' }
+    ])
+      expect(friendlyOpenAIError(gpu, 502, JSON.stringify(body)).error.message).toBe(answered)
+    // A message with spaces around it is shown without them.
+    expect(friendlyOpenAIError(gpu, 502, JSON.stringify({ error: ' upstream timed out\n' })).error.message).toBe(
+      'GPU box: upstream timed out'
+    )
+    // What the message says still decides what the failure means.
+    expect(friendlyOpenAIError(gpu, 400, JSON.stringify({ error: '  --jinja is needed \n' })).detected).toEqual({
+      tools: false,
+      reason: 'server lacks --jinja'
+    })
+    expect(friendlyOpenAIError(gpu, 404, '{"error":{"message":" model not found "}}', 'qwen3').error.message).toBe(
+      "GPU box doesn't have a model called qwen3."
+    )
+  })
+
+  it('counts JSON with no text message as none, and shows text that isn’t JSON as it came', () => {
+    const answered = 'GPU box at 192.168.1.20:8000 answered HTTP 502.'
+    for (const body of [
+      '{"error":{"code":502}}',
+      '{"error":{"message":{"text":"x"}}}',
+      '{"error":{"message":null,"type":"server_error"}}',
+      '{"message":502}',
+      '{"detail":{"reason":"upstream"}}',
+      '{"detail":["x"]}',
+      '{"error":null}',
+      '{"error":502}',
+      '{"other":"runner crashed"}',
+      '{}',
+      '[]',
+      'null'
+    ])
+      expect(friendlyOpenAIError(gpu, 502, body).error.message).toBe(answered)
+    // Text that isn't JSON has only itself to say.
+    expect(friendlyOpenAIError(gpu, 502, '  upstream timed out\n').error.message).toBe('GPU box: upstream timed out')
+    // An error object that says nothing in words can still teach the model's context, as llama.cpp's does.
+    const exceeded = { error: { code: 400, type: 'exceed_context_size_error', n_ctx: 4096 } }
+    expect(friendlyOpenAIError(gpu, 400, JSON.stringify(exceeded), 'qwen3').detected).toEqual({
+      contextLength: 4096,
+      reason: 'GPU box reported a 4K context'
+    })
   })
 
   it('is an OpenAIError carrying the status', () => {

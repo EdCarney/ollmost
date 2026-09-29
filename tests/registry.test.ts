@@ -1,7 +1,8 @@
 import { createServer } from 'node:http'
 import type { AddressInfo } from 'node:net'
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
-import type { Endpoint } from '@shared/types'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { displayAddress } from '@shared/endpoints'
+import type { Endpoint, ModelInfo, ModelListUpdate } from '@shared/types'
 import { type MockOllama, startMockOllama } from './ollamaMock'
 
 vi.mock('electron', () => ({
@@ -92,7 +93,7 @@ describe('listing every endpoint', () => {
     const { models, errors } = await registry.listAllModels(true)
     // The same name on two endpoints is two models; a turned-off endpoint isn't asked.
     expect(models.map((m) => m.key)).toEqual(['ollama/gpt-oss:120b-cloud', 'ollama/llama3.2', 'ollama/qwen3:8b', 'gpu/qwen3:8b'])
-    expect(errors).toEqual([{ endpointId: 'down', message: expect.stringMatching(/^Can't reach Down box at http:\/\/127\.0\.0\.1:\d+/) }])
+    expect(errors).toEqual([{ endpointId: 'down', message: expect.stringMatching(/^Can't reach Down box at 127\.0\.0\.1:\d+/) }])
   })
 
   it('says where each model runs, how it’s billed, and the window it gets', async () => {
@@ -149,6 +150,144 @@ describe('listing every endpoint', () => {
     expect(readModelProfile('gpu/qwen3:8b').info).toBeNull()
     expect(readModelProfile('gpu-2/qwen3:8b').overrides).toEqual({ artifacts: false })
     expect(readModelProfile('ollama/qwen3:8b').info).not.toBeNull()
+  })
+})
+
+describe('a slow endpoint', () => {
+  const WAIT = 50
+  const lateModel = { key: 'gpu/late-model', name: 'late-model', endpoint: { id: 'gpu' } } as ModelInfo
+  let late: ModelListUpdate[]
+  let gpuCalls: number
+  let answer: { resolve: (models: ModelInfo[]) => void; reject: (err: Error) => void }
+  let hung: ReturnType<typeof vi.spyOn>
+
+  /** Lets the events a settled promise queued run, then says whether the registry told the listener anything. */
+  const settleTimers = () => new Promise<void>((resolve) => setTimeout(resolve, 20))
+
+  beforeEach(() => {
+    late = []
+    gpuCalls = 0
+    registry.onLateModels((update) => late.push(update))
+    setEndpoints([ollama('ollama', 'Ollama', a.url), ollama('gpu', 'GPU box', b.url)])
+    registry.invalidateProviders()
+    // GPU box's listing waits for the test to answer it; Ollama lists as it does.
+    const gate = new Promise<ModelInfo[]>((resolve, reject) => (answer = { resolve, reject }))
+    const real = OllamaProvider.prototype.listModels
+    hung = vi.spyOn(OllamaProvider.prototype, 'listModels').mockImplementation(function (
+      this: InstanceType<typeof OllamaProvider>,
+      refresh
+    ) {
+      if (this.endpoint.id !== 'gpu') return real.call(this, refresh)
+      gpuCalls++
+      return gate
+    })
+  })
+  afterEach(() => {
+    hung.mockRestore()
+    registry.onLateModels(null)
+  })
+
+  it('lists the others at once, and says it is still being waited for', async () => {
+    const { models, errors } = await registry.listAllModels(true, WAIT)
+    expect(models.map((m) => m.key)).toEqual(['ollama/gpt-oss:120b-cloud', 'ollama/llama3.2', 'ollama/qwen3:8b'])
+    expect(errors).toEqual([{ endpointId: 'gpu', message: `Still waiting for GPU box at ${displayAddress(b.url)}…`, pending: true }])
+  })
+
+  it('fills the endpoint in when it answers late', async () => {
+    await registry.listAllModels(true, WAIT)
+    answer.resolve([lateModel])
+    await vi.waitFor(() => expect(late).toEqual([{ endpointId: 'gpu', models: [lateModel] }]))
+  })
+
+  it('reports why when it fails late', async () => {
+    await registry.listAllModels(true, WAIT)
+    answer.reject(new Error("Can't reach GPU box at 10.0.0.9:11434."))
+    await vi.waitFor(() => expect(late).toEqual([{ endpointId: 'gpu', error: "Can't reach GPU box at 10.0.0.9:11434." }]))
+  })
+
+  it('joins the request in flight, even for a refresh, rather than asking a dead host again', async () => {
+    await registry.listAllModels(true, WAIT)
+    const again = await registry.listAllModels(true, WAIT)
+    expect(again.errors).toMatchObject([{ endpointId: 'gpu', pending: true }])
+    expect(gpuCalls).toBe(1)
+    // One request, so one late answer however many lists waited for it.
+    answer.resolve([lateModel])
+    await vi.waitFor(() => expect(late).toHaveLength(1))
+    await settleTimers()
+    expect(late).toHaveLength(1)
+  })
+
+  it('asks again once the request has settled', async () => {
+    await registry.listAllModels(true, WAIT)
+    answer.resolve([lateModel])
+    await vi.waitFor(() => expect(late).toHaveLength(1))
+    await registry.listAllModels(true, WAIT)
+    expect(gpuCalls).toBe(2)
+  })
+
+  it('drops a late answer once the endpoints have changed', async () => {
+    await registry.listAllModels(true, WAIT)
+    registry.invalidateProviders()
+    answer.resolve([lateModel])
+    await settleTimers()
+    expect(late).toEqual([])
+  })
+
+  it('drops a late answer from a provider that a new one has replaced', async () => {
+    await registry.listAllModels(true, WAIT)
+    registry.invalidateProviders()
+    // Made again for the same endpoint, so the id still matches: only the instance tells them apart.
+    registry.resolve('gpu/late-model')
+    answer.resolve([lateModel])
+    await settleTimers()
+    expect(late).toEqual([])
+  })
+
+  it('asks a new provider afresh, since the request in flight belongs to the old one', async () => {
+    await registry.listAllModels(true, WAIT)
+    registry.invalidateProviders()
+    await registry.listAllModels(true, WAIT)
+    expect(gpuCalls).toBe(2)
+  })
+
+  it('tells no one about an endpoint that answers in time', async () => {
+    const quick = new Promise<ModelInfo[]>((resolve) => setTimeout(() => resolve([lateModel]), 5))
+    hung.mockImplementation(function (this: InstanceType<typeof OllamaProvider>) {
+      return this.endpoint.id === 'gpu' ? quick : Promise.resolve([])
+    })
+    const { models, errors } = await registry.listAllModels(true, 1_000)
+    expect(models).toEqual([lateModel])
+    expect(errors).toEqual([])
+    await settleTimers()
+    expect(late).toEqual([])
+  })
+
+  it('lets a listener that throws (a window closing mid-send) fail on its own, not as an unhandled rejection in main', async () => {
+    const unhandled: unknown[] = []
+    const record = (reason: unknown) => unhandled.push(reason)
+    process.on('unhandledRejection', record)
+    try {
+      registry.onLateModels(() => {
+        throw new Error('window destroyed')
+      })
+      await registry.listAllModels(true, WAIT)
+      answer.resolve([lateModel])
+      await settleTimers()
+      expect(unhandled).toEqual([])
+    } finally {
+      process.off('unhandledRejection', record)
+    }
+  })
+
+  it('still fails an endpoint at once when its server refuses', async () => {
+    setEndpoints([ollama('ollama', 'Ollama', a.url), ollama('down', 'Down box', down)])
+    registry.invalidateProviders()
+    const started = Date.now()
+    const { errors } = await registry.listAllModels(true, 10_000)
+    expect(errors).toEqual([{ endpointId: 'down', message: expect.stringMatching(/^Can't reach Down box/) }])
+    expect(errors[0]).not.toHaveProperty('pending')
+    expect(Date.now() - started).toBeLessThan(5_000)
+    expect(late).toEqual([])
   })
 })
 
@@ -282,6 +421,11 @@ describe('billing and context windows', () => {
     expect(contextWindowFor(m(8_192), { kind: 'ollama', numCtx: 32_768 })).toBe(8_192)
     expect(contextWindowFor(m(null), { kind: 'ollama', numCtx: 32_768 })).toBe(32_768)
     expect(contextWindowFor(m(null), { kind: 'ollama' })).toBe(32_768)
+  })
+
+  it('leaves the window Ollmost sends to Ollama at num_ctx, whatever the override says', () => {
+    const local = { contextControl: 'client' as const, contextLength: 131_072, overrides: { contextLength: 8_192 }, detected: {} }
+    expect(contextWindowFor(local, { kind: 'ollama', numCtx: 32_768 })).toBe(32_768)
   })
 
   it('takes a window the server sets by precedence: override, detected, reported, the endpoint’s default', () => {

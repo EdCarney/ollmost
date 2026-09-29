@@ -14,6 +14,7 @@ import {
   readlinkSync,
   realpathSync,
   renameSync,
+  rmSync,
   writeFileSync
 } from 'node:fs'
 import { createServer } from 'node:http'
@@ -30,8 +31,32 @@ const CHAT_MODEL = process.env.OLLMOST_E2E_MODEL ?? 'gpt-oss:120b'
 const VISION_MODEL = process.env.OLLMOST_E2E_VISION_MODEL ?? 'kimi-k3'
 mkdirSync(SHOTS, { recursive: true })
 
-const userData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-'))
-const fixtures = mkdtempSync(join(tmpdir(), 'ollmost-fixtures-'))
+// Every temp folder the run makes is removed when the process exits: a finished, failed or crashed run, or Ctrl-C (not a
+// SIGKILL or SIGHUP). OLLMOST_E2E_KEEP=1 keeps them, for looking at what an app wrote.
+const KEEP = process.env.OLLMOST_E2E_KEEP === '1'
+const made = []
+const tempDir = (prefix) => {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  made.push(dir)
+  return dir
+}
+process.on('exit', () => {
+  if (KEEP) return
+  for (const dir of made) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {
+      // An app may still be open after a crash and writing to its folder: what can't be removed stays.
+    }
+  }
+})
+// While an app is open, Playwright's own handlers close it first (Ollmost stops what it started as it quits); on Ctrl-C it
+// then exits with 130, which runs the removal above. Exit here only when no app is open.
+process.on('SIGINT', () => process.listenerCount('SIGINT') === 1 && process.exit(130))
+process.on('SIGTERM', () => process.listenerCount('SIGTERM') === 1 && process.exit(143))
+
+const userData = tempDir('ollmost-e2e-')
+const fixtures = tempDir('ollmost-fixtures-')
 
 // A skill the model should use both when chosen with / and when it loads it on its own.
 mkdirSync(join(userData, 'skills', 'haiku-helper'), { recursive: true })
@@ -430,6 +455,13 @@ try {
   check('expanding it lists its files', (await explorer.locator('[data-testid="explorer-file"]').innerText()).includes('brief.txt'))
   await explorer.locator('[data-testid="explorer-root"] button[aria-label="Heron launch menu"]').click()
   await win.getByRole('menuitem', { name: 'New folder…' }).click()
+  // Radix hands focus back to the "…" button a tick after its menu closes; the box has to still have focus after that.
+  await win.waitForSelector('[data-testid="explorer-new-folder"]', { timeout: 5000 }).catch(() => {})
+  await win.waitForTimeout(300)
+  check(
+    'the new folder box keeps focus after its menu closes',
+    await win.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'explorer-new-folder')
+  )
   await win.fill('[data-testid="explorer-new-folder"]', 'docs')
   await win.keyboard.press('Enter')
   await win.waitForSelector('[data-testid="explorer-folder"]')
@@ -811,7 +843,7 @@ const fakeWeb = createServer(async (req, res) => {
   )
 })
 await new Promise((r) => fakeWeb.listen(0, '127.0.0.1', r))
-const mockUserData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-tools-'))
+const mockUserData = tempDir('ollmost-e2e-tools-')
 mkdirSync(join(mockUserData, 'skills', 'news-helper'), { recursive: true })
 writeFileSync(
   join(mockUserData, 'skills', 'news-helper', 'SKILL.md'),
@@ -1161,7 +1193,7 @@ const fixtureRunning = () => {
   await new Promise((r) => leakPages.listen(0, '127.0.0.1', r))
   const leakUrl = `http://127.0.0.1:${leakPages.address().port}/notes?d=secret`
   // Another app's config to import from (Claude Code's is pointed at nothing, so the real one isn't read).
-  const mcpFiles = mkdtempSync(join(tmpdir(), 'ollmost-e2e-mcp-import-'))
+  const mcpFiles = tempDir('ollmost-e2e-mcp-import-')
   writeFileSync(
     join(mcpFiles, 'claude_desktop_config.json'),
     JSON.stringify({
@@ -1172,7 +1204,7 @@ const fixtureRunning = () => {
     args: [ROOT],
     env: {
       ...process.env,
-      OLLMOST_USER_DATA: mkdtempSync(join(tmpdir(), 'ollmost-e2e-mcp-')),
+      OLLMOST_USER_DATA: tempDir('ollmost-e2e-mcp-'),
       OLLMOST_CLAUDE_DESKTOP_CONFIG: join(mcpFiles, 'claude_desktop_config.json'),
       OLLMOST_CLAUDE_CODE_CONFIG: join(mcpFiles, 'none.json'),
       // So the only thing that can stop the leak check's preview is the tool-chat rule, not the local-address one.
@@ -1423,7 +1455,7 @@ const fixtureRunning = () => {
 {
   const app = await electron.launch({
     args: [ROOT],
-    env: { ...process.env, OLLMOST_USER_DATA: mkdtempSync(join(tmpdir(), 'ollmost-e2e-mcp-live-')) }
+    env: { ...process.env, OLLMOST_USER_DATA: tempDir('ollmost-e2e-mcp-live-') }
   })
   const win = await app.firstWindow()
   try {
@@ -1523,7 +1555,7 @@ const evilSvg = (port) =>
       return message
     }
   })
-  const runnerData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-runner-'))
+  const runnerData = tempDir('ollmost-e2e-runner-')
   // A skill with a script, loaded by the model and run from its own folder.
   mkdirSync(join(runnerData, 'skills', 'note-maker', 'scripts'), { recursive: true })
   writeFileSync(
@@ -1587,7 +1619,7 @@ const evilSvg = (port) =>
     await win.screenshot({ path: join(SHOTS, 'runner-files.png') })
 
     const chatId = (await win.evaluate(() => window.ollmost.conversations.list()))[0].id
-    const savedTo = join(mkdtempSync(join(tmpdir(), 'ollmost-e2e-save-')), 'total-copy.txt')
+    const savedTo = join(tempDir('ollmost-e2e-save-'), 'total-copy.txt')
     await app.evaluate(({ dialog }, filePath) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath })
     }, savedTo)
@@ -1703,7 +1735,7 @@ const evilSvg = (port) =>
 {
   const app = await electron.launch({
     args: [ROOT],
-    env: { ...process.env, OLLMOST_USER_DATA: mkdtempSync(join(tmpdir(), 'ollmost-e2e-runner-live-')) }
+    env: { ...process.env, OLLMOST_USER_DATA: tempDir('ollmost-e2e-runner-live-') }
   })
   const win = await app.firstWindow()
   try {
@@ -1754,10 +1786,10 @@ const evilSvg = (port) =>
   check('code sessions: git is available', gitAvailable)
   if (gitAvailable) {
     // A repository of its own, made outside Ollmost with the user's config kept out: only its local identity is set.
-    const gitHome = mkdtempSync(join(tmpdir(), 'ollmost-e2e-session-githome-'))
+    const gitHome = tempDir('ollmost-e2e-session-githome-')
     const gitEnv = { ...process.env, HOME: gitHome, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
     const git = (args, cwd) => execFileSync('/usr/bin/git', args, { cwd, env: gitEnv })
-    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-e2e-session-')))
+    const repo = realpathSync(tempDir('ollmost-e2e-session-'))
     git(['init', '-q', '-b', 'main'], repo)
     git(['config', 'user.name', 'Ollmost E2E'], repo)
     git(['config', 'user.email', 'e2e@ollmost.test'], repo)
@@ -1799,7 +1831,7 @@ const evilSvg = (port) =>
                 : { content: 'Changed the greeting and checked it.' }
       }
     })
-    const sessionData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-sessions-'))
+    const sessionData = tempDir('ollmost-e2e-sessions-')
     const app = await electron.launch({ args: [ROOT], env: { ...process.env, OLLMOST_USER_DATA: sessionData } })
     const win = await app.firstWindow()
     try {
@@ -2023,7 +2055,7 @@ const evilSvg = (port) =>
 
     // 13d. Live: a real model asks to edit a file in a session on the same repository; denying it stops there.
     if (process.env.OLLMOST_E2E_MODEL) {
-      const liveData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-sessions-live-'))
+      const liveData = tempDir('ollmost-e2e-sessions-live-')
       const liveApp = await electron.launch({ args: [ROOT], env: { ...process.env, OLLMOST_USER_DATA: liveData } })
       const liveWin = await liveApp.firstWindow()
       try {
@@ -2067,7 +2099,8 @@ const evilSvg = (port) =>
 }
 
 // 15. Model endpoints: an OpenAI-compatible server added in Settings (Check, then Add), picked with its chip, a tool
-// round on it, the "local" label, and the same chat switched to a model on the Ollama endpoint.
+// round on it, the "local" label, the same chat switched to a model on the Ollama endpoint, and a slow endpoint that
+// doesn't hold up the model list.
 {
   const openaiRequests = []
   const openai = await fakeServer({
@@ -2093,7 +2126,24 @@ const evilSvg = (port) =>
     requests: ollamaRequests,
     reply: () => ({ content: 'Ollama answered: E2E-OLLAMA-OK' })
   })
-  const data = mkdtempSync(join(tmpdir(), 'ollmost-e2e-endpoints-'))
+  // A stand-in whose model list is slow: /v1/models answers after SLOW_MS once `slowList` is set. Adding it checks that
+  // address too, so that goes ahead of the delay.
+  const SLOW_MS = 8000
+  let slowList = false
+  const slow = await fakeServer({
+    dialect: 'openai',
+    models: ['mock-slow-model'],
+    route: async (req) => {
+      if (slowList && req.url === '/v1/models') {
+        await new Promise((resolve) => setTimeout(resolve, SLOW_MS))
+        // The app may be gone by now (if the check failed it closed): reading an aborted request rejects, and nothing catches that.
+        if (req.destroyed) return true
+      }
+      return false
+    }
+  })
+  let slowId = null
+  const data = tempDir('ollmost-e2e-endpoints-')
   mkdirSync(join(data, 'skills', 'endpoint-helper'), { recursive: true })
   writeFileSync(
     join(data, 'skills', 'endpoint-helper', 'SKILL.md'),
@@ -2245,13 +2295,54 @@ const evilSvg = (port) =>
       'with no Ollama endpoint turned on and no key, there is no quota chip',
       (await expectedQuota(win)) === 'hidden' && (await win.locator('button[aria-label^="Ollama usage"]').count()) === 0
     )
+
+    // A slow endpoint doesn't hold up the list: a second endpoint whose model list takes SLOW_MS. The first endpoint's
+    // models show before it could have answered, its chip waits (no warning), and its model fills in when it answers.
+    slowId = await win.evaluate(async (url) => {
+      const probe = await window.ollmost.endpoints.probe({ baseUrl: url })
+      const added = await window.ollmost.endpoints.add({
+        name: 'Slow Server',
+        baseUrl: probe.baseUrl,
+        kind: probe.kind,
+        flavor: probe.flavor
+      })
+      return added.id
+    }, slow.url)
+    slowList = true
+    const listedAt = Date.now()
+    await win.reload()
+    await win.waitForSelector('textarea')
+    await win.click('button[aria-label="Choose model"]')
+    const slowPicker = win.locator('[data-radix-popper-content-wrapper]')
+    // With the list held for the slow endpoint this times out: its models would only show after SLOW_MS.
+    await slowPicker
+      .locator('button')
+      .filter({ hasText: 'mock-openai-tools' })
+      .first()
+      .waitFor({ timeout: SLOW_MS - 2000 })
+    const shownAfter = Date.now() - listedAt
+    const waitingChip = slowPicker.getByRole('button', { name: 'Slow Server', exact: true })
+    const waitingTitle = await waitingChip.getAttribute('title')
+    const warned = await waitingChip.evaluate((el) => el.className.includes('border-dashed'))
+    await win.screenshot({ path: join(SHOTS, 'endpoint-slow-waiting.png') })
+    // Then it answers, and its model fills in on its own.
+    await waitingChip.click()
+    await slowPicker.locator('button').filter({ hasText: 'mock-slow-model' }).first().waitFor({ timeout: SLOW_MS })
+    check(
+      "a slow endpoint doesn't hold up the list: the other endpoint's models show while its chip waits, and its model fills in when it answers",
+      /^Still waiting for Slow Server at /.test(waitingTitle ?? '') && !warned && (await waitingChip.getAttribute('title')) === null,
+      `models after ${shownAfter} ms, the slow one's after ${Date.now() - listedAt} ms; ${waitingTitle}${warned ? ' (marked offline)' : ''}`
+    )
   } catch (err) {
     check('model endpoints run completed without errors', false, err.message.split('\n')[0])
     await win.screenshot({ path: join(SHOTS, 'endpoints-failure.png') }).catch(() => {})
   } finally {
+    // The slow endpoint goes before the app closes, whether or not the run got as far as using it.
+    if (slowId) await win.evaluate((id) => window.ollmost.endpoints.remove(id), slowId).catch(() => {})
     await app.close()
     openai.close()
     ollama.close()
+    slow.close()
   }
 
   // 15b. Live: a model on a real OpenAI-compatible server (LM Studio: http://localhost:1234/v1), when one is given.
@@ -2260,7 +2351,7 @@ const evilSvg = (port) =>
     const baseUrl = process.env.OLLMOST_E2E_OPENAI_URL
     const liveApp = await electron.launch({
       args: [ROOT],
-      env: { ...process.env, OLLMOST_USER_DATA: mkdtempSync(join(tmpdir(), 'ollmost-e2e-endpoints-live-')) }
+      env: { ...process.env, OLLMOST_USER_DATA: tempDir('ollmost-e2e-endpoints-live-') }
     })
     const liveWin = await liveApp.firstWindow()
     try {
@@ -2307,7 +2398,7 @@ const evilSvg = (port) =>
 // 14. Coming from Kiln (#60): data Kiln left next to Ollmost's data folder moves over on the first launch, with its
 // chats, files and settings. The secrets Kiln's keychain entry encrypted are asked for again, once.
 {
-  const home = mkdtempSync(join(tmpdir(), 'ollmost-e2e-kiln-'))
+  const home = tempDir('ollmost-e2e-kiln-')
   const DOT_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
   writeFileSync(join(fixtures, 'dot.png'), DOT_PNG)
   const mock = await fakeServer({
@@ -2522,6 +2613,9 @@ process.on('SIGTERM', () => app.quit())
 }
 
 const failed = results.filter((r) => !r.ok).length
-console.log(`\n${results.length - failed}/${results.length} checks passed. Screenshots in e2e/shots/, data in ${userData}`)
+console.log(
+  `\n${results.length - failed}/${results.length} checks passed. Screenshots in e2e/shots/` +
+    (KEEP ? `, data in ${userData}` : '. Temp folders removed (OLLMOST_E2E_KEEP=1 keeps them).')
+)
 usageServer.close()
 process.exit(failed ? 1 : 0)

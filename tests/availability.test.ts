@@ -22,6 +22,9 @@ const off = ep('gpu-box', 'GPU box', { enabled: false, baseUrl: 'http://192.168.
 const endpoints = [ollama, lm, off]
 const models = [listed(ollama, 'llama3.2'), listed(ollama, 'hf.co/bartowski/Qwen3-8B-GGUF:Q4_K_M')]
 const errors: ModelListResult['errors'] = [{ endpointId: 'lm-studio', message: "Can't reach LM Studio at localhost:1234." }]
+const stillWaiting: ModelListResult['errors'] = [
+  { endpointId: 'lm-studio', message: 'Still waiting for LM Studio at localhost:1234…', pending: true }
+]
 const check = (key: string | null) => modelAvailability(key, models, endpoints, errors)
 
 describe('whether a chat’s model can be used', () => {
@@ -39,10 +42,24 @@ describe('whether a chat’s model can be used', () => {
     expect(check(null)).toBe('none')
   })
 
+  it('says an endpoint that is still answering is waiting, never offline', () => {
+    const waiting = (key: string) => modelAvailability(key, models, endpoints, stillWaiting)
+    expect(waiting('lm-studio/qwen/qwen3-8b')).toBe('endpoint-waiting')
+    // The other endpoints are judged as before, and a listed model is ok whatever its endpoint's errors say.
+    expect(waiting('ollama/llama3.2')).toBe('ok')
+    expect(waiting('ollama/mistral:7b')).toBe('model-missing')
+    expect(waiting('gpu-box/qwen3:8b')).toBe('endpoint-disabled')
+    // A pending entry beside a real failure: each endpoint by its own entry.
+    const both = [...stillWaiting, { endpointId: 'ollama', message: "Can't reach Ollama." }]
+    expect(modelAvailability('ollama/mistral:7b', models, endpoints, both)).toBe('endpoint-offline')
+    expect(modelAvailability('lm-studio/qwen/qwen3-8b', models, endpoints, both)).toBe('endpoint-waiting')
+  })
+
   it('words each reason for the composer, naming the model and its endpoint', () => {
     expect(unavailableText('endpoint-offline', 'lm-studio/qwen/qwen3-8b', endpoints)).toBe(
       "qwen/qwen3-8b · LM Studio is unavailable: Ollmost can't reach LM Studio."
     )
+    expect(unavailableText('endpoint-waiting', 'lm-studio/qwen/qwen3-8b', endpoints)).toBe('Waiting for LM Studio to list its models…')
     expect(unavailableText('endpoint-disabled', 'gpu-box/qwen3:8b', endpoints)).toBe(
       'qwen3:8b is unavailable: GPU box is turned off in Settings → Models. Turn it on, or pick another model.'
     )

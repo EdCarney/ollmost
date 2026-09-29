@@ -1,14 +1,14 @@
 import { execFileSync } from 'node:child_process'
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { readBranch } from '../src/main/code/git'
+import { tempDir } from './tempDir'
 
 // A session's branch is read from .git/HEAD as a plain file, never through a link and never by running git (#86).
 
 // A real path: on a Mac the temp folder is under /var, a link, and readBranch reads nothing through one.
-const base = realpathSync.native(mkdtempSync(join(tmpdir(), 'ollmost-git-')))
+const base = realpathSync.native(tempDir('ollmost-git-'))
 afterAll(() => rmSync(base, { recursive: true, force: true }))
 
 let made = 0

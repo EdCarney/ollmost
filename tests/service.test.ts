@@ -1,6 +1,5 @@
-import { mkdtempSync, realpathSync, writeFileSync } from 'node:fs'
+import { realpathSync, writeFileSync } from 'node:fs'
 import type { ServerResponse } from 'node:http'
-import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ChatEvent, MessageStats, Settings, ThinkSetting, ToolEvent } from '@shared/types'
@@ -10,6 +9,7 @@ import type { ToolContext, ToolProvider } from '../src/main/chat/tools'
 import type { Workspace } from '../src/main/runner/workspace'
 import { toModelKey } from '@shared/modelKey'
 import { completionJson, type Dialect, line, type MockOllama, startMockOllama, streamChunks, type Turn, writeTurn } from './ollamaMock'
+import { tempDir } from './tempDir'
 
 // Everything above the Electron line is real: SQLite (in memory), settings, prompt assembly, the
 // Ollama client and the tool loop. Only Electron itself is faked, and Ollama is a local mock server.
@@ -60,7 +60,7 @@ const approvals = await import('../src/main/chat/approvals')
 const mcpConfig = await import('../src/main/mcp/config')
 const mcpManager = await import('../src/main/mcp/manager')
 const { paths } = await import('../src/main/paths')
-paths.data = mkdtempSync(join(tmpdir(), 'ollmost-service-data-'))
+paths.data = tempDir('ollmost-service-data-')
 
 type ChatHandler = (body: Record<string, unknown>, res: ServerResponse, call: number) => unknown
 let chat: ChatHandler
@@ -1730,10 +1730,8 @@ describe('web_fetch in a chat with MCP servers', () => {
 describe.runIf(process.platform === 'darwin')('the code runner in a reply', () => {
   it('prepares the chat’s folder, asks before running, and gives the model what the code printed', async () => {
     const { paths } = await import('../src/main/paths')
-    const { mkdtempSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
     const { join } = await import('node:path')
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-runner-'))
+    const dir = tempDir('ollmost-service-runner-')
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
     chat = (b, res, n) =>
@@ -1775,13 +1773,12 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
   // #88: a code session's reply works in the user's folder with run_command, under the session's prompt.
   it('offers only reading in plan mode, and the approved plan once the user starts working', async () => {
     const { paths } = await import('../src/main/paths')
-    const { mkdtempSync, realpathSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
+    const { realpathSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    const dir = tempDir('ollmost-service-plan-')
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
     const session = createConversation({
       projectId: null,
       model: 'ollama/llama3.2',
@@ -1821,17 +1818,17 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     // Back to planning drops the approved plan: a new one will come.
     await waitFor(() => !service.isReplying())
     expect(service.setStage(session.id, 'plan')).toMatchObject({ stage: 'plan', plan: null })
-  })
+    // Two replies in a sandboxed session: more than the default 5 s on a busy macOS runner.
+  }, 30_000)
 
   it('keeps no plan when nothing was written in plan mode, and none of a chat', async () => {
     const { paths } = await import('../src/main/paths')
-    const { mkdtempSync, realpathSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
+    const { realpathSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    const dir = tempDir('ollmost-service-plan-')
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
     const session = createConversation({
       projectId: null,
       model: 'ollama/llama3.2',
@@ -1863,13 +1860,12 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
 
   it('takes the tools away after a second round of nothing but refused writes in plan mode', async () => {
     const { paths } = await import('../src/main/paths')
-    const { mkdtempSync, realpathSync, writeFileSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
+    const { realpathSync, writeFileSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    const dir = tempDir('ollmost-service-plan-')
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
     writeFileSync(join(folder, 'README.md'), 'Hello\n')
     const session = createConversation({
       projectId: null,
@@ -1894,13 +1890,12 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
 
   it('keeps no plan from a reply the user stopped', async () => {
     const { paths } = await import('../src/main/paths')
-    const { mkdtempSync, realpathSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
+    const { realpathSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    const dir = tempDir('ollmost-service-plan-')
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
     const session = createConversation({
       projectId: null,
       model: 'ollama/llama3.2',
@@ -1921,13 +1916,12 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
 
   it('refuses an edit the model attempts in plan mode', async () => {
     const { paths } = await import('../src/main/paths')
-    const { mkdtempSync, realpathSync, writeFileSync, readFileSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
+    const { realpathSync, writeFileSync, readFileSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    const dir = tempDir('ollmost-service-plan-')
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
     writeFileSync(join(folder, 'README.md'), 'Hello\n')
     const session = createConversation({
       projectId: null,
@@ -1959,13 +1953,12 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
 
   it('runs a command in a session’s folder after asking, and remembers Allow for this session', async () => {
     const { paths } = await import('../src/main/paths')
-    const { mkdtempSync, realpathSync, writeFileSync, existsSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
+    const { realpathSync, writeFileSync, existsSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-session-'))
+    const dir = tempDir('ollmost-service-session-')
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
     writeFileSync(join(folder, 'CLAUDE.md'), 'Say hello in French.')
     chat = (b, res, n) =>
       n === 1
@@ -2032,13 +2025,12 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
   // command that asks under its own key.
   it('reads, edits after asking with a diff, and runs a command, in one turn', async () => {
     const { paths } = await import('../src/main/paths')
-    const { mkdtempSync, realpathSync, writeFileSync, readFileSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
+    const { realpathSync, writeFileSync, readFileSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-files-'))
+    const dir = tempDir('ollmost-service-files-')
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
     writeFileSync(join(folder, 'hello.py'), 'print("hello")\n')
     chat = (b, res, n) =>
       n === 1
@@ -2111,13 +2103,12 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
 
   it('doesn’t ask about an edit that can’t be made: the model gets the failure', async () => {
     const { paths } = await import('../src/main/paths')
-    const { mkdtempSync, realpathSync, writeFileSync, readFileSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
+    const { realpathSync, writeFileSync, readFileSync } = await import('node:fs')
     const { join } = await import('node:path')
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-refused-'))
+    const dir = tempDir('ollmost-service-refused-')
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
     writeFileSync(join(folder, 'hello.py'), 'print("hello")\n')
     chat = (b, res, n) =>
       n === 1
@@ -2155,10 +2146,8 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
   }, 60_000)
 
   it('says when a session’s folder is gone, and offers no code tools that turn', async () => {
-    const { mkdtempSync, realpathSync, rmSync } = await import('node:fs')
-    const { tmpdir } = await import('node:os')
-    const { join } = await import('node:path')
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-gone-')))
+    const { realpathSync, rmSync } = await import('node:fs')
+    const folder = realpathSync(tempDir('ollmost-user-gone-'))
     const session = createConversation({
       projectId: null,
       model: 'ollama/llama3.2',
@@ -3435,10 +3424,10 @@ describe('sub-agents', () => {
 
   // A code session needs the macOS sandbox, as the session tests above do.
   it.runIf(process.platform === 'darwin')('a child in plan mode gets no write tools', async () => {
-    const dir = mkdtempSync(join(tmpdir(), 'ollmost-service-plan-'))
+    const dir = tempDir('ollmost-service-plan-')
     paths.workspaces = join(dir, 'workspaces')
     paths.runner = join(dir, 'runner')
-    const folder = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-user-repo-')))
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
     writeFileSync(join(folder, 'README.md'), 'Hello\n')
     const session = createConversation({
       projectId: null,

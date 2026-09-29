@@ -1,5 +1,6 @@
 import { getApiKey } from '../settings'
-import { OLLAMA_CLOUD, OllamaError } from '../providers/ollama/wire'
+import { cloudUnreachableMessage } from '../providers/fetchFailure'
+import { errorDetail, messageOf, OLLAMA_CLOUD, OllamaError } from '../providers/ollama/wire'
 
 // Tests point this at a mock server.
 const WEB_BASE = process.env.OLLMOST_WEB_URL ?? OLLAMA_CLOUD
@@ -42,21 +43,21 @@ async function call<T>(path: string, body: Record<string, unknown>, signal?: Abo
     })
   } catch (err) {
     if (signal?.aborted) throw err
-    throw new OllamaError(`Couldn't reach ollama.com: ${(err as Error).message}`)
+    throw new OllamaError(cloudUnreachableMessage(err, TIMEOUT_MS / 1000), undefined, { cause: err })
   }
   if (res.status === 401 || res.status === 403) throw new OllamaError('ollama.com rejected the API key.', res.status)
   if (res.status === 429) throw new OllamaError('Web search limit reached on ollama.com. Try again later.', res.status)
   if (!res.ok) {
-    const text = await res.text().catch(() => '')
-    let detail = text
-    try {
-      detail = (JSON.parse(text) as { error?: string }).error ?? text
-    } catch {
-      /* not JSON */
-    }
-    throw new OllamaError(detail || `ollama.com returned HTTP ${res.status}`, res.status)
+    const message = messageOf(errorDetail(await res.text().catch(() => '')))
+    throw new OllamaError(message || `ollama.com answered HTTP ${res.status}.`, res.status)
   }
-  return (await res.json()) as T
+  try {
+    return (await res.json()) as T
+  } catch (err) {
+    // A sign-in page or a changed API, not a connection problem. Anything else (a stop) goes through as it is.
+    if (err instanceof SyntaxError) throw new OllamaError("ollama.com sent a reply Ollmost couldn't read.", undefined, { cause: err })
+    throw err
+  }
 }
 
 export async function webSearch(query: string, maxResults = 5, signal?: AbortSignal): Promise<SearchResult[]> {

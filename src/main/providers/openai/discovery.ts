@@ -35,8 +35,8 @@ export async function getJson(endpoint: Where, url: string, apiKey: string | nul
     res = await fetch(url, { headers: apiKey ? { Authorization: `Bearer ${apiKey}` } : {}, signal: AbortSignal.timeout(timeoutMs) })
   } catch (err) {
     if ((err as Error).name === 'TimeoutError')
-      throw new OpenAIError(`${endpoint.name} took too long to list its models. Try again in a moment.`)
-    throw unreachableError(endpoint)
+      throw new OpenAIError(`${endpoint.name} took too long to list its models. Try again in a moment.`, undefined, { cause: err })
+    throw unreachableError(endpoint, err)
   }
   const text = await res.text().catch(() => '')
   if (!res.ok) throw friendlyOpenAIError(endpoint, res.status, text).error

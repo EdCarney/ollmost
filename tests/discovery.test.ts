@@ -1,6 +1,7 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Endpoint } from '@shared/types'
 import { discoverModels } from '../src/main/providers/openai/discovery'
+import { fetchFailed } from './fetchFailed'
 import { fixtureJson, fixtureText, type MockOllama, startMockOllama } from './ollamaMock'
 
 // Each test says what the server answers where; anything else is a 404.
@@ -149,6 +150,36 @@ describe('discoverModels', () => {
     await expect(discoverModels(ep('generic', { name: 'Lab' }), 'bad')).rejects.toThrow(
       'Lab rejected the API key. Check it in Settings → Models → Lab.'
     )
+  })
+
+  it('says why it can’t be reached when the cause is a missing host or an untrusted certificate', async () => {
+    const gpu = ep('vllm', { name: 'GPU box', baseUrl: 'https://gpu.lan:8000/v1' })
+    try {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(fetchFailed('ECONNREFUSED')))
+      await expect(discoverModels(gpu, null)).rejects.toThrow(
+        "Can't reach GPU box at gpu.lan:8000. Is its server started? Start it with `vllm serve`."
+      )
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(fetchFailed('EAI_AGAIN')))
+      await expect(discoverModels(gpu, null)).rejects.toThrow(
+        "GPU box's host gpu.lan wasn't found. Check the address in Settings → Models → GPU box."
+      )
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(fetchFailed('CERT_HAS_EXPIRED')))
+      await expect(discoverModels(gpu, null)).rejects.toThrow("GPU box's certificate at gpu.lan:8000 isn't trusted (CERT_HAS_EXPIRED).")
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('says it took too long when the request times out, and keeps the timeout as the cause', async () => {
+    const timeout = new DOMException('The operation was aborted due to timeout', 'TimeoutError')
+    try {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(timeout))
+      const err = await discoverModels(ep('vllm', { name: 'GPU box', baseUrl: 'https://gpu.lan:8000/v1' }), null).catch((e: unknown) => e)
+      expect((err as Error).message).toBe('GPU box took too long to list its models. Try again in a moment.')
+      expect((err as Error).cause).toBe(timeout)
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('names the endpoint when it can’t be reached, or sends something that isn’t a list', async () => {

@@ -1,8 +1,8 @@
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
-import { tmpdir } from 'node:os'
+import { mkdirSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
 import type { Skill } from '@shared/types'
+import { tempDir } from './tempDir'
 
 vi.mock('electron', () => ({ shell: {} }))
 vi.mock('../src/main/settings', () => ({
@@ -13,7 +13,7 @@ vi.mock('../src/main/settings', () => ({
 const { readSkillFile } = await import('../src/main/skills/library')
 
 // A skill folder with a normal file, a symlink that escapes it, and one that stays inside.
-const base = mkdtempSync(join(tmpdir(), 'ollmost-skill-'))
+const base = tempDir('ollmost-skill-')
 const dir = join(base, 'skills', 'helper')
 mkdirSync(join(dir, 'references'), { recursive: true })
 writeFileSync(join(dir, 'references', 'guide.md'), 'How to help')

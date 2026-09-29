@@ -164,6 +164,7 @@ npm run typecheck
 npm run lint                # ESLint (typescript-eslint, React hook rules)
 npm run format              # Prettier; format:check only reports
 npm run build && npm run e2e   # live: needs Ollama running; uses a throwaway data folder
+OLLMOST_E2E_KEEP=1 npm run e2e   # keeps the temp folders the e2e run makes, for debugging; otherwise they're removed when it ends
 OLLMOST_E2E_OPENAI_URL=http://localhost:1234/v1 npm run e2e   # also a live check against LM Studio (or any OpenAI-compatible server that needs no key); OLLMOST_E2E_OPENAI_MODEL picks the model
 ```
 
@@ -174,7 +175,7 @@ The e2e run checks:
 - the artifact sandbox, which renders HTML and blocks network requests and access to the app
 - manual and automatic skills
 - vision attachments
-- project knowledge
+- project knowledge, and the sidebar explorer, including a New folder box that keeps focus as its menu closes
 - the chat cost chip and account quota, including pace and a dated reset
 - theme and dark-mode persistence, including dark-only themes and themes that follow the mode
 - tool calls against a mock model: an invented tool gets one explanation then is withdrawn, and web search/fetch works end to end, including gpt-oss-style aliases and citations
@@ -188,7 +189,7 @@ The e2e run checks:
 - code sessions: reading, editing and running commands in a folder of the user's with approvals, the diff an edit's approval shows, the folder left untouched by a deleted session, and the Changes panel's git status and diff
 - a live model asking to edit a file in a code session, and denying it
 - the command palette: a theme previewed live from its choice list, put back on Escape and on a click outside, kept on Enter, and a theme picked in Settings showing after one chosen in the palette
-- model endpoints: adding an OpenAI-compatible server in Settings (Check, then Add), its chip in the picker, the picker fitting a short window, a tool round in OpenAI's shape, the `local` label, switching a chat to the Ollama endpoint, and the quota chip going when there's no Ollama endpoint turned on and no key
+- model endpoints: adding an OpenAI-compatible server in Settings (Check, then Add), its chip in the picker, the picker fitting a short window, a slow endpoint not holding up the list, a tool round in OpenAI's shape, the `local` label, switching a chat to the Ollama endpoint, and the quota chip going when there's no Ollama endpoint turned on and no key
 - coming from Kiln: migrating data on first launch, waiting for Kiln to quit, and the one-time notice
 
 Screenshots go to `e2e/shots/`. Set `OLLMOST_DEBUG=1` to log every request Ollmost sends to a model server to `debug.log` in the data folder, along with the PATH Ollmost gives processes it starts. Apps opened from the Dock get a bare PATH, so Ollmost reads the one your login shell sets up.

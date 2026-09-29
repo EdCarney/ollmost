@@ -95,6 +95,43 @@ describe('the picker’s sections', () => {
   })
 })
 
+describe('an endpoint that is still answering', () => {
+  const stillWaiting = { endpointId: 'llama-cpp', message: 'Still waiting for llama.cpp at localhost:8080…', pending: true as const }
+  const pending = (opts: Partial<Parameters<typeof groupModels>[2]>) =>
+    groupModels(models, [stillWaiting], { query: '', filter: 'all', currentKey: null, endpoints, ...opts })
+
+  it('is grouped as an offline one is: shown when chosen or when it has the chat’s model, but as waiting, not an error', () => {
+    expect(pending({}).map((g) => g.id)).not.toContain('llama-cpp')
+    const chosen = pending({ filter: 'llama-cpp' })
+    expect(chosen).toEqual([
+      {
+        id: 'llama-cpp',
+        endpointId: 'llama-cpp',
+        label: 'llama.cpp',
+        where: 'this-mac',
+        items: [],
+        pending: true,
+        note: stillWaiting.message
+      }
+    ])
+    expect(chosen[0]).not.toHaveProperty('error')
+    expect(pending({ currentKey: 'llama-cpp/qwen3-8b-q4' })[0]).toEqual(chosen[0])
+  })
+
+  it('leaves every other endpoint’s models listed', () => {
+    expect(pending({}).flatMap((g) => g.items.map((m) => m.name))).toEqual(models.map((m) => m.name))
+  })
+
+  it('keeps listing the models it had before (a Refresh), in its usual group', () => {
+    const kept = model(cpp, 'qwen3-8b-q4')
+    const groups = groupModels([...models, kept], [stillWaiting], { query: '', filter: 'all', currentKey: null, endpoints })
+    const group = groups.find((g) => g.endpointId === 'llama-cpp')
+    expect(group?.items).toEqual([kept])
+    expect(group).not.toHaveProperty('error')
+    expect(group).not.toHaveProperty('pending')
+  })
+})
+
 describe('the endpoint chips', () => {
   it('offer All and each enabled endpoint, an offline one marked with its error', () => {
     expect(endpointChips(endpoints, errors)).toEqual([
@@ -104,5 +141,19 @@ describe('the endpoint chips', () => {
       { id: 'gpu-box', label: 'GPU box', offline: false },
       { id: 'llama-cpp', label: 'llama.cpp', offline: true, error: "Can't reach llama.cpp at localhost:8080." }
     ])
+  })
+
+  it('mark one that is still answering as waiting, not offline, and keep its message for the tooltip', () => {
+    const stillWaiting = { endpointId: 'lm-studio', message: 'Still waiting for LM Studio at localhost:1234…', pending: true as const }
+    const chips = endpointChips(endpoints, [stillWaiting, errors[0]])
+    expect(chips.find((c) => c.id === 'lm-studio')).toEqual({
+      id: 'lm-studio',
+      label: 'LM Studio',
+      offline: false,
+      pending: true,
+      note: stillWaiting.message
+    })
+    expect(chips.find((c) => c.id === 'llama-cpp')).toMatchObject({ offline: true, error: errors[0].message })
+    expect(chips.find((c) => c.id === 'llama-cpp')).not.toHaveProperty('pending')
   })
 })

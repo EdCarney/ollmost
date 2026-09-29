@@ -1,4 +1,4 @@
-import { Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Cloud, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { DEFAULT_CONTEXT, DEFAULT_NUM_CTX, displayAddress, FLAVOR_LABELS, isOllamaCloudUrl, removalText } from '@shared/endpoints'
 import { labelForKey, shortModelName } from '@shared/modelLabel'
@@ -17,14 +17,17 @@ import { ApiKeyField } from './ApiKeyField'
 // endpoint", "ollama.com account" and "Defaults"; the chosen one's settings and models on the right.
 
 type Page = { kind: 'endpoint'; id: string } | { kind: 'account' } | { kind: 'defaults' }
-type Status = 'ok' | 'offline' | 'off'
+type Status = 'ok' | 'waiting' | 'offline' | 'off'
 
-const DOT: Record<Status, string> = { ok: 'bg-success', offline: 'bg-danger', off: 'bg-subtle' }
-const STATUS: Record<Status, string> = { ok: 'connected', offline: 'offline', off: 'turned off' }
+const DOT: Record<Status, string> = { ok: 'bg-success', waiting: 'bg-subtle', offline: 'bg-danger', off: 'bg-subtle' }
+const STATUS: Record<Status, string> = { ok: 'connected', waiting: 'checking…', offline: 'offline', off: 'turned off' }
 const CONTEXT_SIZES = [8192, 16384, 32768, 65536, 131072]
 
-const statusOf = (e: Endpoint, errors: ModelListResult['errors']): Status =>
-  !e.enabled ? 'off' : errors.some((x) => x.endpointId === e.id) ? 'offline' : 'ok'
+const statusOf = (e: Endpoint, errors: ModelListResult['errors']): Status => {
+  if (!e.enabled) return 'off'
+  const error = errors.find((x) => x.endpointId === e.id)
+  return !error ? 'ok' : error.pending ? 'waiting' : 'offline'
+}
 
 /** A window-size menu. A saved size off the list keeps an option of its own. */
 function ContextSelect({ value, onChange }: { value: number; onChange: (n: number) => void }) {
@@ -119,7 +122,11 @@ function ModelRow({ model }: { model: ModelInfo }) {
   return (
     <tr className="border-t border-line align-top">
       <td className="py-2.5 pr-3">
-        <div className="text-[13px] font-medium">{model.endpoint.kind === 'ollama' ? shortModelName(model.name) : model.name}</div>
+        <div className="flex items-center gap-1.5 text-[13px] font-medium">
+          {model.endpoint.kind === 'ollama' ? shortModelName(model.name) : model.name}
+          {/* The short name drops "-cloud", so the icon is what tells a cloud model from one on this Mac, as in the picker. */}
+          {model.where === 'cloud' && <Cloud aria-label="Runs on ollama.com" className="size-3.5 shrink-0 text-subtle" />}
+        </div>
         <div className="mt-0.5 flex flex-wrap gap-1">
           {model.capabilities
             .filter((c) => c !== 'completion')
@@ -257,7 +264,10 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
   const loadModels = useApp((s) => s.loadModels)
   const endpointsChanged = useApp((s) => s.endpointsChanged)
   const cloud = isOllamaCloudUrl(endpoint.baseUrl)
-  const error = modelErrors.find((x) => x.endpointId === endpoint.id)?.message
+  const entry = modelErrors.find((x) => x.endpointId === endpoint.id)
+  // Still answering isn't an error: it shows as waiting.
+  const error = entry?.pending ? undefined : entry?.message
+  const waiting = entry?.pending ? entry.message : undefined
   const mine = models.filter((m) => m.endpoint.id === endpoint.id)
   // Bumped so a field remounts showing what's stored, not the text typed: the name's when a name edit is refused, the
   // address's when an address edit is refused or saved (an OpenAI endpoint stores its probed base, not what was typed).
@@ -353,6 +363,7 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
             {!modelsLoading && <RefreshCw className="size-3.5" />} Refresh models
           </Button>
           {error && <span className="text-xs text-danger">{error}</span>}
+          {waiting && <span className="text-xs text-muted">{waiting}</span>}
         </div>
         {mine.length > 0 ? (
           <div className="scroll-shadows-x overflow-x-auto">
@@ -376,7 +387,8 @@ function EndpointPage({ endpoint, onAccount }: { endpoint: Endpoint; onAccount: 
             </table>
           </div>
         ) : (
-          !error && (
+          !error &&
+          !waiting && (
             <p className="text-sm text-subtle">
               {endpoint.enabled ? 'This endpoint lists no models.' : 'Turn the endpoint on to list its models.'}
             </p>

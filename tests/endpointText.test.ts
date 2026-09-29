@@ -22,11 +22,17 @@ describe('what the Add endpoint dialog found', () => {
       'Found LM Studio 0.4 · 5 models · 4 with tools · 1 with vision · 2 can think'
     )
     expect(probeSummary(probe({ kind: 'ollama', flavor: 'ollama', version: '0.12.3', models: 1 }))).toBe('Found Ollama 0.12.3 · 1 model')
+    expect(probeSummary(probe({ flavor: 'llamacpp', version: 'b6600-abc1234', models: 1, withTools: 1 }))).toBe(
+      'Found llama.cpp b6600-abc1234 · 1 model · 1 with tools · 0 with vision · 0 can think'
+    )
   })
 
   it('says when a server reports no capabilities, and what applies instead', () => {
     expect(probeSummary(probe({ flavor: 'generic', models: 12, reportsCapabilities: false }))).toBe(
       'Found an OpenAI-compatible server · 12 models · capabilities not reported — defaults apply (tools on, vision off)'
+    )
+    expect(probeSummary(probe({ flavor: 'vllm', version: '0.11.0', models: 1, reportsCapabilities: false }))).toBe(
+      'Found vLLM 0.11.0 · 1 model · capabilities not reported — defaults apply (tools on, vision off)'
     )
   })
 })

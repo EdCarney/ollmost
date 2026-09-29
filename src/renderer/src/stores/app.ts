@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import type { DeepPartial } from '@shared/ipc'
+import { keepPendingModels, mergeLateModels, nextDraftModel } from '@shared/modelList'
 import type { SettingsTabId } from '@shared/palette'
 import { defaultThinkSetting, resolveThinkProfile } from '@shared/thinking'
 import type {
@@ -9,6 +10,7 @@ import type {
   McpStatus,
   ModelInfo,
   ModelListResult,
+  ModelListUpdate,
   Project,
   Settings,
   Skill,
@@ -60,6 +62,8 @@ export interface AppState {
   /** The first listing has finished: before it, a chat's model can't be told from a missing one. */
   modelsReady: boolean
   loadModels: (refresh?: boolean) => Promise<void>
+  /** An endpoint the list stopped waiting for has answered, or failed: fold it in without asking the others again. */
+  mergeModels: (update: ModelListUpdate) => void
   /** An endpoint was added, changed or removed: the endpoint list (in settings) and the models again. */
   endpointsChanged: () => Promise<void>
 
@@ -107,6 +111,26 @@ export interface AppState {
 
 let toastId = 0
 
+/** Whether the app chose the model new chats hold, not the user: an app pick gives way to the default once it's listed. */
+let draftAuto = true
+/** Which listing is the latest, so an older reply that lands after a newer one is ignored. */
+let listCall = 0
+
+/** Keeps new chats' model right for the list as it stands (see nextDraftModel): picks one, or moves off a lost one. */
+function ensureDraftModel(s: AppState): void {
+  const next = nextDraftModel(
+    s.draftModel,
+    draftAuto,
+    s.settings?.defaultModel,
+    { models: s.models, errors: s.modelErrors },
+    selectEndpoints(s)
+  )
+  if (!next || next === s.draftModel) return
+  // Not setDraftModel, which is the user's choice. This one is the app's.
+  draftAuto = true
+  useApp.setState({ draftModel: next, draftThink: defaultThinkSetting(thinkProfileFor(s.models, next)) })
+}
+
 export const useApp = create<AppState>((set, get) => ({
   route: { name: 'home' },
   navigate: (route) => set({ route }),
@@ -125,21 +149,25 @@ export const useApp = create<AppState>((set, get) => ({
   modelsLoading: false,
   modelsReady: false,
   loadModels: async (refresh = false) => {
+    const call = ++listCall
     set({ modelsLoading: true })
     try {
       const { models, errors } = await api.models.list(refresh)
-      set({ models, modelErrors: errors })
-      const { draftModel, settings } = get()
-      if (!draftModel || !models.some((m) => m.key === draftModel)) {
-        const preferred = settings?.defaultModel && models.find((m) => m.key === settings.defaultModel)
-        const pick = preferred || models.find((m) => m.installed) || models[0]
-        if (pick) get().setDraftModel(pick.key)
-      }
+      // A newer listing has started: this reply is the older one, and would put back what it has since replaced.
+      if (call !== listCall) return
+      set({ models: keepPendingModels(get().models, { models, errors }), modelErrors: errors })
+      ensureDraftModel(get())
     } catch (err) {
-      set({ modelErrors: [{ endpointId: '', message: (err as Error).message }] })
+      if (call === listCall) set({ modelErrors: [{ endpointId: '', message: (err as Error).message }] })
     } finally {
-      set({ modelsLoading: false, modelsReady: true })
+      if (call === listCall) set({ modelsLoading: false, modelsReady: true })
     }
+  },
+  mergeModels: (update) => {
+    const { models, errors } = mergeLateModels({ models: get().models, errors: get().modelErrors }, update)
+    set({ models, modelErrors: errors })
+    // A list that came back empty, waiting on this endpoint, had nothing to pick from.
+    ensureDraftModel(get())
   },
   endpointsChanged: async () => {
     await get().loadSettings()
@@ -148,11 +176,16 @@ export const useApp = create<AppState>((set, get) => ({
 
   draftModel: null,
   draftThink: null,
+  // These two are the user's choices. Either one keeps the model from being swapped for the default when it turns up.
   setDraftModel: (key) => {
+    draftAuto = false
     const profile = thinkProfileFor(get().models, key)
     set({ draftModel: key, draftThink: defaultThinkSetting(profile) })
   },
-  setDraftThink: (draftThink) => set({ draftThink }),
+  setDraftThink: (draftThink) => {
+    draftAuto = false
+    set({ draftThink })
+  },
 
   projects: [],
   projectFilesVersion: 0,

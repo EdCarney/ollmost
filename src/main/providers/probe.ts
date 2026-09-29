@@ -1,5 +1,6 @@
-import { displayAddress, FLAVOR_LABELS, isLoopbackHost, isOllamaCloudUrl, OLLAMA_CLOUD_URL } from '@shared/endpoints'
+import { displayAddress, FLAVOR_LABELS, hostnameOf, isLoopbackHost, isOllamaCloudUrl, OLLAMA_CLOUD_URL } from '@shared/endpoints'
 import type { Endpoint, EndpointFlavor, EndpointProbe } from '@shared/types'
+import { fetchFailureMessage } from './fetchFailure'
 import { isRecord } from './json'
 import { discoverModels } from './openai/discovery'
 import { listCloudCatalog } from './ollama/wire'
@@ -87,7 +88,8 @@ async function probeJson(url: string, apiKey: string | undefined, address: strin
   } catch (err) {
     // A server that takes the connection but never answers is there, just stuck.
     if ((err as Error).name === 'TimeoutError') throw new Error(`${address} didn’t answer within 5 seconds.`, { cause: err })
-    throw new Error(`Can't reach ${address}. Is the server started?`, { cause: err })
+    const refused = `Can't reach ${address}. Is the server started?`
+    throw new Error(fetchFailureMessage(err, { subject: null, address, host: hostnameOf(url) ?? url }, refused), { cause: err })
   }
   if (res.status === 401 || res.status === 403)
     throw new Error(apiKey ? `The server at ${address} rejected the API key.` : `The server at ${address} needs an API key.`)

@@ -1,14 +1,16 @@
-import { displayAddress } from '@shared/endpoints'
+import { displayAddress, hostnameOf } from '@shared/endpoints'
 import { contextSizeLabel } from '@shared/format'
 import type { Endpoint, EndpointFlavor, ModelDetected } from '@shared/types'
+import { fetchFailureMessage } from '../fetchFailure'
 import { isRecord } from '../json'
 
 export class OpenAIError extends Error {
   constructor(
     message: string,
-    readonly status?: number
+    readonly status?: number,
+    options?: ErrorOptions
   ) {
-    super(message)
+    super(message, options)
   }
 }
 
@@ -21,10 +23,16 @@ const START_HINTS: Record<EndpointFlavor, string> = {
   generic: ''
 }
 
-export function unreachableError(endpoint: Pick<Endpoint, 'name' | 'baseUrl' | 'flavor'>): OpenAIError {
-  return new OpenAIError(
-    `Can't reach ${endpoint.name} at ${displayAddress(endpoint.baseUrl)}. Is its server started?${START_HINTS[endpoint.flavor]}`
+/** A request that never got an answer, in words that name the endpoint; `cause` is what fetch threw. */
+export function unreachableError(endpoint: Pick<Endpoint, 'name' | 'baseUrl' | 'flavor'>, cause?: unknown): OpenAIError {
+  const address = displayAddress(endpoint.baseUrl)
+  const refused = `Can't reach ${endpoint.name} at ${address}. Is its server started?${START_HINTS[endpoint.flavor]}`
+  const message = fetchFailureMessage(
+    cause,
+    { subject: endpoint.name, address, host: hostnameOf(endpoint.baseUrl) ?? endpoint.baseUrl },
+    refused
   )
+  return new OpenAIError(message, undefined, cause === undefined ? undefined : { cause })
 }
 
 // Servers that need a start-up flag before they take tools say so in their error.
@@ -41,7 +49,10 @@ const TOOL_FLAGS = [
 // isn't one of them: with just-in-time loading off it means "load a model", so its own words go through.
 const MISSING_MODEL = /not found|does not exist|no such|invalid model|unknown model/i
 
-/** The message in any of the error shapes servers send, and the error object itself when there is one. */
+/**
+ * The message in any of the error shapes servers send, trimmed (a blank one is none), and the error object itself when
+ * there is one. JSON with no text message says nothing; text that isn't JSON is its own message.
+ */
 function readError(body: string): { detail: string; error: Record<string, unknown> } {
   let json: unknown
   try {
@@ -50,10 +61,10 @@ function readError(body: string): { detail: string; error: Record<string, unknow
     return { detail: body.trim(), error: {} }
   }
   const obj = isRecord(json) ? json : {}
-  if (typeof obj.error === 'string') return { detail: obj.error, error: {} }
-  if (isRecord(obj.error)) return { detail: typeof obj.error.message === 'string' ? obj.error.message : body.trim(), error: obj.error }
-  const detail = typeof obj.message === 'string' ? obj.message : typeof obj.detail === 'string' ? obj.detail : body.trim()
-  return { detail, error: obj }
+  if (typeof obj.error === 'string') return { detail: obj.error.trim(), error: {} }
+  if (isRecord(obj.error)) return { detail: typeof obj.error.message === 'string' ? obj.error.message.trim() : '', error: obj.error }
+  const detail = typeof obj.message === 'string' ? obj.message : typeof obj.detail === 'string' ? obj.detail : ''
+  return { detail: detail.trim(), error: obj }
 }
 
 // vLLM: "maximum context length is 32768 tokens"; llama.cpp: an exceed_context_size_error with n_ctx.
@@ -95,5 +106,7 @@ export function friendlyOpenAIError(
     )
   if (model && /model/i.test(detail) && (status === 404 || MISSING_MODEL.test(detail)))
     return fail(`${name} doesn't have a model called ${model}.`)
-  return fail(`${name}: ${detail || `HTTP ${status}`}`)
+  // A proxy's error page is HTML: not a message for anyone to read.
+  const message = detail.startsWith('<') ? '' : detail
+  return fail(message ? `${name}: ${message}` : `${name} at ${displayAddress(endpoint.baseUrl)} answered HTTP ${status}.`)
 }

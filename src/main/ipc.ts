@@ -94,7 +94,7 @@ import {
   toolFingerprint
 } from './mcp/manager'
 import { addEndpoint, endpointRemovalImpact, probeNewEndpoint, removeEndpoint, setEndpointKey, updateEndpoint } from './providers/endpoints'
-import { listAllModels, modelInfo, redetectModel, resolve } from './providers/registry'
+import { listAllModels, modelInfo, onLateModels, redetectModel, resolve } from './providers/registry'
 import { getPriceTable, refreshPrices } from './usage/pricing'
 import {
   deleteSkill,
@@ -623,5 +623,9 @@ export function registerIpc(): void {
   watchSkills(broadcastSkillsChanged)
   onStatusChange((statuses) => {
     for (const w of BrowserWindow.getAllWindows()) w.webContents.send(EVENT_CHANNELS.mcp, statuses)
+  })
+  // An endpoint the model list stopped waiting for has answered, or failed.
+  onLateModels((update) => {
+    for (const w of BrowserWindow.getAllWindows()) w.webContents.send(EVENT_CHANNELS.models, update)
   })
 }

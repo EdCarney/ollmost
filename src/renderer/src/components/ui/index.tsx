@@ -120,16 +120,19 @@ export function MenuContent({
   children,
   align = 'start',
   side,
-  className
+  className,
+  onCloseAutoFocus
 }: {
   children: ReactNode
   align?: 'start' | 'end' | 'center'
   side?: 'top' | 'bottom' | 'left' | 'right'
   className?: string
+  /** Runs as the menu has closed, when Radix hands focus back to the trigger; preventDefault() skips that. */
+  onCloseAutoFocus?: (event: Event) => void
 }) {
   return (
     <Dropdown.Portal>
-      <Dropdown.Content align={align} side={side} sideOffset={6} className={cn(surface, className)}>
+      <Dropdown.Content align={align} side={side} sideOffset={6} className={cn(surface, className)} onCloseAutoFocus={onCloseAutoFocus}>
         {children}
       </Dropdown.Content>
     </Dropdown.Portal>

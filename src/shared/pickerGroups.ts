@@ -12,6 +12,9 @@ export interface PickerGroup {
   items: ModelInfo[]
   /** Why the endpoint listed nothing, with Retry beside it. */
   error?: string
+  /** Set while the endpoint is still answering, with what to say about it: waiting, not an error. */
+  pending?: true
+  note?: string
 }
 
 export interface EndpointChip {
@@ -19,6 +22,9 @@ export interface EndpointChip {
   label: string
   offline: boolean
   error?: string
+  /** Set while the endpoint is still answering (it isn't offline), with what its tooltip says. */
+  pending?: true
+  note?: string
 }
 
 /**
@@ -43,10 +49,15 @@ export function groupModels(
   const groups: PickerGroup[] = []
   for (const e of ordered) {
     const items = models.filter((m) => m.endpoint.id === e.id && matches(m))
-    const error = errors.find((x) => x.endpointId === e.id)?.message
-    if (error) {
-      if (opts.filter === e.id || e.id === current)
-        groups.push({ id: e.id, endpointId: e.id, label: e.name, where: whereOf(e.baseUrl), items: [], error })
+    const failure = errors.find((x) => x.endpointId === e.id)
+    // One still answering that listed before keeps its models (the chip says it's waiting) until it answers.
+    const kept = failure?.pending && models.some((m) => m.endpoint.id === e.id)
+    if (failure && !kept) {
+      // Pending or failed, it listed nothing: shown only when asked about, but a pending one as waiting.
+      if (opts.filter === e.id || e.id === current) {
+        const base = { id: e.id, endpointId: e.id, label: e.name, where: whereOf(e.baseUrl), items: [] }
+        groups.push(failure.pending ? { ...base, pending: true, note: failure.message } : { ...base, error: failure.message })
+      }
       continue
     }
     if (e.kind === 'ollama') {
@@ -60,15 +71,18 @@ export function groupModels(
   return groups
 }
 
-/** All, then each enabled endpoint; one that couldn't list is offline, with its error. */
+/** All, then each enabled endpoint; one that couldn't list is offline, with its error, and one still answering is pending. */
 export function endpointChips(endpoints: readonly Endpoint[], errors: ModelListResult['errors']): EndpointChip[] {
   return [
     { id: 'all', label: 'All', offline: false },
     ...endpoints
       .filter((e) => e.enabled)
       .map((e) => {
-        const error = errors.find((x) => x.endpointId === e.id)?.message
-        return error ? { id: e.id, label: e.name, offline: true, error } : { id: e.id, label: e.name, offline: false }
+        const failure = errors.find((x) => x.endpointId === e.id)
+        if (!failure) return { id: e.id, label: e.name, offline: false }
+        return failure.pending
+          ? { id: e.id, label: e.name, offline: false, pending: true as const, note: failure.message }
+          : { id: e.id, label: e.name, offline: true, error: failure.message }
       })
   ]
 }

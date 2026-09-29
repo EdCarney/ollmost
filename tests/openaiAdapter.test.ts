@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Endpoint } from '@shared/types'
 import type { ChatEvent, ChatRequest } from '../src/main/providers/types'
+import { fetchFailed } from './fetchFailed'
 import {
   byteChunks,
   capturedChunks,
@@ -416,6 +417,30 @@ describe('chatStream', () => {
     await expect(collect(provider({ baseUrl: 'http://127.0.0.1:9/v1' }))).rejects.toThrow(
       "Can't reach LM Studio at 127.0.0.1:9. Is its server started? Start it in LM Studio’s Developer tab."
     )
+  })
+
+  it('says why it can’t be reached when the cause is a missing host or an untrusted certificate, and lets a stop through', async () => {
+    const reach = async (cause: unknown) => {
+      vi.stubGlobal('fetch', vi.fn().mockRejectedValue(cause))
+      return collect(provider({ baseUrl: 'https://gpu.lan:1234/v1' })).then(
+        () => '',
+        (e: Error) => e.message
+      )
+    }
+    try {
+      expect(await reach(fetchFailed('ECONNREFUSED', 'aggregate-no-code'))).toBe(
+        "Can't reach LM Studio at gpu.lan:1234. Is its server started? Start it in LM Studio’s Developer tab."
+      )
+      expect(await reach(fetchFailed('ENOTFOUND'))).toBe(
+        "LM Studio's host gpu.lan wasn't found. Check the address in Settings → Models → LM Studio."
+      )
+      expect(await reach(fetchFailed('DEPTH_ZERO_SELF_SIGNED_CERT'))).toBe(
+        "LM Studio's certificate at gpu.lan:1234 isn't trusted (DEPTH_ZERO_SELF_SIGNED_CERT)."
+      )
+      expect(await reach(new DOMException('This operation was aborted', 'AbortError'))).toBe('This operation was aborted')
+    } finally {
+      vi.unstubAllGlobals()
+    }
   })
 
   it('learns that tools are off when the server needs a flag for them', async () => {

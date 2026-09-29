@@ -371,9 +371,16 @@ export interface ModelInfo {
 
 export interface ModelListResult {
   models: ModelInfo[]
-  /** Endpoints that couldn't list their models this time, and why. The others still list. */
-  errors: Array<{ endpointId: string; message: string }>
+  /**
+   * Endpoints that didn't list their models this time, and why. The others still list. `pending` is set for one that
+   * hasn't answered yet, not one that failed: its request carries on, and its models or its error arrive later as a
+   * ModelListUpdate.
+   */
+  errors: Array<{ endpointId: string; message: string; pending?: true }>
 }
+
+/** What an endpoint that was still pending in a ModelListResult listed once it answered, or why it failed. */
+export type ModelListUpdate = { endpointId: string; models: ModelInfo[] } | { endpointId: string; error: string }
 
 // ---- Usage & cost ---------------------------------------------------------
 
