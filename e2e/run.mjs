@@ -2121,7 +2121,8 @@ const evilSvg = (port) =>
   const ollamaRequests = []
   const ollama = await fakeServer({
     dialect: 'ollama',
-    models: ['mock-ollama:latest'],
+    // The fillers make the picker's list long enough to reach its cap, for the short-window check.
+    models: ['mock-ollama:latest', ...Array.from({ length: 12 }, (_, i) => `filler-${String(i + 1).padStart(2, '0')}:latest`)],
     requests: ollamaRequests,
     reply: () => ({ content: 'Ollama answered: E2E-OLLAMA-OK' })
   })
@@ -2196,6 +2197,41 @@ const evilSvg = (port) =>
     await picker.locator('button').filter({ hasText: 'mock-openai-tools' }).first().click()
     const trigger = await win.locator('button[aria-label="Choose model"]').innerText()
     check('the picker names a non-Ollama model with its endpoint', /mock-openai-tools · E2E Server/.test(trigger), trigger)
+
+    // A short window: Home's composer sits mid-window, so neither side has room for the whole picker. Its list shrinks
+    // instead, keeping the search box, the chips and the footer in the window.
+    const size = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].getContentSize())
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0].setContentSize(1200, 700))
+    await win.waitForTimeout(500)
+    await win.click('button[aria-label="Choose model"]')
+    await win.waitForSelector('input[placeholder="Search models"]')
+    // The chip picked above is remembered: back to every endpoint's models, so the list is at its longest.
+    await picker.getByRole('button', { name: 'All', exact: true }).first().click()
+    await picker.locator('button').filter({ hasText: 'filler-12' }).first().waitFor()
+    await win.waitForTimeout(500)
+    const fit = await win.evaluate(() => {
+      const box = document.querySelector('[data-radix-popper-content-wrapper] > *').getBoundingClientRect()
+      const search = document.querySelector('input[placeholder="Search models"]').getBoundingClientRect()
+      const refresh = [...document.querySelectorAll('[data-radix-popper-content-wrapper] button')].find((b) =>
+        /Refresh/.test(b.textContent)
+      )
+      return {
+        window: window.innerHeight,
+        top: Math.round(box.top),
+        bottom: Math.round(box.bottom),
+        search: Math.round(search.top),
+        footer: Math.round(refresh.getBoundingClientRect().bottom)
+      }
+    })
+    check(
+      'in a short window the picker fits, search box to footer',
+      fit.top >= 0 && fit.search >= fit.top && fit.footer <= fit.bottom && fit.bottom <= fit.window,
+      JSON.stringify(fit)
+    )
+    await win.screenshot({ path: join(SHOTS, 'picker-short-window.png') })
+    await win.keyboard.press('Escape')
+    await app.evaluate(({ BrowserWindow }, [w, h]) => BrowserWindow.getAllWindows()[0].setContentSize(w, h), size)
+    await win.waitForTimeout(500)
 
     // A tool round on the OpenAI-compatible endpoint.
     const reply = await send(win, 'What does the endpoint helper skill say?')
