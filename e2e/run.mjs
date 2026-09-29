@@ -1,7 +1,8 @@
 // End-to-end run: drives the built app with Playwright against real Ollama models, and against stand-in model servers
 // (Ollama's API and an OpenAI-compatible one) for the deterministic sections.
 // Usage: npm run build && npm run e2e   (needs the Ollama app running and `ollama signin` for cloud models;
-// OLLMOST_E2E_OPENAI_URL=http://localhost:1234/v1 adds a live check against an OpenAI-compatible server such as LM Studio)
+// OLLMOST_E2E_OPENAI_URL=http://localhost:1234/v1 adds a live check against an OpenAI-compatible server such as LM Studio,
+// and OLLMOST_E2E_OPENAI_MODEL picks that check's model)
 import { execFileSync, spawn } from 'node:child_process'
 import { createHash } from 'node:crypto'
 import {
@@ -132,7 +133,7 @@ async function newChat(win) {
  * reply with `hold` (a function returning a promise) streams its `thinking` first and the rest once `hold()` settles;
  * OpenAI tool calls get the ids call_e2e_<n> and arrive in two pieces. Non-streaming requests (titles, debugger replays)
  * get `once(body)`'s message, else `title`. `route(req, res)` answers other paths first (pages, beacons) and returns true
- * when it did. `requests`, when given, collects { path, body } for every request.
+ * when it did. `requests`, when given, collects { path, body } for every request `route` doesn't answer.
  */
 async function fakeServer({ dialect, models, capabilities = ['completion', 'tools'], reply, once, title = 'Mock title', route, requests }) {
   const server = createServer(async (req, res) => {
@@ -2062,6 +2063,202 @@ const evilSvg = (port) =>
     } else {
       console.log('SKIP  code sessions: live edit check (set OLLMOST_E2E_MODEL to run it)')
     }
+  }
+}
+
+// 15. Model endpoints: an OpenAI-compatible server added in Settings (Check, then Add), picked with its chip, a tool
+// round on it, the "local" label, and the same chat switched to a model on the Ollama endpoint.
+{
+  const openaiRequests = []
+  const openai = await fakeServer({
+    dialect: 'openai',
+    // Generic discovery hides embedding models by name.
+    models: ['mock-openai-tools', 'text-embedding-mock'],
+    requests: openaiRequests,
+    // One round: load the skill; then answer with what it said.
+    reply: (body) => {
+      const lastUser = body.messages.findLastIndex((m) => m.role === 'user')
+      const results = body.messages.slice(lastUser).filter((m) => m.role === 'tool')
+      if (!(body.tools ?? []).some((t) => t.function.name === 'load_skill')) return { content: 'No tools here.' }
+      return results.length === 0
+        ? { content: '', tool_calls: [{ function: { name: 'load_skill', arguments: { name: 'endpoint-helper' } } }] }
+        : { content: `Skill says: ${/E2E-ENDPOINT-MARKER/.test(results[0].content) ? 'E2E-ENDPOINT-MARKER' : 'nothing'}` }
+    }
+  })
+  const ollamaRequests = []
+  const ollama = await fakeServer({
+    dialect: 'ollama',
+    models: ['mock-ollama:latest'],
+    requests: ollamaRequests,
+    reply: () => ({ content: 'Ollama answered: E2E-OLLAMA-OK' })
+  })
+  const data = mkdtempSync(join(tmpdir(), 'ollmost-e2e-endpoints-'))
+  mkdirSync(join(data, 'skills', 'endpoint-helper'), { recursive: true })
+  writeFileSync(
+    join(data, 'skills', 'endpoint-helper', 'SKILL.md'),
+    '---\nname: endpoint-helper\ndescription: Use for any question about endpoints.\n---\n\nThe answer is E2E-ENDPOINT-MARKER.\n'
+  )
+  const app = await electron.launch({ args: [ROOT], env: { ...process.env, OLLMOST_USER_DATA: data } })
+  const win = await app.firstWindow()
+  try {
+    await win.waitForSelector('textarea', { timeout: 20000 })
+    await useOllamaAt(win, ollama.url)
+
+    // Settings → Models → + Add endpoint: the address, Check, what was found, a name, Add.
+    await win
+      .getByRole('button', { name: /Set your name|Settings/ })
+      .last()
+      .click()
+    await win.getByRole('button', { name: 'Models', exact: true }).click()
+    await win.getByRole('button', { name: /Add endpoint/ }).click()
+    const dialog = win.getByRole('dialog')
+    await dialog.getByLabel('Address', { exact: true }).fill(openai.url)
+    await dialog.getByRole('button', { name: 'Check' }).click()
+    const found = dialog.getByText(/^Found/)
+    await found.waitFor({ timeout: 10000 })
+    const summary = await found.innerText()
+    check('Check finds an OpenAI-compatible server and says defaults apply', /defaults apply/.test(summary), summary)
+    await win.screenshot({ path: join(SHOTS, 'endpoint-add.png') })
+    await dialog.getByLabel('Name', { exact: true }).fill('E2E Server')
+    await dialog.getByRole('button', { name: 'Add', exact: true }).click()
+    await dialog.waitFor({ state: 'detached', timeout: 10000 })
+    const added = (await win.evaluate(() => window.ollmost.endpoints.list())).find((e) => e.name === 'E2E Server')
+    check(
+      'the endpoint is saved with an id made from its name, as OpenAI-compatible, at the address checked',
+      added?.id === 'e2e-server' && added?.kind === 'openai' && added?.baseUrl === openai.url,
+      JSON.stringify(added)
+    )
+
+    // The picker: a chip for the endpoint narrows the list to its models.
+    await newChat(win)
+    await win.click('button[aria-label="Choose model"]')
+    const picker = win.locator('[data-radix-popper-content-wrapper]')
+    await picker.getByRole('button', { name: 'E2E Server', exact: true }).first().click()
+    // The dialog closes before the model list has reloaded, so wait for the endpoint's model row.
+    await picker.locator('button').filter({ hasText: 'mock-openai-tools' }).first().waitFor()
+    const listed = await picker.innerText()
+    check(
+      "the endpoint's chip lists its chat models only",
+      /mock-openai-tools/.test(listed) && !/mock-ollama/.test(listed) && !/text-embedding-mock/.test(listed),
+      listed.replace(/\s+/g, ' ').slice(0, 120)
+    )
+    await win.screenshot({ path: join(SHOTS, 'endpoint-picker.png') })
+    await picker.locator('button').filter({ hasText: 'mock-openai-tools' }).first().click()
+    const trigger = await win.locator('button[aria-label="Choose model"]').innerText()
+    check('the picker names a non-Ollama model with its endpoint', /mock-openai-tools · E2E Server/.test(trigger), trigger)
+
+    // A tool round on the OpenAI-compatible endpoint.
+    const reply = await send(win, 'What does the endpoint helper skill say?')
+    check(
+      'a model on the OpenAI-compatible endpoint loads a skill and answers from it',
+      /Skill says: E2E-ENDPOINT-MARKER/.test(reply),
+      reply.slice(0, 80)
+    )
+    const [first, second] = openaiRequests.filter((r) => r.path === '/v1/chat/completions' && r.body.stream)
+    const echo = second?.body.messages.find((m) => m.role === 'assistant' && m.tool_calls)
+    const result = second?.body.messages.find((m) => m.role === 'tool')
+    check(
+      "the round goes back in OpenAI's shape: the call with its id and JSON arguments, the result with that id",
+      !!first?.body.tools?.some((t) => t.function.name === 'load_skill') &&
+        echo?.tool_calls[0].id === 'call_e2e_0' &&
+        typeof echo?.tool_calls[0].function.arguments === 'string' &&
+        result?.tool_call_id === 'call_e2e_0',
+      JSON.stringify(echo?.tool_calls ?? null).slice(0, 120)
+    )
+    check('the stream asks for usage', first?.body.stream_options?.include_usage === true)
+    check('the skill load shows in the reply', (await win.locator('text=Using skill').count()) > 0)
+
+    // The "local" label: a server on this Mac costs nothing Ollmost tracks.
+    await win.waitForSelector('button[aria-label="Chat usage"]', { timeout: 10000 })
+    const chip = await win.locator('button[aria-label="Chat usage"]').innerText()
+    check("the chat's cost reads local", /tokens · local/.test(chip), chip)
+    await win.locator('span.cursor-default').filter({ hasText: 'mock-openai-tools' }).last().hover()
+    await win.waitForTimeout(700)
+    const stats = (await win.locator('[role="tooltip"]').first().textContent()) ?? ''
+    check("the reply's stats say local", /· local\b/.test(stats), stats)
+    await win.mouse.move(0, 0)
+
+    // The same chat, switched to a model on the Ollama endpoint.
+    await pickModel(win, 'mock-ollama', 'Ollama')
+    const ollamaReply = await send(win, 'And what does the Ollama model say?')
+    check('the same chat continues on the Ollama endpoint', /E2E-OLLAMA-OK/.test(ollamaReply), ollamaReply.slice(0, 60))
+    const carried = ollamaRequests.find((r) => r.path === '/api/chat' && r.body.stream)
+    check(
+      "the history goes to Ollama with the other endpoint's answer",
+      !!carried?.body.messages.some((m) => m.role === 'assistant' && /E2E-ENDPOINT-MARKER/.test(m.content)),
+      `${carried?.body.messages.length ?? 0} messages`
+    )
+    await win.screenshot({ path: join(SHOTS, 'endpoint-switch.png') })
+
+    // The quota chip: offered with an Ollama endpoint and no key; gone once there's neither.
+    check(
+      'with an Ollama endpoint and no key, the quota chip asks for one',
+      (await expectedQuota(win)) === 'add-key' && /Quota/.test(await win.locator('button[aria-label^="Ollama usage"]').innerText())
+    )
+    await win.evaluate(() => window.ollmost.endpoints.update('ollama', { enabled: false }))
+    await win.reload()
+    await win.waitForSelector('textarea')
+    await win.waitForTimeout(1500)
+    check(
+      'with no Ollama endpoint and no key, there is no quota chip',
+      (await expectedQuota(win)) === 'hidden' && (await win.locator('button[aria-label^="Ollama usage"]').count()) === 0
+    )
+  } catch (err) {
+    check('model endpoints run completed without errors', false, err.message.split('\n')[0])
+    await win.screenshot({ path: join(SHOTS, 'endpoints-failure.png') }).catch(() => {})
+  } finally {
+    await app.close()
+    openai.close()
+    ollama.close()
+  }
+
+  // 15b. Live: a model on a real OpenAI-compatible server (LM Studio: http://localhost:1234/v1), when one is given.
+  // OLLMOST_E2E_OPENAI_MODEL picks the model; otherwise the first that can use tools.
+  if (process.env.OLLMOST_E2E_OPENAI_URL) {
+    const baseUrl = process.env.OLLMOST_E2E_OPENAI_URL
+    const liveApp = await electron.launch({
+      args: [ROOT],
+      env: { ...process.env, OLLMOST_USER_DATA: mkdtempSync(join(tmpdir(), 'ollmost-e2e-endpoints-live-')) }
+    })
+    const liveWin = await liveApp.firstWindow()
+    try {
+      await liveWin.waitForSelector('textarea', { timeout: 20000 })
+      const live = await liveWin.evaluate(async (url) => {
+        const probe = await window.ollmost.endpoints.probe({ baseUrl: url })
+        return window.ollmost.endpoints.add({ name: 'Live server', baseUrl: probe.baseUrl, kind: probe.kind, flavor: probe.flavor })
+      }, baseUrl)
+      const { models } = await liveWin.evaluate(() => window.ollmost.models.list(true))
+      const wanted = process.env.OLLMOST_E2E_OPENAI_MODEL
+      const model = models.find((m) => m.endpoint.id === live.id && (wanted ? m.name === wanted : m.capabilities.includes('tools')))
+      check(
+        'the live server lists a model to use',
+        !!model,
+        `${live.flavor}: ${models.filter((m) => m.endpoint.id === live.id).length} models`
+      )
+      if (model) {
+        await liveWin.reload()
+        await liveWin.waitForSelector('textarea')
+        await liveWin.waitForTimeout(1500)
+        await pickModel(liveWin, model.name, 'Live server')
+        const pong = await send(liveWin, 'Reply with the single word: pong')
+        check(`${model.name} on ${live.flavor} answers`, /pong/i.test(pong), pong.slice(0, 60))
+        const onThisMac = /^https?:\/\/(localhost|127\.0\.0\.1|\[::1\])(:|\/|$)/.test(live.baseUrl)
+        const liveChip = await liveWin.locator('button[aria-label="Chat usage"]').innerText()
+        check(
+          `its cost reads ${onThisMac ? 'local' : 'not tracked'}`,
+          new RegExp(`tokens · ${onThisMac ? 'local' : 'not tracked'}`).test(liveChip),
+          liveChip
+        )
+        await liveWin.screenshot({ path: join(SHOTS, 'endpoint-live.png') })
+      }
+    } catch (err) {
+      check('live endpoint run completed without errors', false, err.message.split('\n')[0])
+      await liveWin.screenshot({ path: join(SHOTS, 'endpoint-live-failure.png') }).catch(() => {})
+    } finally {
+      await liveApp.close()
+    }
+  } else {
+    console.log('SKIP  model endpoints: live check (set OLLMOST_E2E_OPENAI_URL to run it, e.g. http://localhost:1234/v1)')
   }
 }
 
