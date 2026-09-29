@@ -55,7 +55,8 @@ Decisions taken with the user, with the cost of each if it turns out wrong.
 - **Model identity is a key string, `endpointId/model`.** The alternative, a `provider` column and a
   `{provider, model}` object across IPC, stores and React keys, costs far more churn for the same result. Cost if
   wrong: discipline, since a raw model name must never leave an adapter and a leaked key would fail loudly at the
-  server. This is guarded by a branded type and tests.
+  server. This is guarded by tests, and by a branded `ModelKey` type on `ModelInfo.key`; settings and IPC carry keys
+  as plain strings.
 - **The database migration is one-way, so the database is backed up first.** An older Ollmost can't read prefixed
   model names. Cost if wrong: a downgrade means restoring the backup.
 
@@ -137,8 +138,10 @@ Rules:
    No Ollama-only field reaches shared code.
 4. **Adapters own their timeouts and error wording.**
 5. **Every model call goes through `registry.resolve(key)`:** `rounds.ts`, `delegate.ts`, title, `/compact` and
-   replay. A key without a known endpoint prefix resolves to `ollama` with the whole string as the name. That's a
-   guard for leftovers; after the migration there should be none.
+   replay. A key whose first segment isn't shaped like an endpoint id (`[a-z0-9-]+`, so `hf.co/…` or a bare name)
+   resolves to `ollama` with the whole string as the name. That's a guard for leftovers; after the migration there
+   should be none. A first segment shaped like an endpoint id that names none is a removed endpoint
+   (`EndpointGoneError`), which is what makes such a chat read "unavailable".
 
 ### Endpoints (settings)
 
@@ -247,7 +250,7 @@ interface ModelListResult { models: ModelInfo[]; errors: { endpointId: string; m
 
 - **Framing:**
   - Read `data:` lines, skip `:` comments and `event:` lines, and end at `data: [DONE]`.
-  - Buffering and stall timers are shared with the NDJSON reader.
+  - The stall timer (`createStallTimer`) is shared with the NDJSON reader; each reader buffers its own lines.
   - A stream that ends with neither `finish_reason` nor `[DONE]` throws "connection dropped".
   - `data: {"error":…}` throws its message.
 - **Content and reasoning:**
@@ -335,7 +338,8 @@ Today's behaviour, moved:
   - The title model is `settings.titleModel` (a `ModelKey`, default "same as the chat").
   - `think` is the lowest the profile allows (`low` for levels, `off` for toggle).
   - `temperature` is 0.3 for titles.
-  - `contextWindow` is the chat model's, so Ollama doesn't reload.
+  - `contextWindow` is the title model's own (the chat model's unless a separate title model is set), so Ollama
+    doesn't reload it.
   - `cleanTitle`'s `<think>` stripping stays.
 
 ### Context (`src/shared/context.ts`)
@@ -418,9 +422,10 @@ The mockups were approved.
 - **Add endpoint dialog:**
   - Step 1: address, with presets Ollama `:11434`, LM Studio `:1234`, llama.cpp `:8080` and vLLM `:8000`, plus an
     optional key. Then Check.
-  - Step 2: a summary such as *"Found LM Studio 0.4 · 5 models · 4 with tools · 1 with vision · 2 can think"*, or
+  - Step 2: a summary such as *"Found LM Studio · 5 models · 4 with tools · 1 with vision · 2 can think"*, or
     for a generic server *"… capabilities not reported — defaults apply (tools on, vision off)"*. Then a name, then
-    Add.
+    Add. A server that reports its version gets it after its name (*"Found llama.cpp b6600-abc1234 · …"*); LM Studio
+    doesn't report one over HTTP (capture `FINDINGS.md`).
 - **Wording:**
   - Home (`HomeView.tsx:31`): *"Couldn't load models from any endpoint"* when every enabled endpoint failed (or the
     list call itself did), listing each endpoint's error and linking to Settings. When only some failed and the others
