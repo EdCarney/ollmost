@@ -20,14 +20,14 @@ vi.mock('../src/main/settings', () => ({
 // A stand-in Ollama app on loopback. It counts the asks for /api/me and answers with `reply`: by default a 404, like an
 // older Ollama or anything else on the port.
 const servers: Server[] = []
-async function daemon(reply: (res: ServerResponse) => void = (res) => void res.writeHead(404).end()) {
+async function daemon(reply: (res: ServerResponse) => void = (res) => void res.writeHead(404).end(), port = 0) {
   const stub = { url: '', meHits: 0, reply }
   const server = createServer((req, res) => {
     if (req.url === '/api/me') stub.meHits++
     stub.reply(res)
   })
   servers.push(server)
-  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve))
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve))
   stub.url = `http://127.0.0.1:${(server.address() as AddressInfo).port}`
   return stub
 }
@@ -84,6 +84,14 @@ describe('the account’s plan (/api/me)', () => {
     expect(old.meHits).toBe(1)
   })
 
+  it('remembers an answer that isn’t JSON too: something answered there, and would again', async () => {
+    const other = await daemon((res) => void res.writeHead(200, { 'Content-Type': 'text/html' }).end('<html>'))
+    state.endpoints = [endpoint({ baseUrl: other.url })]
+    await getAccountUsage(true)
+    await getAccountUsage(true)
+    expect(other.meHits).toBe(1)
+  })
+
   it('asks again at a different address: the memory is of where it failed, not of failing', async () => {
     const [old, moved] = [await daemon(), await daemon()]
     state.endpoints = [endpoint({ baseUrl: old.url })]
@@ -93,6 +101,23 @@ describe('the account’s plan (/api/me)', () => {
     state.endpoints = [endpoint({ baseUrl: moved.url })]
     await getAccountUsage(true)
     expect(moved.meHits).toBe(1)
+  })
+
+  it('asks again after a refused connection: the Ollama app may not have started yet, or be updating', async () => {
+    // A port nothing listens on yet: taken for a moment to learn a free one, then let go.
+    const probe = createServer()
+    await new Promise<void>((resolve) => probe.listen(0, '127.0.0.1', resolve))
+    const port = (probe.address() as AddressInfo).port
+    await new Promise((resolve) => probe.close(resolve))
+    // A fresh module: an earlier test's remembered plan would answer before anything was asked.
+    vi.resetModules()
+    const account = await import('../src/main/usage/account')
+    state.endpoints = [endpoint({ baseUrl: `http://127.0.0.1:${port}` })]
+    expect((await account.getAccountUsage(true)).plan).toBeNull()
+    // The app comes up on its port, and the next load asks it.
+    const app = await daemon((res) => void res.writeHead(200, { 'Content-Type': 'application/json' }).end('{"plan":"pro"}'), port)
+    expect((await account.getAccountUsage(true)).plan).toBe('pro')
+    expect(app.meHits).toBe(1)
   })
 
   it('does not remember a signed-out answer, since signing in needs no restart', async () => {

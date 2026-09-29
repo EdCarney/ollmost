@@ -14,7 +14,11 @@ let inflight: Promise<AccountUsage> | null = null
 /** Bumped when settings change under a load: a load begun before that must not fill the cache or be joined. */
 let generation = 0
 let plan: string | null = null
-/** The address /api/me last failed at: not asked again this session (a server without it would fail on every load). */
+/**
+ * The address /api/me last failed at: not asked again this session (a server without it would fail on every load). A
+ * refused connection isn't remembered: nothing is listening there yet (the Ollama app not started, or restarting for an
+ * update), which isn't a server without /api/me, and it's asked again at the next load.
+ */
 let planFailedAt: string | null = null
 
 /** Where to ask for the plan: the first enabled Ollama endpoint on this Mac (the signed-in app), if any. */
@@ -35,8 +39,9 @@ async function fetchPlan(): Promise<string | null> {
     // A signed-out daemon answers without a plan: asked again next time, since signing in needs no restart.
     plan = ((await res.json()) as { plan?: string }).plan ?? null
     return plan
-  } catch {
-    planFailedAt = base
+  } catch (err) {
+    // An error status, a body that isn't JSON and the 5 s timeout are remembered; fetch's refused connection isn't.
+    if ((err as { cause?: { code?: string } }).cause?.code !== 'ECONNREFUSED') planFailedAt = base
     return null
   }
 }
