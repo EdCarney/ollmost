@@ -14,6 +14,7 @@ import {
   readlinkSync,
   realpathSync,
   renameSync,
+  rmSync,
   writeFileSync
 } from 'node:fs'
 import { createServer } from 'node:http'
@@ -30,8 +31,30 @@ const CHAT_MODEL = process.env.OLLMOST_E2E_MODEL ?? 'gpt-oss:120b'
 const VISION_MODEL = process.env.OLLMOST_E2E_VISION_MODEL ?? 'kimi-k3'
 mkdirSync(SHOTS, { recursive: true })
 
-const userData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-'))
-const fixtures = mkdtempSync(join(tmpdir(), 'ollmost-fixtures-'))
+// Every temp folder the run makes is removed when the process ends, however it ends: a finished, failed or crashed run,
+// or Ctrl-C. OLLMOST_E2E_KEEP=1 keeps them, for looking at what an app wrote.
+const KEEP = process.env.OLLMOST_E2E_KEEP === '1'
+const made = []
+const tempDir = (prefix) => {
+  const dir = mkdtempSync(join(tmpdir(), prefix))
+  made.push(dir)
+  return dir
+}
+process.on('exit', () => {
+  if (KEEP) return
+  for (const dir of made) {
+    try {
+      rmSync(dir, { recursive: true, force: true })
+    } catch {
+      // An app may still be open after a crash and writing to its folder: what can't be removed stays.
+    }
+  }
+})
+process.on('SIGINT', () => process.exit(130))
+process.on('SIGTERM', () => process.exit(143))
+
+const userData = tempDir('ollmost-e2e-')
+const fixtures = tempDir('ollmost-fixtures-')
 
 // A skill the model should use both when chosen with / and when it loads it on its own.
 mkdirSync(join(userData, 'skills', 'haiku-helper'), { recursive: true })
@@ -818,7 +841,7 @@ const fakeWeb = createServer(async (req, res) => {
   )
 })
 await new Promise((r) => fakeWeb.listen(0, '127.0.0.1', r))
-const mockUserData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-tools-'))
+const mockUserData = tempDir('ollmost-e2e-tools-')
 mkdirSync(join(mockUserData, 'skills', 'news-helper'), { recursive: true })
 writeFileSync(
   join(mockUserData, 'skills', 'news-helper', 'SKILL.md'),
@@ -1168,7 +1191,7 @@ const fixtureRunning = () => {
   await new Promise((r) => leakPages.listen(0, '127.0.0.1', r))
   const leakUrl = `http://127.0.0.1:${leakPages.address().port}/notes?d=secret`
   // Another app's config to import from (Claude Code's is pointed at nothing, so the real one isn't read).
-  const mcpFiles = mkdtempSync(join(tmpdir(), 'ollmost-e2e-mcp-import-'))
+  const mcpFiles = tempDir('ollmost-e2e-mcp-import-')
   writeFileSync(
     join(mcpFiles, 'claude_desktop_config.json'),
     JSON.stringify({
@@ -1179,7 +1202,7 @@ const fixtureRunning = () => {
     args: [ROOT],
     env: {
       ...process.env,
-      OLLMOST_USER_DATA: mkdtempSync(join(tmpdir(), 'ollmost-e2e-mcp-')),
+      OLLMOST_USER_DATA: tempDir('ollmost-e2e-mcp-'),
       OLLMOST_CLAUDE_DESKTOP_CONFIG: join(mcpFiles, 'claude_desktop_config.json'),
       OLLMOST_CLAUDE_CODE_CONFIG: join(mcpFiles, 'none.json'),
       // So the only thing that can stop the leak check's preview is the tool-chat rule, not the local-address one.
@@ -1430,7 +1453,7 @@ const fixtureRunning = () => {
 {
   const app = await electron.launch({
     args: [ROOT],
-    env: { ...process.env, OLLMOST_USER_DATA: mkdtempSync(join(tmpdir(), 'ollmost-e2e-mcp-live-')) }
+    env: { ...process.env, OLLMOST_USER_DATA: tempDir('ollmost-e2e-mcp-live-') }
   })
   const win = await app.firstWindow()
   try {
@@ -1530,7 +1553,7 @@ const evilSvg = (port) =>
       return message
     }
   })
-  const runnerData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-runner-'))
+  const runnerData = tempDir('ollmost-e2e-runner-')
   // A skill with a script, loaded by the model and run from its own folder.
   mkdirSync(join(runnerData, 'skills', 'note-maker', 'scripts'), { recursive: true })
   writeFileSync(
@@ -1594,7 +1617,7 @@ const evilSvg = (port) =>
     await win.screenshot({ path: join(SHOTS, 'runner-files.png') })
 
     const chatId = (await win.evaluate(() => window.ollmost.conversations.list()))[0].id
-    const savedTo = join(mkdtempSync(join(tmpdir(), 'ollmost-e2e-save-')), 'total-copy.txt')
+    const savedTo = join(tempDir('ollmost-e2e-save-'), 'total-copy.txt')
     await app.evaluate(({ dialog }, filePath) => {
       dialog.showSaveDialog = async () => ({ canceled: false, filePath })
     }, savedTo)
@@ -1710,7 +1733,7 @@ const evilSvg = (port) =>
 {
   const app = await electron.launch({
     args: [ROOT],
-    env: { ...process.env, OLLMOST_USER_DATA: mkdtempSync(join(tmpdir(), 'ollmost-e2e-runner-live-')) }
+    env: { ...process.env, OLLMOST_USER_DATA: tempDir('ollmost-e2e-runner-live-') }
   })
   const win = await app.firstWindow()
   try {
@@ -1761,10 +1784,10 @@ const evilSvg = (port) =>
   check('code sessions: git is available', gitAvailable)
   if (gitAvailable) {
     // A repository of its own, made outside Ollmost with the user's config kept out: only its local identity is set.
-    const gitHome = mkdtempSync(join(tmpdir(), 'ollmost-e2e-session-githome-'))
+    const gitHome = tempDir('ollmost-e2e-session-githome-')
     const gitEnv = { ...process.env, HOME: gitHome, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
     const git = (args, cwd) => execFileSync('/usr/bin/git', args, { cwd, env: gitEnv })
-    const repo = realpathSync(mkdtempSync(join(tmpdir(), 'ollmost-e2e-session-')))
+    const repo = realpathSync(tempDir('ollmost-e2e-session-'))
     git(['init', '-q', '-b', 'main'], repo)
     git(['config', 'user.name', 'Ollmost E2E'], repo)
     git(['config', 'user.email', 'e2e@ollmost.test'], repo)
@@ -1806,7 +1829,7 @@ const evilSvg = (port) =>
                 : { content: 'Changed the greeting and checked it.' }
       }
     })
-    const sessionData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-sessions-'))
+    const sessionData = tempDir('ollmost-e2e-sessions-')
     const app = await electron.launch({ args: [ROOT], env: { ...process.env, OLLMOST_USER_DATA: sessionData } })
     const win = await app.firstWindow()
     try {
@@ -2030,7 +2053,7 @@ const evilSvg = (port) =>
 
     // 13d. Live: a real model asks to edit a file in a session on the same repository; denying it stops there.
     if (process.env.OLLMOST_E2E_MODEL) {
-      const liveData = mkdtempSync(join(tmpdir(), 'ollmost-e2e-sessions-live-'))
+      const liveData = tempDir('ollmost-e2e-sessions-live-')
       const liveApp = await electron.launch({ args: [ROOT], env: { ...process.env, OLLMOST_USER_DATA: liveData } })
       const liveWin = await liveApp.firstWindow()
       try {
@@ -2113,7 +2136,7 @@ const evilSvg = (port) =>
     }
   })
   let slowId = null
-  const data = mkdtempSync(join(tmpdir(), 'ollmost-e2e-endpoints-'))
+  const data = tempDir('ollmost-e2e-endpoints-')
   mkdirSync(join(data, 'skills', 'endpoint-helper'), { recursive: true })
   writeFileSync(
     join(data, 'skills', 'endpoint-helper', 'SKILL.md'),
@@ -2286,7 +2309,7 @@ const evilSvg = (port) =>
     const baseUrl = process.env.OLLMOST_E2E_OPENAI_URL
     const liveApp = await electron.launch({
       args: [ROOT],
-      env: { ...process.env, OLLMOST_USER_DATA: mkdtempSync(join(tmpdir(), 'ollmost-e2e-endpoints-live-')) }
+      env: { ...process.env, OLLMOST_USER_DATA: tempDir('ollmost-e2e-endpoints-live-') }
     })
     const liveWin = await liveApp.firstWindow()
     try {
@@ -2333,7 +2356,7 @@ const evilSvg = (port) =>
 // 14. Coming from Kiln (#60): data Kiln left next to Ollmost's data folder moves over on the first launch, with its
 // chats, files and settings. The secrets Kiln's keychain entry encrypted are asked for again, once.
 {
-  const home = mkdtempSync(join(tmpdir(), 'ollmost-e2e-kiln-'))
+  const home = tempDir('ollmost-e2e-kiln-')
   const DOT_PNG = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==', 'base64')
   writeFileSync(join(fixtures, 'dot.png'), DOT_PNG)
   const mock = await fakeServer({
@@ -2548,6 +2571,9 @@ process.on('SIGTERM', () => app.quit())
 }
 
 const failed = results.filter((r) => !r.ok).length
-console.log(`\n${results.length - failed}/${results.length} checks passed. Screenshots in e2e/shots/, data in ${userData}`)
+console.log(
+  `\n${results.length - failed}/${results.length} checks passed. Screenshots in e2e/shots/` +
+    (KEEP ? `, data in ${userData}` : ' (temp folders removed; OLLMOST_E2E_KEEP=1 keeps them)')
+)
 usageServer.close()
 process.exit(failed ? 1 : 0)

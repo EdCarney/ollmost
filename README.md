@@ -164,6 +164,7 @@ npm run typecheck
 npm run lint                # ESLint (typescript-eslint, React hook rules)
 npm run format              # Prettier; format:check only reports
 npm run build && npm run e2e   # live: needs Ollama running; uses a throwaway data folder
+OLLMOST_E2E_KEEP=1 npm run e2e   # keeps the temp folders the e2e run makes, for debugging; otherwise they're removed when it ends
 OLLMOST_E2E_OPENAI_URL=http://localhost:1234/v1 npm run e2e   # also a live check against LM Studio (or any OpenAI-compatible server that needs no key); OLLMOST_E2E_OPENAI_MODEL picks the model
 ```
 
