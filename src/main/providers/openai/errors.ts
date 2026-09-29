@@ -1,14 +1,16 @@
 import { displayAddress } from '@shared/endpoints'
 import { contextSizeLabel } from '@shared/format'
 import type { Endpoint, EndpointFlavor, ModelDetected } from '@shared/types'
+import { fetchFailureMessage, hostOf } from '../fetchFailure'
 import { isRecord } from '../json'
 
 export class OpenAIError extends Error {
   constructor(
     message: string,
-    readonly status?: number
+    readonly status?: number,
+    options?: ErrorOptions
   ) {
-    super(message)
+    super(message, options)
   }
 }
 
@@ -21,10 +23,12 @@ const START_HINTS: Record<EndpointFlavor, string> = {
   generic: ''
 }
 
-export function unreachableError(endpoint: Pick<Endpoint, 'name' | 'baseUrl' | 'flavor'>): OpenAIError {
-  return new OpenAIError(
-    `Can't reach ${endpoint.name} at ${displayAddress(endpoint.baseUrl)}. Is its server started?${START_HINTS[endpoint.flavor]}`
-  )
+/** A request that never got an answer, in words that name the endpoint; `cause` is what fetch threw. */
+export function unreachableError(endpoint: Pick<Endpoint, 'name' | 'baseUrl' | 'flavor'>, cause?: unknown): OpenAIError {
+  const address = displayAddress(endpoint.baseUrl)
+  const refused = `Can't reach ${endpoint.name} at ${address}. Is its server started?${START_HINTS[endpoint.flavor]}`
+  const message = fetchFailureMessage(cause, { subject: endpoint.name, address, host: hostOf(endpoint.baseUrl) }, refused)
+  return new OpenAIError(message, undefined, cause === undefined ? undefined : { cause })
 }
 
 // Servers that need a start-up flag before they take tools say so in their error.
@@ -95,5 +99,7 @@ export function friendlyOpenAIError(
     )
   if (model && /model/i.test(detail) && (status === 404 || MISSING_MODEL.test(detail)))
     return fail(`${name} doesn't have a model called ${model}.`)
-  return fail(`${name}: ${detail || `HTTP ${status}`}`)
+  // A proxy's error page is HTML: not a message for anyone to read.
+  const message = detail.trim().startsWith('<') ? '' : detail
+  return fail(message ? `${name}: ${message}` : `${name} at ${displayAddress(endpoint.baseUrl)} answered HTTP ${status}.`)
 }

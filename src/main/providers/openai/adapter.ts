@@ -315,7 +315,7 @@ export class OpenAIProvider implements Provider {
       const name = (err as Error).name
       // Stop, a stall and chatOnce's timeout are told apart by the callers.
       if (name === 'AbortError' || name === 'TimeoutError') throw err
-      throw unreachableError(this.endpoint)
+      throw unreachableError(this.endpoint, err)
     }
   }
 

@@ -1,7 +1,8 @@
 // Ollama's HTTP API: /api/chat as NDJSON, /api/tags and /api/show. Only the adapter (adapter.ts) and the model list
 // (models.ts) call it; everything else speaks the neutral types in ../types.ts.
-import { OLLAMA_CLOUD_URL } from '@shared/endpoints'
+import { displayAddress, OLLAMA_CLOUD_URL } from '@shared/endpoints'
 import type { ModelWhere } from '@shared/types'
+import { fetchFailure, fetchFailureMessage, hostOf } from '../fetchFailure'
 import { createStallTimer, STREAM_TIMEOUTS, type StreamTimeouts } from '../stream'
 import type { ToolDef } from '../types'
 
@@ -68,9 +69,10 @@ export interface ChatChunk {
 export class OllamaError extends Error {
   constructor(
     message: string,
-    readonly status?: number
+    readonly status?: number,
+    options?: ErrorOptions
   ) {
-    super(message)
+    super(message, options)
   }
 }
 
@@ -87,10 +89,14 @@ function notEnoughMemory(detail: string, model?: string): string | undefined {
 function friendly(t: OllamaTarget, status: number, body: string, model?: string): OllamaError {
   let detail = body
   try {
-    detail = (JSON.parse(body) as { error?: string }).error ?? body
+    const error = (JSON.parse(body) as { error?: unknown }).error
+    if (typeof error === 'string') detail = error
   } catch {
     /* not JSON */
   }
+  // With nothing to say, a server is named by its address. A proxy's error page is HTML: not a message for anyone to read.
+  const answered = t.cloud ? `ollama.com answered HTTP ${status}.` : `${t.name} at ${displayAddress(t.base)} answered HTTP ${status}.`
+  const message = detail.trim().startsWith('<') ? '' : detail
   if (status === 401 || status === 403)
     return new OllamaError(
       t.cloud
@@ -102,13 +108,26 @@ function friendly(t: OllamaTarget, status: number, body: string, model?: string)
     )
   if (status === 429) return new OllamaError('Ollama cloud usage limit reached. Try again later, or switch to a local model.', status)
   if (status === 404 && /not found/i.test(detail))
-    return new OllamaError(model ? `Model “${model}” was not found by ${t.name}.` : detail, status)
+    return new OllamaError(model ? `Model “${model}” was not found by ${t.name}.` : message || answered, status)
   // 4b69183: Ollama's "model requires more system memory" in plain English, naming the model.
-  return new OllamaError(notEnoughMemory(detail, model) ?? (detail || `${t.name} returned HTTP ${status}`), status)
+  return new OllamaError(notEnoughMemory(detail, model) ?? (message || answered), status)
 }
 
 // Short calls (model lists, /api/show) should never hang the UI on a wedged daemon.
 const METADATA_TIMEOUT_MS = 30_000
+
+/** A request that never got an answer, in words that name the server; `err` is what fetch threw. */
+function unreachable(t: OllamaTarget, err: unknown): string {
+  if (t.cloud) {
+    // Offline is the usual cause of anything ollama.com doesn't answer; only a certificate says otherwise.
+    const failure = fetchFailure(err)
+    return failure.kind === 'certificate'
+      ? `ollama.com's certificate isn't trusted (${failure.code}).`
+      : `Can't reach ${OLLAMA_CLOUD}. Check your internet connection.`
+  }
+  const refused = `Can't reach ${t.name} at ${t.base}. Is the Ollama app running?`
+  return fetchFailureMessage(err, { subject: t.name, address: displayAddress(t.base), host: hostOf(t.base) }, refused)
+}
 
 async function request(t: OllamaTarget, path: string, init: RequestInit & { model?: string } = {}): Promise<Response> {
   let res: Response
@@ -121,11 +140,7 @@ async function request(t: OllamaTarget, path: string, init: RequestInit & { mode
   } catch (err) {
     if ((err as Error).name === 'AbortError') throw err
     if ((err as Error).name === 'TimeoutError') throw new OllamaError(`${t.name} took too long to respond. Try again in a moment.`)
-    throw new OllamaError(
-      t.cloud
-        ? `Can't reach ${OLLAMA_CLOUD}. Check your internet connection.`
-        : `Can't reach ${t.name} at ${t.base}. Is the Ollama app running?`
-    )
+    throw new OllamaError(unreachable(t, err), undefined, { cause: err })
   }
   if (!res.ok) throw friendly(t, res.status, await res.text().catch(() => ''), init.model)
   return res

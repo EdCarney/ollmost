@@ -1,8 +1,10 @@
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import type { OllamaTarget } from '../src/main/providers/ollama/wire'
+import { fetchFailed } from './fetchFailed'
 import { line, type MockOllama, startMockOllama, streamChunks } from './ollamaMock'
 
-const { chatOnce, chatStream, OllamaError, STREAM_TIMEOUTS, streamTimeoutsFor } = await import('../src/main/providers/ollama/wire')
+const { chatOnce, chatStream, listCloudCatalog, listTags, OllamaError, STREAM_TIMEOUTS, streamTimeoutsFor } =
+  await import('../src/main/providers/ollama/wire')
 
 const t: OllamaTarget = { base: '', name: 'Ollama', headers: {}, cloud: false, keyed: false }
 let ollama: MockOllama
@@ -182,5 +184,67 @@ describe('targets', () => {
     expect(auth).toBe('Bearer k')
     const gone = { ...t, base: 'http://127.0.0.1:9', name: 'GPU box' }
     await expect(chatOnce(gone, body, { timeoutMs: 2_000 })).rejects.toThrow("Can't reach GPU box at http://127.0.0.1:9.")
+  })
+})
+
+describe('a failed request', () => {
+  const gpu: OllamaTarget = { ...t, base: 'https://gpu.lan:11434', name: 'GPU box' }
+  const message = (run: () => Promise<unknown>) =>
+    run().then(
+      () => '',
+      (e: Error) => e.message
+    )
+  const stubFetch = (cause: unknown) => vi.stubGlobal('fetch', vi.fn().mockRejectedValue(cause))
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('says why an endpoint can’t be reached: refused, a host that isn’t there, or an untrusted certificate', async () => {
+    const reach = () => message(() => chatOnce(gpu, body, { timeoutMs: 2_000 }))
+    stubFetch(fetchFailed('ECONNREFUSED', 'aggregate-no-code'))
+    expect(await reach()).toBe("Can't reach GPU box at https://gpu.lan:11434. Is the Ollama app running?")
+    stubFetch(fetchFailed('ENOTFOUND'))
+    expect(await reach()).toBe("GPU box's host gpu.lan wasn't found. Check the address in Settings → Models → GPU box.")
+    stubFetch(fetchFailed('SELF_SIGNED_CERT_IN_CHAIN'))
+    expect(await reach()).toBe("GPU box's certificate at gpu.lan:11434 isn't trusted (SELF_SIGNED_CERT_IN_CHAIN).")
+  })
+
+  it('says the same of ollama.com: a certificate problem by name, anything else as being offline', async () => {
+    const reach = () => message(() => listCloudCatalog())
+    stubFetch(fetchFailed('CERT_HAS_EXPIRED'))
+    expect(await reach()).toBe("ollama.com's certificate isn't trusted (CERT_HAS_EXPIRED).")
+    for (const code of ['ECONNREFUSED', 'ENOTFOUND', 'EAI_AGAIN']) {
+      stubFetch(fetchFailed(code))
+      expect(await reach()).toBe("Can't reach https://ollama.com. Check your internet connection.")
+    }
+  })
+
+  it('keeps the cause on the error, and lets a stop through as it is', async () => {
+    const cause = fetchFailed('ENOTFOUND')
+    stubFetch(cause)
+    const err = await chatOnce(gpu, body, { timeoutMs: 2_000 }).catch((e: unknown) => e)
+    expect(err).toBeInstanceOf(OllamaError)
+    expect((err as Error).cause).toBe(cause)
+    const stop = new DOMException('This operation was aborted', 'AbortError')
+    stubFetch(stop)
+    await expect(chatOnce(gpu, body, { timeoutMs: 2_000 })).rejects.toBe(stop)
+  })
+
+  it('names the address when a server answers with a bare HTTP error, or a proxy’s HTML page', async () => {
+    const answer = (status: number, text: string) => {
+      vi.stubGlobal('fetch', vi.fn().mockResolvedValue(new Response(text, { status })))
+    }
+    const reach = () => message(() => chatOnce(gpu, body, { timeoutMs: 2_000 }))
+    answer(502, '')
+    expect(await reach()).toBe('GPU box at gpu.lan:11434 answered HTTP 502.')
+    answer(502, '<html><body><h1>502 Bad Gateway</h1></body></html>')
+    expect(await reach()).toBe('GPU box at gpu.lan:11434 answered HTTP 502.')
+    answer(404, '<html>404 Not Found</html>')
+    expect(await message(() => listTags(gpu))).toBe('GPU box at gpu.lan:11434 answered HTTP 404.')
+    answer(502, '')
+    expect(await message(() => listCloudCatalog())).toBe('ollama.com answered HTTP 502.')
+    answer(500, '{"error":"model runner crashed"}')
+    expect(await reach()).toBe('model runner crashed')
+    // An error that isn't a string is read as the text it came in.
+    answer(500, '{"error":{"code":500}}')
+    expect(await reach()).toBe('{"error":{"code":500}}')
   })
 })
