@@ -415,9 +415,10 @@ The mockups were approved.
     Add.
 - **Wording:**
   - Home (`HomeView.tsx:31`): *"Couldn't load models from any endpoint"*, listing each endpoint's error and linking
-    to Settings. With no endpoints at all it reads *"No endpoints yet. Add one in Settings → Models."*; with endpoints
-    that answered but have no model, *"None of your endpoints has a model yet. Add one, or add another endpoint in
-    Settings → Models."*
+    to Settings. When no endpoint failed and there is still no model, it says why: *"No endpoints yet. Add one in
+    Settings → Models."* with none; *"Your endpoints are all turned off. Turn one on in Settings → Models."* when none
+    is switched on (a switched-off endpoint isn't asked, so it has no error to list); otherwise *"None of your
+    endpoints has a model yet. Add one, or add another endpoint in Settings → Models."*
   - `codeActions.ts:12`: *"Check that a model server is running."*
   - Palette keywords "connection", "endpoint", "lm studio", "vllm" and "llama.cpp" all go to the Models tab.
   - README:

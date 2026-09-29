@@ -1,4 +1,5 @@
 import { TriangleAlert } from 'lucide-react'
+import type { Endpoint } from '@shared/types'
 import { Composer } from '@/components/Composer'
 import { MigrationNotice } from '@/components/MigrationNotice'
 import { OllmostMark } from '@/components/OllmostMark'
@@ -7,6 +8,14 @@ import { Button } from '@/components/ui'
 import { sendMessage } from '@/lib/chatActions'
 import { greeting } from '@/lib/format'
 import { useApp } from '@/stores/app'
+
+/** Why there are no models when no endpoint reported an error. */
+function noModelsNote(endpoints: readonly Endpoint[]): string {
+  if (!endpoints.length) return 'No endpoints yet. Add one in Settings → Models.'
+  // A switched-off endpoint isn't asked, so it has neither models nor an error.
+  if (!endpoints.some((e) => e.enabled)) return 'Your endpoints are all turned off. Turn one on in Settings → Models.'
+  return 'None of your endpoints has a model yet. Add one, or add another endpoint in Settings → Models.'
+}
 
 export function HomeView() {
   const { settings, models, modelErrors, modelsLoading, modelsReady, loadModels, navigate, skills } = useApp()
@@ -32,7 +41,8 @@ export function HomeView() {
                   {modelErrors.length ? "Couldn't load models from any endpoint" : "Ollmost can't find any models."}
                 </div>
                 {modelErrors.length ? (
-                  // Each message already names its endpoint and address.
+                  // The main process's messages name their endpoint and address. A failed list call (endpointId '') shows
+                  // the error as it came.
                   <ul className="mt-1 space-y-0.5 text-muted">
                     {modelErrors.map((e) => (
                       <li key={e.endpointId} className="selectable">
@@ -41,11 +51,7 @@ export function HomeView() {
                     ))}
                   </ul>
                 ) : (
-                  <div className="mt-1 text-muted">
-                    {settings?.endpoints.length
-                      ? 'None of your endpoints has a model yet. Add one, or add another endpoint in Settings → Models.'
-                      : 'No endpoints yet. Add one in Settings → Models.'}
-                  </div>
+                  <div className="mt-1 text-muted">{noModelsNote(settings?.endpoints ?? [])}</div>
                 )}
               </div>
               <div className="flex gap-2">
