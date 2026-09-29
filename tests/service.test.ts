@@ -35,7 +35,7 @@ const ollama: MockOllama = await startMockOllama()
 const openaiServer: MockOllama = await startMockOllama()
 process.env.OLLMOST_WEB_URL = ollama.url
 
-const { all, openDatabase } = await import('../src/main/db/index')
+const { all, openDatabase, run } = await import('../src/main/db/index')
 const { updateSettings, setApiKey, setEndpoints, getSettings } = await import('../src/main/settings')
 const service = await import('../src/main/chat/service')
 const { getTrace, listTraces } = await import('../src/main/debug/traces')
@@ -51,7 +51,7 @@ const {
   updateMessage
 } = await import('../src/main/db/conversations')
 const { registerToolProvider } = await import('../src/main/chat/tools')
-const { addEndpoint } = await import('../src/main/providers/endpoints')
+const { addEndpoint, setEndpointKey } = await import('../src/main/providers/endpoints')
 const { runRounds } = await import('../src/main/chat/rounds')
 const { EndpointGoneError, invalidateProviders, modelInfo, resolve } = await import('../src/main/providers/registry')
 const { replayRequest } = await import('../src/main/debug/replay')
@@ -965,6 +965,8 @@ describe('/compact', () => {
       )
       expect(Object.keys(calls[0])).toEqual(['model', 'messages', 'options', 'stream'])
       expect(JSON.stringify(calls[0].options)).toBe('{"temperature":0.3,"num_ctx":8192}')
+      const trace = listTraces(r.conversation.id).find((t) => t.kind === 'compact')!
+      expect(getTrace(trace.id)).toMatchObject({ dialect: 'ollama', auth: null, endpointId: 'ollama', endpointName: 'Ollama' })
     } finally {
       once.mockRestore()
       restore()
@@ -3769,6 +3771,68 @@ describe('one reply loop, both dialects', () => {
       // The text round's 3 tokens in the server's own 1.5 s; the tool round's 25 as well would read 18.7.
       expect(getMessage(messageId)!.stats).toMatchObject({ completionTokens: 28, tokensPerSecond: 2 })
     })
+
+    // The debugger reads a request by its trace's dialect, and Copy as curl and replay go by its endpoint.
+    it('records its dialect and endpoint in the chat round’s trace and the title’s', async () => {
+      const { messageId } = await runScript(dialect, SCRIPTS['plain reply'])
+      const conversationId = getMessage(messageId)!.conversationId
+      const title = await waitFor(() => listTraces(conversationId).find((t) => t.kind === 'title' && t.status !== 'running'))
+      const round = listTraces(conversationId).find((t) => t.kind === 'chat')!
+      // Neither endpoint has a key of its own, and neither is ollama.com, so no request carried one.
+      const target =
+        dialect === 'ollama'
+          ? { dialect: 'ollama', auth: null, endpointId: 'ollama', endpointName: 'Ollama' }
+          : { dialect: 'openai', auth: null, endpointId: openaiId, endpointName: 'OpenAI mock' }
+      expect(getTrace(round.id)).toMatchObject(target)
+      expect(getTrace(title.id)).toMatchObject(target)
+    })
+  })
+
+  it('records that a keyed endpoint’s requests carried its key, and never the key itself', async () => {
+    const key = 'sk-endpoint-key-kept-out-of-traces'
+    const base = openaiServer.handler
+    const sent: Array<string | undefined> = []
+    openaiServer.handler = (req, res) => {
+      sent.push(req.headers.authorization)
+      return base(req, res)
+    }
+    setEndpointKey(openaiId, key)
+    try {
+      const { messageId } = await runScript('openai', SCRIPTS['plain reply'])
+      const conversationId = getMessage(messageId)!.conversationId
+      await waitFor(() => listTraces(conversationId).some((t) => t.kind === 'title' && t.status !== 'running'))
+      // The key was sent, to its own endpoint, so the traces had it to hand.
+      expect(sent).toContain(`Bearer ${key}`)
+      const traces = listTraces(conversationId)
+      expect(traces.map((t) => t.kind).sort()).toEqual(['chat', 'title'])
+      for (const t of traces) {
+        const detail = getTrace(t.id)
+        expect(detail).toMatchObject({ dialect: 'openai', auth: 'endpoint', endpointId: openaiId, endpointName: 'OpenAI mock' })
+        expect(JSON.stringify(detail)).not.toContain(key)
+      }
+    } finally {
+      setEndpointKey(openaiId, null)
+      openaiServer.handler = base
+    }
+  })
+
+  it('reads a trace stored before traces kept their target as Ollama’s, or as OpenAI’s by its address', () => {
+    const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
+    // A row as Ollmost stored it before endpoints (and PR 3, for its OpenAI requests): no dialect, auth or endpoint.
+    const stored = (id: string, endpoint: string) =>
+      run(
+        `INSERT INTO traces (id, conversation_id, message_id, kind, model, round, status, started_at, summary, data)
+         VALUES (?, ?, NULL, 'chat', 'llama3.2', 1, 'ok', ?, '', ?)`,
+        id,
+        c.id,
+        Date.now(),
+        JSON.stringify({ endpoint, request: { model: 'llama3.2', messages: [] }, response: {}, timing: {} })
+      )
+    stored('before-endpoints', `${ollama.url}/api/chat`)
+    stored('pr3-openai', `${openaiServer.url}/v1/chat/completions`)
+    const unknown = { auth: null, endpointId: null, endpointName: null }
+    expect(getTrace('before-endpoints')).toMatchObject({ dialect: 'ollama', ...unknown })
+    expect(getTrace('pr3-openai')).toMatchObject({ dialect: 'openai', ...unknown })
   })
 
   // A title is read whole: an OpenAI response keeps its finish reason in choices[], where the debugger doesn't look.
