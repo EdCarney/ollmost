@@ -1,4 +1,4 @@
-import { Plus, RefreshCw, Trash2 } from 'lucide-react'
+import { Cloud, Plus, RefreshCw, Trash2 } from 'lucide-react'
 import { useState } from 'react'
 import { DEFAULT_CONTEXT, DEFAULT_NUM_CTX, displayAddress, FLAVOR_LABELS, isOllamaCloudUrl, removalText } from '@shared/endpoints'
 import { labelForKey, shortModelName } from '@shared/modelLabel'
@@ -119,7 +119,11 @@ function ModelRow({ model }: { model: ModelInfo }) {
   return (
     <tr className="border-t border-line align-top">
       <td className="py-2.5 pr-3">
-        <div className="text-[13px] font-medium">{model.endpoint.kind === 'ollama' ? shortModelName(model.name) : model.name}</div>
+        <div className="flex items-center gap-1.5 text-[13px] font-medium">
+          {model.endpoint.kind === 'ollama' ? shortModelName(model.name) : model.name}
+          {/* The short name drops "-cloud", so the icon is what tells a cloud model from one on this Mac, as in the picker. */}
+          {model.where === 'cloud' && <Cloud aria-label="Runs on ollama.com" className="size-3.5 shrink-0 text-subtle" />}
+        </div>
         <div className="mt-0.5 flex flex-wrap gap-1">
           {model.capabilities
             .filter((c) => c !== 'completion')
