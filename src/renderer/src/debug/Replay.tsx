@@ -8,7 +8,8 @@ import { formatTokens } from '@/lib/format'
 import { CopyButton, JsonBlock, ms } from './bits'
 
 function editable(request: unknown): string {
-  const { stream: _stream, ...rest } = (request ?? {}) as Record<string, unknown>
+  // A replay is one request, not a stream: the stream fields would only be dropped again.
+  const { stream: _stream, stream_options: _options, ...rest } = (request ?? {}) as Record<string, unknown>
   return JSON.stringify(rest, null, 2)
 }
 
@@ -32,7 +33,7 @@ export function Replay({ trace, conversationId }: { trace: TraceDetail; conversa
     setError(null)
     setResult(null)
     try {
-      setResult(await api.debug.replay(conversationId, JSON.parse(text)))
+      setResult(await api.debug.replay(conversationId, trace.model, JSON.parse(text), trace.endpointName))
     } catch (err) {
       setError((err as Error).message.replace(/^Error invoking remote method '[^']+': (Error: )?/, ''))
     } finally {
@@ -64,7 +65,7 @@ export function Replay({ trace, conversationId }: { trace: TraceDetail; conversa
           {parseError ? (
             <span className="text-danger">Invalid JSON: {parseError}</span>
           ) : (
-            'Sent without streaming to the same Ollama target. It costs tokens like any request and is recorded as a replay; images that weren’t recorded are left out.'
+            `Sent without streaming to ${trace.endpointName ?? 'the endpoint it was recorded from'}. It costs tokens like any request and is recorded as a replay; images that weren’t recorded are left out.`
           )}
         </p>
       </div>

@@ -1,12 +1,13 @@
 import { CircleCheck, CircleEqual, CircleHelp, ExternalLink, Gauge, KeyRound, RefreshCw, TriangleAlert } from 'lucide-react'
 import { useEffect, useState } from 'react'
-import { formatCost, formatDollars, formatPercent, formatTimeLeft, type Pace, type PaceStatus, paceOf, spendPeriod } from '@shared/usage'
+import { formatDollars, formatPercent, formatTimeLeft, type Pace, type PaceStatus, paceOf, quotaMode, spendPeriod } from '@shared/usage'
 import type { AccountUsage, ChatUsage, UsageSummary, UsageWindow } from '@shared/types'
 import { withPreview } from '@shared/settingsPreview'
-import { labelForKey, shortModelName } from '@shared/modelLabel'
+import { billingLabel, chatCostLabel } from '@shared/billing'
+import { modelLabel, shortModelName } from '@shared/modelLabel'
 import { api } from '@/lib/api'
 import { cn, contextSizeLabel, formatTokens, relativeTime } from '@/lib/format'
-import { contextWindowFor, findModel, selectEndpoints, useApp } from '@/stores/app'
+import { contextWindowFor, findModel, useApp } from '@/stores/app'
 import { useUsage } from '@/stores/usage'
 import { PopoverContent, PopoverRoot, PopoverTrigger, Spinner } from './ui'
 
@@ -152,7 +153,7 @@ export function AccountQuota() {
   }, [open, since, until])
 
   // The palette previews the header toggle live, before it's saved.
-  if (!settings || !withPreview(settings, previewSettings).usage.showInHeader) return null
+  if (!settings || quotaMode(settings) === 'hidden' || !withPreview(settings, previewSettings).usage.showInHeader) return null
   const w = headlineWindow(account, settings.usage.headerWindow)
   const pace = w ? paceOf(w, now) : null
   // Per-model request counts cover every app on the account; prefer the longest window that has them.
@@ -309,7 +310,6 @@ export function ChatCost({ usage, model: modelName }: { usage: ChatUsage | null;
   const models = useApp((s) => s.models)
   const settings = useApp((s) => s.settings)
   const previewSettings = useApp((s) => s.previewSettings)
-  const endpoints = useApp(selectEndpoints)
   // The palette previews the header toggle live, before it's saved.
   if (
     !settings ||
@@ -322,8 +322,8 @@ export function ChatCost({ usage, model: modelName }: { usage: ChatUsage | null;
   const total = usage.promptTokens + usage.completionTokens
   const contextWindow = contextWindowFor(model)
   const context = contextWindow && usage.lastContextTokens ? usage.lastContextTokens / contextWindow : null
-  const allLocal = usage.byModel.every((m) => m.costUsd === 0)
-  const cost = allLocal ? 'local' : usage.costUsd === null ? 'cost unknown' : `${usage.estimated ? '≈' : ''}${formatCost(usage.costUsd)}`
+  const label = chatCostLabel(usage.byModel)
+  const cost = usage.estimated && label.startsWith('$') ? `≈${label}` : label
 
   return (
     <PopoverRoot>
@@ -348,11 +348,15 @@ export function ChatCost({ usage, model: modelName }: { usage: ChatUsage | null;
             </thead>
             <tbody>
               {usage.byModel.map((m) => (
-                <tr key={m.model}>
-                  <td className="max-w-[120px] truncate py-0.5">{labelForKey(m.model, endpoints)}</td>
+                <tr key={`${m.model}|${m.billing}`}>
+                  <td className="max-w-[140px] py-0.5">
+                    <span className="block truncate">{modelLabel(m)}</span>
+                    {/* modelLabel already names a non-Ollama endpoint. */}
+                    {m.endpoint.kind === 'ollama' && <span className="block truncate text-[11px] text-subtle">{m.endpoint.name}</span>}
+                  </td>
                   <td className="py-0.5 text-right">{formatTokens(m.promptTokens)}</td>
                   <td className="py-0.5 text-right">{formatTokens(m.completionTokens)}</td>
-                  <td className="py-0.5 text-right">{m.costUsd === 0 ? 'local' : formatCost(m.costUsd)}</td>
+                  <td className="whitespace-nowrap py-0.5 text-right">{billingLabel(m.billing, m.costUsd) ?? '—'}</td>
                 </tr>
               ))}
             </tbody>
@@ -374,8 +378,9 @@ export function ChatCost({ usage, model: modelName }: { usage: ChatUsage | null;
             </div>
           )}
           <p className="text-xs text-subtle">
-            Includes retries and title generation. Costs use Ollama's published per-token prices at the full input rate, so real charges can
-            be lower with cached input or off-peak pricing.{usage.estimated && ' Stopped replies are estimated.'}
+            Includes retries and title generation. Priced with Ollama's published rates (Ollama cloud models only). Every prompt token
+            counts at the full input rate, so real charges can be lower with cached input or off-peak pricing.
+            {usage.estimated && ' Stopped replies are estimated.'}
           </p>
         </div>
       </PopoverContent>

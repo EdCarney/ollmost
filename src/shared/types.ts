@@ -416,14 +416,24 @@ export interface AccountUsage {
 export interface TokenTotals {
   promptTokens: number
   completionTokens: number
-  /** Null when some usage came from a cloud model without a known price. */
+  /** Null when a priced (Ollama cloud) request had no known price. Local and untracked requests count as 0. */
   costUsd: number | null
   /** At least one request had no token counts (e.g. stopped mid-stream) and was estimated. */
   estimated: boolean
 }
 
+/** One model's usage: its key, its name at its endpoint, the endpoint as it is now, and how its requests were billed. */
+export interface UsageByModel extends TokenTotals {
+  model: string
+  name: string
+  /** A removed endpoint's rows read `{ id: '', name: 'Removed endpoint' }`. */
+  endpoint: ModelInfo['endpoint']
+  billing: ModelBilling
+  requests: number
+}
+
 export interface ChatUsage extends TokenTotals {
-  byModel: Array<TokenTotals & { model: string; requests: number }>
+  byModel: UsageByModel[]
   /** Tokens the most recent request sent + received, for a context-window meter. */
   lastContextTokens: number | null
 }
@@ -431,14 +441,20 @@ export interface ChatUsage extends TokenTotals {
 export interface UsageSummary {
   days: number
   total: TokenTotals & { requests: number }
-  byModel: Array<TokenTotals & { model: string; requests: number }>
-  byDay: Array<{ day: string; costUsd: number; tokens: number }>
+  byModel: UsageByModel[]
+  /** A day's cost is null when one of its priced requests had no price. */
+  byDay: Array<{ day: string; costUsd: number | null; tokens: number }>
 }
 
 // ---- Debugger traces -----------------------------------------------------
 
 export type TraceKind = 'chat' | 'title' | 'tool' | 'replay' | 'compact' | 'delegate'
 export type TraceStatus = 'running' | 'ok' | 'error' | 'aborted'
+
+/** A trace request's wire format: the endpoint kind it went to. */
+export type TraceDialect = EndpointKind
+/** Which key a request carried (never the key itself): the ollama.com account's, its endpoint's own, or none. */
+export type TraceAuth = 'ollama.com' | 'endpoint' | null
 
 export interface TraceSummary {
   id: string
@@ -459,12 +475,12 @@ export interface TraceSummary {
 }
 
 export interface TraceTiming {
-  /** Time until Ollama's first response byte. */
+  /** Time until the server's first response byte. */
   ttfbMs: number | null
   /** Time until the first thinking or content token. */
   firstTokenMs: number | null
   totalMs: number | null
-  /** Ollama's own durations (from the final chunk). */
+  /** The server's own durations, when it reports them. */
   loadMs: number | null
   promptEvalMs: number | null
   evalMs: number | null
@@ -472,13 +488,23 @@ export interface TraceTiming {
 
 export interface TraceDetail extends TraceSummary {
   endpoint: string
+  /** The wire format of `request`; a trace recorded before endpoints existed reads as 'ollama'. */
+  dialect: TraceDialect
+  auth: TraceAuth
+  /** The endpoint the request went to, as it was named then; null for tool calls and older traces. */
+  endpointId: string | null
+  endpointName: string | null
   /** The exact body sent, with image bytes replaced by size placeholders. */
   request: unknown
   response: {
     content?: string
     thinking?: string
     toolCalls?: unknown[]
-    /** Ollama's final chunk (stats, done_reason) without the message. */
+    /**
+     * The server's closing stats, without the reply. Ollama: its final chunk or response (done_reason, counts,
+     * durations). OpenAI-compatible: a streamed round's `{ finish_reason, usage, timings }`; a title, /compact or
+     * replay response read whole, with finish_reason lifted out of `choices` (replay.ts's statsOf).
+     */
     final?: unknown
     /** For tool traces: what was returned to the model. */
     result?: string

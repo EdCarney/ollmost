@@ -1,7 +1,7 @@
 import { BrowserWindow } from 'electron'
-import { redactImages } from '@shared/debug'
+import { redactImages, storedTraceTarget } from '@shared/debug'
 import { EVENT_CHANNELS, type TraceEvent } from '@shared/ipc'
-import type { TraceDetail, TraceKind, TraceStatus, TraceSummary, TraceTiming } from '@shared/types'
+import type { TraceAuth, TraceDetail, TraceDialect, TraceKind, TraceStatus, TraceSummary, TraceTiming } from '@shared/types'
 import { all, get, run } from '../db/index'
 import type { ChatTiming } from '../providers/types'
 import { getSettings } from '../settings'
@@ -49,7 +49,7 @@ function emit(event: TraceEvent): void {
 
 const cap = (s: string | undefined) => (s && s.length > MAX_TEXT ? `${s.slice(0, MAX_TEXT)}\n[… truncated for the debugger]` : s)
 
-type Data = Pick<TraceDetail, 'endpoint' | 'request' | 'response' | 'timing'>
+type Data = Pick<TraceDetail, 'endpoint' | 'request' | 'response' | 'timing' | 'dialect' | 'auth' | 'endpointId' | 'endpointName'>
 
 /**
  * One recorded request. Callers mark timing points as the stream arrives and call finish() once.
@@ -154,6 +154,11 @@ export function startTrace(meta: {
   endpoint: string
   request: unknown
   summary: string
+  /** Where a model request went (spread traceTarget(endpoint) here); the key itself is never stored. */
+  dialect?: TraceDialect
+  auth?: TraceAuth
+  endpointId?: string
+  endpointName?: string
 }): Trace {
   const id = uid()
   const startedAt = Date.now()
@@ -168,6 +173,8 @@ export function startTrace(meta: {
   }
   const data: Data = {
     endpoint: meta.endpoint,
+    // A tool call has no target: it reads as Ollama's, with the account key only for ollama.com (the web tools).
+    ...storedTraceTarget(meta),
     request: redactImages(meta.request),
     response: {},
     timing: { ttfbMs: null, firstTokenMs: null, totalMs: null, loadMs: null, promptEvalMs: null, evalMs: null }
@@ -203,8 +210,16 @@ export function listTraces(conversationId: string | null): TraceSummary[] {
 export function getTrace(id: string): TraceDetail | null {
   const row = get<Row>('SELECT * FROM traces WHERE id = ?', id)
   if (!row) return null
-  const data = parseJson<Data>(row.data, { endpoint: '', request: null, response: {}, timing: {} as TraceTiming })
-  return { ...toSummary(row), ...data }
+  const data = parseJson<Partial<Data>>(row.data, {})
+  return {
+    ...toSummary(row),
+    endpoint: data.endpoint ?? '',
+    request: data.request ?? null,
+    response: data.response ?? {},
+    timing: data.timing ?? ({} as TraceTiming),
+    // Traces recorded before endpoints have no dialect or auth, and read as Ollama's (an OpenAI request by its address).
+    ...storedTraceTarget(data)
+  }
 }
 
 export function clearTraces(conversationId: string | null): void {

@@ -1,11 +1,10 @@
 import { Play, Terminal } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useState } from 'react'
-import { promptAnatomy, toCurl } from '@shared/debug'
+import { curlKeyVar, promptAnatomy, toCurl } from '@shared/debug'
 import { formatCost } from '@shared/usage'
 import { labelForKey } from '@shared/modelLabel'
 import type { TraceDetail } from '@shared/types'
 import { Button } from '@/components/ui'
-import { api } from '@/lib/api'
 import { cn } from '@/lib/format'
 import { selectEndpoints, useApp } from '@/stores/app'
 import { Anatomy } from './Anatomy'
@@ -16,10 +15,15 @@ type Tab = 'overview' | 'prompt' | 'request' | 'response' | 'tools' | 'replay'
 
 interface ChatRequest {
   model?: string
-  messages?: Array<{ role?: string; content?: string; images?: unknown[]; thinking?: string; tool_calls?: unknown[]; tool_name?: string }>
+  messages?: unknown[]
   tools?: Array<{ function?: { name?: string; description?: string; parameters?: unknown } }>
+  // Ollama
   think?: unknown
   options?: { num_ctx?: number } & Record<string, unknown>
+  // OpenAI-compatible
+  reasoning_effort?: unknown
+  chat_template_kwargs?: unknown
+  temperature?: unknown
 }
 
 function Section({ title, children, actions }: { title: string; children: ReactNode; actions?: ReactNode }) {
@@ -60,24 +64,28 @@ function Text({ value, muted }: { value: string; muted?: boolean }) {
   )
 }
 
-// Cloud models don't return Ollama's load/eval durations; say so rather than show a bare dash.
-const ollamaMs = (v: number | null) => (v == null ? 'not reported (cloud models omit it)' : ms(v))
-
 const perSecond = (tokens: number | null, msValue: number | null) =>
   tokens && msValue ? `${((tokens / msValue) * 1000).toFixed(0)} tok/s` : '—'
+
+/** The server's own durations, only those it reported: cloud models and most OpenAI-compatible servers send none. */
+function serverTiming(trace: TraceDetail): Array<[string, ReactNode]> {
+  const t = trace.timing
+  const rows: Array<[string, ReactNode]> = []
+  if (t.loadMs != null) rows.push(['Server: model load', ms(t.loadMs)])
+  if (t.promptEvalMs != null)
+    rows.push(['Server: prompt processing', `${ms(t.promptEvalMs)} · ${perSecond(trace.promptTokens, t.promptEvalMs)}`])
+  if (t.evalMs != null) rows.push(['Server: generation', `${ms(t.evalMs)} · ${perSecond(trace.completionTokens, t.evalMs)}`])
+  return rows.length ? rows : [['Server timing', 'not reported by this server']]
+}
 
 export function TraceView({ trace, conversationId }: { trace: TraceDetail; conversationId: string | null }) {
   const endpoints = useApp(selectEndpoints)
   const isModelCall = trace.kind !== 'tool'
   const [tab, setTab] = useState<Tab>('overview')
-  const [target, setTarget] = useState<{ chatEndpoint: string; needsKey: boolean } | null>(null)
   // Memoised so a trace without a request doesn't get a fresh `{}` each render and recompute the anatomy.
   const request = useMemo(() => (trace.request ?? {}) as ChatRequest, [trace.request])
-  const anatomy = useMemo(() => (isModelCall ? promptAnatomy(request) : null), [isModelCall, request])
+  const anatomy = useMemo(() => (isModelCall ? promptAnatomy(request, trace.dialect) : null), [isModelCall, request, trace.dialect])
 
-  useEffect(() => {
-    void api.debug.target().then(setTarget)
-  }, [])
   useEffect(() => {
     if (!isModelCall && tab !== 'overview') setTab('overview')
   }, [isModelCall, tab])
@@ -93,10 +101,22 @@ export function TraceView({ trace, conversationId }: { trace: TraceDetail; conve
       ]
     : [['overview', 'Overview']]
 
-  const curl = isModelCall
-    ? toCurl(trace.endpoint, trace.request, !!target?.needsKey && trace.endpoint.startsWith('https://ollama.com'))
-    : ''
+  const curl = isModelCall ? toCurl(trace.endpoint, trace.request, curlKeyVar(trace)) : ''
   const final = (trace.response.final ?? {}) as Record<string, unknown>
+  // What the request asked of the model, in its own dialect's fields.
+  const settingsRows: Array<[string, ReactNode]> =
+    trace.dialect === 'openai'
+      ? [
+          ['Reasoning', JSON.stringify(request.reasoning_effort ?? request.chat_template_kwargs ?? null)],
+          ['temperature', JSON.stringify(request.temperature ?? null)]
+        ]
+      : [
+          ['think', JSON.stringify(request.think ?? null)],
+          ['options', JSON.stringify(request.options ?? null)]
+        ]
+  // labelForKey already names a non-Ollama endpoint that still exists; any other gets its recorded name beside the model.
+  const current = endpoints.find((e) => e.id === trace.endpointId)
+  const showEndpointName = !!trace.endpointName && (!current || current.kind === 'ollama')
   const estimateDelta = anatomy && trace.promptTokens ? Math.round(((anatomy.total - trace.promptTokens) / trace.promptTokens) * 100) : null
 
   return (
@@ -106,6 +126,7 @@ export function TraceView({ trace, conversationId }: { trace: TraceDetail; conve
           <StatusIcon status={trace.status} />
           <span className="font-mono text-xs text-muted">{kindLabel(trace)}</span>
           {trace.model && <span className="font-medium">{labelForKey(trace.model, endpoints)}</span>}
+          {showEndpointName && <span className="text-xs text-subtle">{trace.endpointName}</span>}
           <span className="text-xs text-subtle">{new Date(trace.startedAt).toLocaleTimeString()}</span>
           <span className="ml-auto font-mono text-xs text-subtle">{trace.endpoint}</span>
         </div>
@@ -171,8 +192,7 @@ export function TraceView({ trace, conversationId }: { trace: TraceDetail; conve
               <Grid
                 rows={[
                   ['Model', request.model ?? '—'],
-                  ['think', JSON.stringify(request.think ?? null)],
-                  ['options', JSON.stringify(request.options ?? null)],
+                  ...settingsRows,
                   ['Messages', String(request.messages?.length ?? 0)],
                   ['Tools offered', request.tools?.map((t) => t.function?.name).join(', ') || 'none']
                 ]}
@@ -184,19 +204,7 @@ export function TraceView({ trace, conversationId }: { trace: TraceDetail; conve
                   ['Time to first byte', ms(trace.timing.ttfbMs)],
                   ['Time to first token', ms(trace.timing.firstTokenMs)],
                   ['Total', ms(trace.timing.totalMs)],
-                  ['Ollama: model load', ollamaMs(trace.timing.loadMs)],
-                  [
-                    'Ollama: prompt processing',
-                    trace.timing.promptEvalMs == null
-                      ? ollamaMs(null)
-                      : `${ms(trace.timing.promptEvalMs)} · ${perSecond(trace.promptTokens, trace.timing.promptEvalMs)}`
-                  ],
-                  [
-                    'Ollama: generation',
-                    trace.timing.evalMs == null
-                      ? ollamaMs(null)
-                      : `${ms(trace.timing.evalMs)} · ${perSecond(trace.completionTokens, trace.timing.evalMs)}`
-                  ]
+                  ...serverTiming(trace)
                 ]}
               />
             </Section>
@@ -211,7 +219,7 @@ export function TraceView({ trace, conversationId }: { trace: TraceDetail; conve
                   ],
                   ['Completion tokens', trace.completionTokens?.toLocaleString() ?? '—'],
                   ['Cost', trace.costUsd == null ? '—' : formatCost(trace.costUsd)],
-                  ['done_reason', String(final.done_reason ?? '—')],
+                  ['Finish reason', String(final.done_reason ?? final.finish_reason ?? '—')],
                   ['Stream chunks', String(trace.response.chunks ?? '—')]
                 ]}
               />
@@ -225,7 +233,7 @@ export function TraceView({ trace, conversationId }: { trace: TraceDetail; conve
         )}
 
         {tab === 'prompt' && anatomy && (
-          <Anatomy request={request} anatomy={anatomy} actualTokens={trace.promptTokens} model={trace.model} />
+          <Anatomy request={request} dialect={trace.dialect} anatomy={anatomy} actualTokens={trace.promptTokens} model={trace.model} />
         )}
 
         {tab === 'request' && (
@@ -266,7 +274,7 @@ export function TraceView({ trace, conversationId }: { trace: TraceDetail; conve
                 <JsonBlock value={trace.response.toolCalls} />
               </Section>
             )}
-            <Section title="Final chunk (stats)">
+            <Section title="Response stats">
               <JsonBlock value={trace.response.final ?? null} />
             </Section>
           </>

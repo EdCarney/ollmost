@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { matchScore, rankCommands } from '../src/shared/palette'
+import { matchScore, rankCommands, settingsTabCommands } from '../src/shared/palette'
 
 const cmds = [
   { id: 'theme', title: 'Change theme', keywords: ['appearance', 'colors'] },
@@ -71,5 +71,16 @@ describe('ranking commands', () => {
       { id: 'tools', title: 'Settings › Tools', keywords: ['code runner', 'mcp'] }
     ]
     expect(rankCommands('code', list, []).map((c) => c.id)).toEqual(['tools', 'mode'])
+  })
+})
+
+describe('settings tabs in the palette', () => {
+  it('sends connections, endpoints and model servers to the Models tab', () => {
+    for (const query of ['connection', 'endpoint', 'lm studio', 'vllm', 'llama.cpp', 'ollama'])
+      expect(rankCommands(query, settingsTabCommands(), [])[0]?.tab, query).toBe('models')
+  })
+
+  it('keeps your name and preferences on General', () => {
+    expect(rankCommands('name', settingsTabCommands(), [])[0]?.tab).toBe('general')
   })
 })

@@ -222,9 +222,9 @@ describe('usage summary', () => {
     date(100, since - 60_000)
     date(200, since + 60_000)
     date(400, until + 60_000)
-    expect(mine(usageSummary(30))).toMatchObject({ requests: 3, promptTokens: 700, costUsd: 7 })
-    expect(mine(usageSummary(30, since))).toMatchObject({ requests: 2, promptTokens: 600, costUsd: 6 })
-    expect(mine(usageSummary(30, since, until))).toMatchObject({ requests: 1, promptTokens: 200, costUsd: 2 })
+    expect(mine(usageSummary([], 30))).toMatchObject({ requests: 3, promptTokens: 700, costUsd: 7 })
+    expect(mine(usageSummary([], 30, since))).toMatchObject({ requests: 2, promptTokens: 600, costUsd: 6 })
+    expect(mine(usageSummary([], 30, since, until))).toMatchObject({ requests: 1, promptTokens: 200, costUsd: 2 })
   })
 })
 
@@ -248,7 +248,7 @@ describe('a chat’s last context tokens (the meter) after history changes', () 
     })
     const at1 = usageCreatedAt(m1.id)
     setCompaction(c.id, { summary: 'so far…', upTo: at1, messages: 1, at: at1 + 1 })
-    expect(conversationUsage(c.id).lastContextTokens).toBeNull()
+    expect(conversationUsage(c.id, []).lastContextTokens).toBeNull()
   })
 
   it('counts again once a reply lands after the compaction', () => {
@@ -279,7 +279,7 @@ describe('a chat’s last context tokens (the meter) after history changes', () 
       billing: 'local',
       estimated: false
     })
-    expect(conversationUsage(c.id).lastContextTokens).toBe(5_000)
+    expect(conversationUsage(c.id, []).lastContextTokens).toBe(5_000)
   })
 
   it('skips a row whose message was deleted (an Edit or Retry), falling back to an earlier one', () => {
@@ -309,7 +309,7 @@ describe('a chat’s last context tokens (the meter) after history changes', () 
       estimated: false
     })
     deleteMessagesFrom(c.id, m2.createdAt)
-    expect(conversationUsage(c.id).lastContextTokens).toBe(2_500)
+    expect(conversationUsage(c.id, []).lastContextTokens).toBe(2_500)
   })
 })
 

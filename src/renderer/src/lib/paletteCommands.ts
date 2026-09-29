@@ -1,8 +1,8 @@
-import type { Rankable } from '@shared/palette'
+import { type Rankable, settingsTabCommands } from '@shared/palette'
 import { type Choice, settingsCommands } from '@shared/paletteChoices'
 import { api } from '@/lib/api'
 import { openFolder } from '@/lib/codeActions'
-import { type AppState, debugTargetFor, type SettingsTab } from '@/stores/app'
+import { type AppState, debugTargetFor } from '@/stores/app'
 
 export type PaletteGroup = 'Actions' | 'Go to' | 'Settings'
 
@@ -40,16 +40,6 @@ export function rememberCommand(id: string): void {
   }
 }
 
-const SETTINGS_TABS: Array<{ id: SettingsTab; label: string; keywords: string[] }> = [
-  { id: 'general', label: 'General', keywords: ['name', 'preferences', 'connection', 'ollama'] },
-  { id: 'appearance', label: 'Appearance', keywords: ['theme', 'font', 'dark', 'light', 'width'] },
-  { id: 'models', label: 'Models', keywords: ['default model', 'context', 'catalog'] },
-  { id: 'usage', label: 'Usage & cost', keywords: ['quota', 'spend', 'tokens', 'api key'] },
-  { id: 'features', label: 'Features', keywords: ['artifacts', 'web', 'links', 'skills'] },
-  { id: 'tools', label: 'Tools', keywords: ['mcp', 'code runner', 'code sessions', 'sandbox'] },
-  { id: 'data', label: 'Data', keywords: ['export', 'folder', 'debug'] }
-]
-
 /** What the commands are built from: only these slices, so a preview (which changes the store) doesn't rebuild them. */
 export type PaletteInput = Pick<AppState, 'settings' | 'themes' | 'models' | 'route' | 'navigate' | 'toggleSidebar'>
 
@@ -80,13 +70,7 @@ export function paletteCommands(s: PaletteInput): PaletteCommand[] {
     { id: 'code', title: 'Code sessions', group: 'Go to', run: go({ name: 'code' }) },
     { id: 'artifacts', title: 'Artifacts', group: 'Go to', run: go({ name: 'artifacts' }) },
     { id: 'skills', title: 'Skills', group: 'Go to', run: go({ name: 'skills' }) },
-    ...SETTINGS_TABS.map((t): PaletteCommand => ({
-      id: `settings-${t.id}`,
-      title: `Settings › ${t.label}`,
-      group: 'Go to',
-      keywords: ['settings', 'preferences', ...t.keywords],
-      run: go({ name: 'settings', tab: t.id })
-    }))
+    ...settingsTabCommands().map(({ tab, ...c }): PaletteCommand => ({ ...c, group: 'Go to', run: go({ name: 'settings', tab }) }))
   ]
   if (s.settings) commands.push(...settingsCommands(s.settings, s.themes, s.models))
   return commands

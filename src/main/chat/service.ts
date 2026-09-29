@@ -1,5 +1,6 @@
 import { BrowserWindow } from 'electron'
 import { parseMessage } from '@shared/artifactParser'
+import { traceTarget } from '@shared/debug'
 import { normalizeSpaces } from '@shared/text'
 import { EVENT_CHANNELS } from '@shared/ipc'
 import { resolveThinkProfile } from '@shared/thinking'
@@ -38,6 +39,7 @@ import { imageForModel, removeFiles } from '../files/ingest'
 import { modelInfo, resolve } from '../providers/registry'
 import type { ChatRequest, Provider } from '../providers/types'
 import { webAvailable } from '../ollama/web'
+import { statsOf } from '../debug/replay'
 import { startTrace, type Trace } from '../debug/traces'
 import { getSettings } from '../settings'
 import { getSkill, listSkills } from '../skills/library'
@@ -413,7 +415,7 @@ async function generate(
           codeSession: codeSessionForPrompt,
           skillIndex
         },
-        onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
+        onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) })
       }
     }
     const grants = toolGrants(toolContext)
@@ -486,7 +488,7 @@ async function generate(
       traceKind: 'chat',
       onDelta: (d) => emit({ type: 'delta', conversationId, messageId, ...d }),
       onToolEvent: (index, event) => emit({ type: 'tool', conversationId, messageId, index, event }),
-      onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) }),
+      onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) }),
       onLoadedSkill: (id) => {
         // Remember it for later turns so it doesn't have to be reloaded.
         if (loadedIds.includes(id)) return
@@ -552,7 +554,7 @@ async function generate(
     message,
     artifacts: listArtifacts(conversationId),
     conversation: getConversation(conversationId)!,
-    usage: conversationUsage(conversationId)
+    usage: conversationUsage(conversationId, getSettings().endpoints)
   })
 
   // A plain Stop still titles a new chat; a stop for a delete or a quit doesn't start a title request.
@@ -759,7 +761,8 @@ async function summarizeOnce(
     model: modelName,
     endpoint: wire.endpoint,
     request: wire.body,
-    summary: 'Compacting…'
+    summary: 'Compacting…',
+    ...traceTarget(provider.endpoint)
   })
   try {
     const res = await provider.chatOnce(request, { timeoutMs: 5 * 60_000 })
@@ -782,11 +785,11 @@ async function summarizeOnce(
       billing: info.billing,
       estimated: res.usage.completion === undefined
     })
-    if (chat) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
+    if (chat) emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) })
     if (!summary) throw new Error('The model gave no summary; nothing was compacted.')
     trace.finish({
       status: 'ok',
-      response: { content: summary, final: res.raw },
+      response: { content: summary, final: statsOf(res.raw) },
       promptTokens,
       completionTokens,
       costUsd,
@@ -846,7 +849,8 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       model: modelName,
       endpoint: wire.endpoint,
       request: wire.body,
-      summary: 'Generating title…'
+      summary: 'Generating title…',
+      ...traceTarget(provider.endpoint)
     })
     // Bounded: a title is never worth a request that hangs forever (it may still need a cold model load).
     const res = await provider.chatOnce(request, { timeoutMs: 5 * 60_000 })
@@ -866,10 +870,10 @@ async function generateTitle(conversationId: string, chatModel: string): Promise
       billing: info.billing,
       estimated: res.usage.completion === undefined
     })
-    emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId) })
+    emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) })
     titleTrace.finish({
       status: 'ok',
-      response: { content: res.content, thinking: res.thinking || undefined, final: res.raw },
+      response: { content: res.content, thinking: res.thinking || undefined, final: statsOf(res.raw) },
       promptTokens,
       completionTokens,
       costUsd,

@@ -286,10 +286,12 @@ export interface OllmostApi {
     get(id: string): Promise<TraceDetail | null>
     clear(conversationId: ID | null): Promise<void>
     exportTraces(conversationId: ID | null): Promise<boolean>
-    /** Re-send an edited request (non-streaming). Recorded as a 'replay' trace; nothing is added to the chat. */
-    replay(conversationId: ID | null, body: unknown): Promise<TraceDetail>
-    /** The endpoint Ollmost talks to, and whether it needs an API key (for curl export). */
-    target(): Promise<{ chatEndpoint: string; needsKey: boolean }>
+    /**
+     * Re-send an edited request (non-streaming) to the endpoint the trace went to: `model` is the trace's model key, and
+     * `endpointName` the endpoint's name when recorded (for the message when it's gone). Recorded as a 'replay' trace;
+     * nothing is added to the chat.
+     */
+    replay(conversationId: ID | null, model: string | null, body: unknown, endpointName?: string | null): Promise<TraceDetail>
     inspectApp(): Promise<void>
   }
   events: {
@@ -320,7 +322,7 @@ export const INVOKE_CHANNELS = {
   skills: ['list', 'get', 'save', 'delete', 'duplicate', 'setEnabled', 'reveal'],
   themes: ['list', 'save', 'delete', 'exportTheme', 'importTheme'],
   usage: ['account', 'summary', 'raw', 'prices', 'refreshPrices'],
-  debug: ['open', 'list', 'get', 'clear', 'exportTraces', 'replay', 'target', 'inspectApp'],
+  debug: ['open', 'list', 'get', 'clear', 'exportTraces', 'replay', 'inspectApp'],
   links: ['preview'],
   runner: ['status', 'packages', 'resetEnvironment', 'openFile', 'revealFile', 'saveFile'],
   code: ['pickFolder', 'create', 'recentRoots', 'locate', 'status', 'reveal', 'changes', 'diff'],

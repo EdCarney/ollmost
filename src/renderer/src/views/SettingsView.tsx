@@ -1,7 +1,8 @@
 import { Download, Monitor, Moon, Palette, Pencil, RefreshCw, Sun, Trash2, Upload } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { usesDark } from '@shared/themes'
-import { labelForKey, shortModelName } from '@shared/modelLabel'
+import { billingLabel } from '@shared/billing'
+import { modelLabel, shortModelName } from '@shared/modelLabel'
 import type { PriceTable, Settings, ThemeDef, UsageSummary } from '@shared/types'
 import { creditPool, formatDollars, formatPercent, spendPeriod } from '@shared/usage'
 import { ThemeEditor } from '@/components/ThemeEditor'
@@ -454,7 +455,7 @@ function UsageTab({ settings }: { settings: Settings }) {
 
       <Section
         title={`Spend in Ollmost, ${period?.label ?? 'last 30 days'}`}
-        description="From token counts Ollmost recorded, every prompt token at the full rate, so an upper bound: Ollama charges cached prompt tokens far less. Other apps using your Ollama account aren't included."
+        description="From token counts Ollmost recorded, every prompt token at the full rate, so an upper bound: Ollama charges cached prompt tokens far less. Other apps using your Ollama account aren't included. Local and untracked endpoints aren't counted."
       >
         {summary && summary.total.requests > 0 ? (
           <table className="w-full text-[13px] tabular-nums">
@@ -469,12 +470,18 @@ function UsageTab({ settings }: { settings: Settings }) {
             </thead>
             <tbody>
               {summary.byModel.map((m) => (
-                <tr key={m.model} className="border-t border-line">
-                  <td className="py-1.5">{labelForKey(m.model, settings.endpoints)}</td>
+                <tr key={`${m.model}|${m.billing}`} className="border-t border-line">
+                  <td className="py-1.5">
+                    {modelLabel(m)}
+                    {/* modelLabel already names a non-Ollama endpoint. */}
+                    {m.endpoint.kind === 'ollama' && <span className="text-subtle"> · {m.endpoint.name}</span>}
+                  </td>
                   <td className="py-1.5 text-right">{m.requests}</td>
                   <td className="py-1.5 text-right">{formatTokens(m.promptTokens)}</td>
                   <td className="py-1.5 text-right">{formatTokens(m.completionTokens)}</td>
-                  <td className="py-1.5 text-right">{m.costUsd === 0 ? 'local' : formatDollars(m.costUsd)}</td>
+                  <td className="py-1.5 text-right">
+                    {m.billing === 'priced' ? formatDollars(m.costUsd) : billingLabel(m.billing, m.costUsd)}
+                  </td>
                 </tr>
               ))}
               <tr className="border-t border-line-strong font-medium">
@@ -565,19 +572,22 @@ function FeaturesTab({ settings }: { settings: Settings }) {
         <Row
           label="Let models search the web and read pages"
           hint={
-            settings.ollamaAccount.hasKey ? (
-              'Uses your saved ollama.com API key.'
-            ) : (
-              <>
-                Needs an ollama.com API key.{' '}
-                <button
-                  className="text-accent hover:underline"
-                  onClick={() => useApp.getState().navigate({ name: 'settings', tab: 'usage' })}
-                >
-                  Add one in Usage & cost
-                </button>
-              </>
-            )
+            <>
+              Goes through ollama.com, for every model, including local ones.{' '}
+              {settings.ollamaAccount.hasKey ? (
+                'Uses your saved ollama.com API key.'
+              ) : (
+                <>
+                  Needs an ollama.com API key.{' '}
+                  <button
+                    className="text-accent hover:underline"
+                    onClick={() => useApp.getState().navigate({ name: 'settings', tab: 'usage' })}
+                  >
+                    Add one in Usage & cost
+                  </button>
+                </>
+              )}
+            </>
           }
         >
           <Switch checked={settings.web.enabled} onChange={(enabled) => update({ web: { enabled } })} />

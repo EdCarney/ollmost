@@ -353,7 +353,9 @@ Today's behaviour, moved:
 
 - **What a trace stores.** The `traces.model` column holds the key. The trace JSON gains
   `dialect: 'ollama' | 'openai'` and `auth: 'ollama.com' | 'endpoint' | null`; the key itself is never stored. If
-  either field is missing, the trace is read as Ollama.
+  either field is missing, the trace is read as Ollama. The exception is a trace with no `dialect` whose recorded
+  endpoint ends with `/chat/completions`: it reads as OpenAI, with `auth` null. That covers OpenAI traces recorded
+  before the dialect field existed.
 - **Replay** resolves the trace's `model` key and calls that endpoint's `sendWire(editedBody)`. If the endpoint is
   gone: *"This trace's endpoint (<name>) no longer exists."*
 - **Image hiding.** `redactImages` and `stripImagePlaceholders` handle `image_url` data URLs.
@@ -383,7 +385,13 @@ Today's behaviour, moved:
   - No key but an Ollama endpoint exists → today's "add a key" chip.
   - Neither → hidden, and no polling.
 - **`/api/me`** goes to the first enabled Ollama endpoint on a loopback address, and is skipped if there is none. A
-  failure is remembered for the session.
+  server without `/api/me` is remembered for the session: a 404, 405 or 501, or a body that isn't JSON. No answer
+  within the 5 s timeout is remembered for 10 minutes: the app asks ollama.com with no deadline of its own, so a
+  stalled ollama.com (after a wake, or behind a captive portal) holds it up for a while. Anything else reads as no
+  plan and is asked again at the next load: a refused connection (the Ollama app may not have started yet, or is
+  restarting for an update), 401 or 403 (signed out; signing in needs no restart), another error status, or a JSON
+  answer without a string `plan`. (A signed-in app that can't reach ollama.com answers `null`, or 503 on newer Ollama
+  builds.)
 - **`refreshPrices`** runs only when an Ollama endpoint exists.
 - **Web tools** are unchanged. They're on for any tools-capable model when the ollama.com key is saved.
 
@@ -414,8 +422,13 @@ The mockups were approved.
     for a generic server *"… capabilities not reported — defaults apply (tools on, vision off)"*. Then a name, then
     Add.
 - **Wording:**
-  - Home (`HomeView.tsx:31`): *"Couldn't load models from any endpoint"*, listing each endpoint's error and linking
-    to Settings.
+  - Home (`HomeView.tsx:31`): *"Couldn't load models from any endpoint"* when every enabled endpoint failed (or the
+    list call itself did), listing each endpoint's error and linking to Settings. When only some failed and the others
+    have no models, it reads *"Ollmost can't find any models."*, the failed endpoints' errors, then *"Your other
+    endpoints have no models yet."* When no endpoint failed and there is still no model, it says why: *"No endpoints
+    yet. Add one in Settings → Models."* with none; *"Your endpoints are all turned off. Turn one on in Settings →
+    Models."* when none is switched on (a switched-off endpoint isn't asked, so it has no error to list); otherwise
+    *"None of your endpoints has a model yet. Add one, or add another endpoint in Settings → Models."*
   - `codeActions.ts:12`: *"Check that a model server is running."*
   - Palette keywords "connection", "endpoint", "lm studio", "vllm" and "llama.cpp" all go to the Models tab.
   - README:

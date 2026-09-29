@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest'
-import type { PriceTable } from '@shared/types'
+import { beforeAll, describe, expect, it } from 'vitest'
+import type { Endpoint, ModelBilling, PriceTable } from '@shared/types'
 import {
   costOf,
   creditPool,
@@ -11,14 +11,20 @@ import {
   formatDollars,
   formatPercent,
   formatTimeLeft,
+  hasOllamaEndpoint,
   monthlyBounds,
   nextReset,
   paceOf,
   parsePricingHtml,
   parseUsageResponse,
   priceFor,
+  quotaMode,
   spendPeriod
 } from '@shared/usage'
+import { toModelKey } from '@shared/modelKey'
+import { createConversation } from '../src/main/db/conversations'
+import { getDb, openDatabase } from '../src/main/db/index'
+import { conversationUsage, insertUsageEvent, usageSummary } from '../src/main/db/usage'
 
 const HOUR = 3_600_000
 const DAY = 24 * HOUR
@@ -280,5 +286,120 @@ describe('the period Ollmost sums its own estimate over, to sit beside the accou
     expect(spendPeriod({ ...base, windows: [monthly({ resetAt: null, resetSource: null })], spend: credits })).toBeNull()
     expect(spendPeriod({ ...base, windows: [monthly({})], spend: null })).toBeNull()
     expect(spendPeriod({ ...base, windows: [], spend: { ...credits, source: 'activity', periodStart: null } })).toBeNull()
+  })
+})
+
+describe('usage totals across endpoints', () => {
+  beforeAll(() => openDatabase(':memory:'))
+
+  const endpoints: Endpoint[] = [
+    { id: 'ollama', name: 'Ollama', kind: 'ollama', flavor: 'ollama', baseUrl: 'http://127.0.0.1:11434', enabled: true, hasKey: false },
+    {
+      id: 'lm-studio',
+      name: 'LM Studio',
+      kind: 'openai',
+      flavor: 'lmstudio',
+      baseUrl: 'http://localhost:1234/v1',
+      enabled: true,
+      hasKey: false
+    },
+    { id: 'lab', name: 'Lab vLLM', kind: 'openai', flavor: 'vllm', baseUrl: 'http://10.0.0.5:8000/v1', enabled: true, hasKey: false }
+  ]
+  const row = (conversationId: string | null, model: string, billing: ModelBilling, costUsd: number | null, completionTokens = 100) =>
+    insertUsageEvent({
+      conversationId,
+      messageId: null,
+      model,
+      kind: 'chat',
+      billing,
+      promptTokens: 1000,
+      completionTokens,
+      costUsd,
+      estimated: false
+    })
+  const chat = () =>
+    createConversation({ projectId: null, model: toModelKey('ollama', 'gpt-oss:120b-cloud'), think: null, skills: [], toolSources: [] })
+
+  it('prices a chat from its priced rows, names each model’s endpoint, and knows the total while every priced row has a price', () => {
+    const c = chat()
+    row(c.id, 'ollama/gpt-oss:120b-cloud', 'priced', 0.25)
+    row(c.id, 'ollama/gpt-oss:120b-cloud', 'priced', 0.5)
+    row(c.id, 'lm-studio/qwen/qwen3-8b', 'local', 0, 150)
+    row(c.id, 'lab/Qwen/Qwen3-32B', 'untracked', 0, 50)
+    const u = conversationUsage(c.id, endpoints)
+    expect(u.costUsd).toBe(0.75)
+    expect(u.byModel.map((m) => [m.name, m.endpoint.name, m.billing, m.costUsd])).toEqual([
+      ['gpt-oss:120b-cloud', 'Ollama', 'priced', 0.75],
+      ['qwen/qwen3-8b', 'LM Studio', 'local', 0],
+      ['Qwen/Qwen3-32B', 'Lab vLLM', 'untracked', 0]
+    ])
+    row(c.id, 'ollama/gpt-oss:120b-cloud', 'priced', null)
+    expect(conversationUsage(c.id, endpoints).costUsd).toBeNull()
+  })
+
+  it('never lets a local or untracked row make a total unknown', () => {
+    const c = chat()
+    row(c.id, 'lm-studio/qwen/qwen3-8b', 'local', null)
+    row(c.id, 'lab/Qwen/Qwen3-32B', 'untracked', null)
+    expect(conversationUsage(c.id, endpoints).costUsd).toBe(0)
+  })
+
+  it('gives a model billed two ways a row for each, which the usage tables key on', () => {
+    const c = chat()
+    row(c.id, 'ollama/gpt-oss:120b-cloud', 'priced', 0.25, 150)
+    row(c.id, 'ollama/gpt-oss:120b-cloud', 'untracked', 0, 50)
+    const u = conversationUsage(c.id, endpoints)
+    expect(u.byModel.map((m) => [m.model, m.billing, m.costUsd, m.requests])).toEqual([
+      ['ollama/gpt-oss:120b-cloud', 'priced', 0.25, 1],
+      ['ollama/gpt-oss:120b-cloud', 'untracked', 0, 1]
+    ])
+  })
+
+  it('describes a removed endpoint’s row as a removed endpoint’s, under its whole key', () => {
+    const c = chat()
+    row(c.id, 'old-box/llama3:8b', 'untracked', 0)
+    expect(conversationUsage(c.id, endpoints).byModel).toMatchObject([
+      {
+        model: 'old-box/llama3:8b',
+        name: 'old-box/llama3:8b',
+        endpoint: { id: '', name: 'Removed endpoint', kind: 'openai', flavor: 'generic' }
+      }
+    ])
+  })
+
+  it('follows the same rule per day, over a period', () => {
+    // Noon local time, so the row lands on 2030-01-02 in every time zone.
+    const at = new Date(2030, 0, 2, 12).getTime()
+    const date = () => getDb().prepare('UPDATE usage_events SET created_at = ? WHERE conversation_id IS NULL').run(at)
+    row(null, 'lab/Qwen/Qwen3-32B', 'untracked', 0)
+    row(null, 'ollama/glm-5.3:cloud', 'priced', 0.1)
+    date()
+    let s = usageSummary(endpoints, 1, at - 60_000, at + 60_000)
+    expect(s.total.costUsd).toBe(0.1)
+    expect(s.byDay).toEqual([{ day: '2030-01-02', costUsd: 0.1, tokens: 2200 }])
+    row(null, 'ollama/glm-5.3:cloud', 'priced', null)
+    date()
+    s = usageSummary(endpoints, 1, at - 60_000, at + 60_000)
+    expect(s.total.costUsd).toBeNull()
+    expect(s.byDay[0].costUsd).toBeNull()
+  })
+})
+
+describe('the quota chip', () => {
+  const ollama = { kind: 'ollama', enabled: true } as Endpoint
+  const lmStudio = { kind: 'openai', enabled: true } as Endpoint
+  const off = { ...ollama, enabled: false }
+
+  it('shows usage whenever the ollama.com key is saved, even with no Ollama endpoint', () => {
+    expect(quotaMode({ endpoints: [lmStudio], ollamaAccount: { hasKey: true } })).toBe('show')
+  })
+
+  it('offers to add a key when an Ollama endpoint is set up without one', () => {
+    expect(quotaMode({ endpoints: [lmStudio, ollama], ollamaAccount: { hasKey: false } })).toBe('add-key')
+  })
+
+  it('is hidden, so nothing is polled, with neither; a switched-off Ollama endpoint counts as none', () => {
+    expect(quotaMode({ endpoints: [lmStudio, off], ollamaAccount: { hasKey: false } })).toBe('hidden')
+    expect(hasOllamaEndpoint([])).toBe(false)
   })
 })

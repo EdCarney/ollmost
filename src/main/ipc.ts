@@ -3,7 +3,6 @@ import { homedir } from 'node:os'
 import { basename, dirname } from 'node:path'
 import { app, BrowserWindow, dialog, ipcMain, nativeTheme, type OpenDialogOptions, shell } from 'electron'
 import { artifactExtension, slugify } from '@shared/artifactParser'
-import { isOllamaCloudUrl } from '@shared/endpoints'
 import { normalizeFolder } from '@shared/fileTree'
 import { EVENT_CHANNELS, type OllmostApi } from '@shared/ipc'
 import { parseServersJson } from '@shared/mcpImport'
@@ -288,7 +287,9 @@ const impl: Impl = {
     list: async (opts) => listConversations(opts),
     get: async (id) => {
       const conversation = getConversation(id)
-      return conversation ? { conversation, messages: listMessages(id), artifacts: listArtifacts(id), usage: conversationUsage(id) } : null
+      return conversation
+        ? { conversation, messages: listMessages(id), artifacts: listArtifacts(id), usage: conversationUsage(id, getSettings().endpoints) }
+        : null
     },
     update: async (id, { stage, ...patch }) => {
       // The stage is the reply service's (it keeps or drops the plan); the rest of the patch is a plain update.
@@ -382,7 +383,7 @@ const impl: Impl = {
 
   usage: {
     account: (refresh) => getAccountUsage(refresh),
-    summary: async (days, since, until) => usageSummary(days, since, until),
+    summary: async (days, since, until) => usageSummary(getSettings().endpoints, days, since, until),
     raw: async () => lastRawUsage(),
     prices: async () => getPriceTable(),
     refreshPrices: () => refreshPrices(true)
@@ -558,16 +559,7 @@ const impl: Impl = {
       await writeFile(res.filePath, JSON.stringify(tracesForExport(conversationId), null, 2))
       return true
     },
-    replay: (conversationId, body) => replayRequest(conversationId, body),
-    target: async () => {
-      // "Copy as curl" for Ollama: the first Ollama endpoint's chat URL, and the ollama.com key when one is on ollama.com.
-      const endpoints = getSettings().endpoints.filter((e) => e.enabled && e.kind === 'ollama')
-      const first = endpoints[0]
-      return {
-        chatEndpoint: first ? `${first.baseUrl.replace(/\/+$/, '')}/api/chat` : '',
-        needsKey: endpoints.some((e) => isOllamaCloudUrl(e.baseUrl))
-      }
-    },
+    replay: (conversationId, model, body, endpointName) => replayRequest(conversationId, model, body, endpointName),
     inspectApp: async () => {
       const main = BrowserWindow.getAllWindows().find((w) => !w.webContents.getURL().includes('#debug'))
       main?.webContents.openDevTools({ mode: 'detach' })

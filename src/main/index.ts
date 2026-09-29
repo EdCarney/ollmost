@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { app, BrowserWindow, dialog, Menu, type MenuItemConstructorOptions, nativeTheme, shell } from 'electron'
 import { EVENT_CHANNELS } from '@shared/ipc'
 import { BUILTIN_THEMES, usesDark } from '@shared/themes'
+import { hasOllamaEndpoint } from '@shared/usage'
 import { currentBackground, currentThemeSource } from './background'
 import { onWaitingChange } from './chat/approvals'
 import { isReplying, markInterruptedReplies, stopAll } from './chat/service'
@@ -32,6 +33,7 @@ import { handleProtocols, registerSchemes } from './protocols'
 import { codeMayBeRunning } from './runner/lock'
 import { OLLMOST_DIR } from './runner/sandbox'
 import { clearPreviews, clearPreviewsSync, sweepWorkspaces } from './runner/workspace'
+import { getSettings } from './settings'
 import { refreshPrices } from './usage/pricing'
 import { errorMessage } from './util'
 
@@ -213,8 +215,9 @@ app.whenReady().then(async () => {
   buildMenu()
   createWindow()
   watchApprovals()
-  // Keep per-token prices current (at most daily); the bundled snapshot covers offline starts.
-  void refreshPrices()
+  // Keep per-token prices current (at most daily) when there's an Ollama endpoint to price; the bundled snapshot covers
+  // offline starts. Settings → Usage & cost can still refresh them by hand.
+  if (hasOllamaEndpoint(getSettings().endpoints)) void refreshPrices()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

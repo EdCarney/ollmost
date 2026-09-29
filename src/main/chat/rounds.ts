@@ -1,11 +1,12 @@
 import { appendFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { redactImages, traceTarget } from '@shared/debug'
 import type { MessageStats, ModelInfo, ThinkingSegment, ToolDecision, ToolEvent } from '@shared/types'
 import { getConversation, updateConversation } from '../db/conversations'
 import { insertUsageEvent } from '../db/usage'
 import { startTrace, type Trace } from '../debug/traces'
 import { paths } from '../paths'
-import type { ChatEvent, ChatRequest, IdentifiedToolCall, Provider } from '../providers/types'
+import type { ChatEvent, ChatRequest, IdentifiedToolCall, Provider, WireRequest } from '../providers/types'
 import { requestCost } from '../usage/pricing'
 import { errorMessage, estimateTokens } from '../util'
 import { EVERY_TIME, waitForDecision } from './approvals'
@@ -200,7 +201,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         stats.shortenedToolResults = (stats.shortenedToolResults ?? 0) + 1
       }
       const wire = provider.wire(body, true)
-      debugLog(wire.body)
+      debugLog(wire)
       const calls: IdentifiedToolCall[] = []
       let roundContent = ''
       let roundThinking = ''
@@ -218,7 +219,8 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         round,
         endpoint: wire.endpoint,
         request: wire.body,
-        summary: 'Streaming…'
+        summary: 'Streaming…',
+        ...traceTarget(provider.endpoint)
       })
       // Events, not network chunks: an adapter sends an empty `content` for a chunk that carried nothing.
       let chunks = 0
@@ -514,13 +516,10 @@ async function runTogether<T, R>(
   return results
 }
 
-/** With OLLMOST_DEBUG=1, append each request as it's sent (images elided) to <userData>/debug.log. */
-function debugLog(body: unknown): void {
+/** With OLLMOST_DEBUG=1, append each request as sent (images elided) to <userData>/debug.log. */
+function debugLog(wire: WireRequest): void {
   if (!process.env.OLLMOST_DEBUG) return
-  const redacted = JSON.stringify(body, (key, value: unknown) =>
-    key === 'images' && Array.isArray(value) ? value.map(() => '<image>') : value
-  )
-  appendFileSync(join(paths.data, 'debug.log'), `${new Date().toISOString()} ${redacted}\n`)
+  appendFileSync(join(paths.data, 'debug.log'), `${new Date().toISOString()} ${wire.endpoint} ${JSON.stringify(redactImages(wire.body))}\n`)
 }
 
 /** Roughly what the tool definitions add to a request: every round sends them all. */

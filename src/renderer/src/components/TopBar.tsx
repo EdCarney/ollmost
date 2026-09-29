@@ -7,7 +7,8 @@ import { AccountQuota } from './UsageBar'
 
 /**
  * Draggable title bar. When the sidebar is hidden it clears the traffic lights and shows its toggle.
- * The right side always carries the Ollama quota chip; views can add their own items before it.
+ * The right side carries the Ollama quota chip when there's an ollama.com key or an Ollama endpoint (quotaMode);
+ * views can add their own items before it.
  */
 export function TopBar({ children, right, className }: { children?: ReactNode; right?: ReactNode; className?: string }) {
   const { sidebarOpen, toggleSidebar, navigate } = useApp()

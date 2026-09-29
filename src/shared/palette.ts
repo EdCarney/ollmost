@@ -71,3 +71,30 @@ export function rankCommands<T extends Rankable>(query: string, commands: T[], r
     .sort((a, b) => b.score - a.score || recency(a.c) - recency(b.c) || a.order - b.order)
     .map((x) => x.c)
 }
+
+export type SettingsTabId = 'general' | 'appearance' | 'models' | 'usage' | 'features' | 'tools' | 'data'
+
+/** The Settings tabs as the palette offers them, and the words each answers to: a server's name finds Models. */
+export const SETTINGS_TABS: ReadonlyArray<{ id: SettingsTabId; label: string; keywords: string[] }> = [
+  { id: 'general', label: 'General', keywords: ['name', 'preferences'] },
+  { id: 'appearance', label: 'Appearance', keywords: ['theme', 'font', 'dark', 'light', 'width'] },
+  {
+    id: 'models',
+    label: 'Models',
+    keywords: ['default model', 'context', 'catalog', 'connection', 'endpoint', 'ollama', 'lm studio', 'vllm', 'llama.cpp']
+  },
+  { id: 'usage', label: 'Usage & cost', keywords: ['quota', 'spend', 'tokens', 'api key'] },
+  { id: 'features', label: 'Features', keywords: ['artifacts', 'web', 'links', 'skills'] },
+  { id: 'tools', label: 'Tools', keywords: ['mcp', 'code runner', 'code sessions', 'sandbox'] },
+  { id: 'data', label: 'Data', keywords: ['export', 'folder', 'debug'] }
+]
+
+/** The palette's "Settings › …" commands, one per tab. */
+export function settingsTabCommands(): Array<Rankable & { tab: SettingsTabId }> {
+  return SETTINGS_TABS.map((t) => ({
+    id: `settings-${t.id}`,
+    title: `Settings › ${t.label}`,
+    keywords: ['settings', 'preferences', ...t.keywords],
+    tab: t.id
+  }))
+}
