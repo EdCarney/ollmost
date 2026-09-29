@@ -507,6 +507,12 @@ function ChatsSection() {
           onChange={(v) => update({ maxRounds: Number(v) })}
         />
       </Row>
+      <Row
+        label="Ask me questions"
+        hint="Lets a model that can call tools stop and ask you a multiple-choice question when it needs your answer."
+      >
+        <Switch checked={c.askUser} onChange={(askUser) => update({ askUser })} label="Let models ask questions" />
+      </Row>
     </Section>
   )
 }

@@ -30,6 +30,9 @@ describe('link previews in a chat', () => {
     // Web and skill tools alone don't count: they can't read this Mac or the user's accounts.
     db.updateMessage(reply.id, { toolEvents: [{ tool: 'web_search', args: { query: 'x' }, ok: true, summary: 'x' }] })
     expect(previewsAllowed(c.id)).toBe(true)
+    // Nor does asking the user a question: it reaches nothing outside the app.
+    db.updateMessage(reply.id, { toolEvents: [{ tool: 'ask_user', args: {}, ok: true, summary: 'Format' }] })
+    expect(previewsAllowed(c.id)).toBe(true)
   })
 
   it('are not fetched in a chat with tool sources on', () => {

@@ -143,6 +143,8 @@ export interface ToolEvent {
   everyTime?: boolean
   /** You denied the call, so it didn't run. */
   declined?: boolean
+  /** An ask_user call: its questions, while waiting for you, then what you answered (or that you skipped them). */
+  ask?: { questions: AskQuestion[]; answers?: AskAnswer[]; skipped?: boolean }
   /** Where the tool comes from, for its card: an MCP server's name. */
   source?: string
   /** Files a code run created or changed, relative to the chat's workspace (or, for a file tool, the file it wrote). */
@@ -156,6 +158,22 @@ export interface ToolEvent {
 
 /** Your answer to a tool call that asked first. */
 export type ToolDecision = 'once' | 'chat' | 'deny'
+
+/** One multiple-choice question from the model (the ask_user tool). "Other" is added by the card, not listed here. */
+export interface AskQuestion {
+  question: string
+  /** A word or two naming the question on its card. */
+  header: string
+  options: Array<{ label: string; description?: string }>
+  /** Several options may be picked, not just one. */
+  multiSelect: boolean
+}
+
+/** Your answer to one question: the options you picked (by position), and/or text you typed as "Other". */
+export interface AskAnswer {
+  selected: number[]
+  other?: string
+}
 
 export interface MessageStats {
   promptTokens?: number
@@ -706,8 +724,11 @@ export interface Settings {
    * whether code may download Python packages from PyPI, and how long a run may take.
    */
   runner: { mode: 'off' | 'ask' | 'allow'; defaultOn: boolean; pypi: boolean; timeoutSec: number }
-  /** A chat's reply: how many tool calls it may make before it stops and offers Continue. */
-  chat: { maxRounds: number }
+  /**
+   * A chat's reply: how many tool calls it may make before it stops and offers Continue, and whether it may ask you
+   * multiple-choice questions (the ask_user tool).
+   */
+  chat: { maxRounds: number; askUser: boolean }
   /**
    * Code sessions (a model working in a folder of the user's): whether its edits and its commands ask first, how long
    * a command may run, how many tool calls a reply may make, and the network preset new sessions start with.

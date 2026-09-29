@@ -395,6 +395,7 @@ async function generate(
       stage: conversation.stage,
       skills: skillIndex.length > 0,
       web: web === 'on',
+      ask: toolsCapable && settings.chat.askUser,
       sources,
       // Files the user shared are private, and a fetch URL could carry them out (#62).
       privateFiles: hasPrivateFiles(conversation, messages),

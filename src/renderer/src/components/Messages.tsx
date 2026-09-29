@@ -9,6 +9,7 @@ import {
   FolderOpen,
   Globe,
   Hand,
+  MessageCircleQuestion,
   LoaderCircle,
   Pencil,
   RotateCcw,
@@ -22,7 +23,18 @@ import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { parseMessage, parseMessageRanges, typeForCodeLanguage } from '@shared/artifactParser'
 import { diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
-import type { Artifact, Compaction, Endpoint, Message, MessageStats, ThinkingSegment, ToolDecision, ToolEvent } from '@shared/types'
+import type {
+  Artifact,
+  AskAnswer,
+  AskQuestion,
+  Compaction,
+  Endpoint,
+  Message,
+  MessageStats,
+  ThinkingSegment,
+  ToolDecision,
+  ToolEvent
+} from '@shared/types'
 import { IMAGE_FILE, openWith } from '@shared/workspace'
 import { billingLabel, legacyBilling } from '@shared/billing'
 import { labelForKey } from '@shared/modelLabel'
@@ -482,6 +494,145 @@ export function ApprovalCard({
   )
 }
 
+/** Text the model wrote, shown as plain text: no Markdown, so a link in a question can't be followed or previewed. */
+const askText = 'whitespace-pre-wrap break-words'
+
+/** An ask_user call waiting for you: each question with its options and an "Other" box, then Send or Skip. */
+export function QuestionCard({
+  e,
+  conversationId,
+  messageId,
+  index
+}: {
+  e: ToolEvent
+  conversationId: string
+  messageId: string
+  index: number
+}) {
+  const questions = e.ask?.questions ?? []
+  const [picked, setPicked] = useState<number[][]>(() => questions.map(() => []))
+  const [other, setOther] = useState<string[]>(() => questions.map(() => ''))
+  const [sending, setSending] = useState(false)
+  const toggle = (q: number, o: number) =>
+    setPicked((all) =>
+      all.map((sel, i) => {
+        if (i !== q) return sel
+        if (!questions[q].multiSelect) return sel.includes(o) ? [] : [o]
+        return sel.includes(o) ? sel.filter((n) => n !== o) : [...sel, o]
+      })
+    )
+  // Typing an answer of your own replaces a single choice, as picking a choice clears it.
+  const type = (q: number, value: string) => {
+    setOther((all) => all.map((t, i) => (i === q ? value : t)))
+    if (value && !questions[q].multiSelect) setPicked((all) => all.map((sel, i) => (i === q ? [] : sel)))
+  }
+  const answers: AskAnswer[] = questions.map((_, i) => ({ selected: picked[i], ...(other[i].trim() && { other: other[i].trim() }) }))
+  const complete = answers.every((a) => a.selected.length > 0 || !!a.other)
+  const send = async (value: AskAnswer[] | null) => {
+    setSending(true)
+    try {
+      await api.chat.answer(conversationId, messageId, index, value)
+    } catch (err) {
+      reportError(err)
+      setSending(false)
+    }
+  }
+  return (
+    <div data-testid="question-card" className="basis-full rounded-ollmost border border-warn/50 bg-panel p-3 font-ui text-[13px]">
+      <div className="flex items-center gap-2 text-muted">
+        <MessageCircleQuestion className="size-4 shrink-0 text-warn" />
+        The model has {questions.length === 1 ? 'a question' : 'questions'} for you
+      </div>
+      <div className="mt-3 space-y-4">
+        {questions.map((q, qi) => (
+          <fieldset key={qi} disabled={sending} className="min-w-0">
+            <legend className="mb-1.5">
+              <span className="mr-2 rounded bg-hover px-1.5 py-0.5 text-[11px] font-medium text-muted">{q.header}</span>
+              <span className={cn(askText, 'font-medium text-fg')}>{q.question}</span>
+            </legend>
+            <div className="space-y-1">
+              {q.options.map((o, oi) => (
+                <label
+                  key={oi}
+                  className={cn(
+                    'flex cursor-pointer items-start gap-2 rounded-md border px-2.5 py-1.5 hover:bg-hover',
+                    picked[qi].includes(oi) ? 'border-accent' : 'border-line'
+                  )}
+                >
+                  <input
+                    type={q.multiSelect ? 'checkbox' : 'radio'}
+                    name={`q${qi}`}
+                    checked={picked[qi].includes(oi)}
+                    onChange={() => toggle(qi, oi)}
+                    className="mt-0.5 accent-accent"
+                  />
+                  <span className="min-w-0">
+                    <span className={cn(askText, 'text-fg')}>{o.label}</span>
+                    {o.description && <span className={cn(askText, 'block text-xs text-muted')}>{o.description}</span>}
+                  </span>
+                </label>
+              ))}
+              <input
+                type="text"
+                value={other[qi]}
+                onChange={(ev) => type(qi, ev.target.value)}
+                placeholder="Other: type your own answer"
+                maxLength={OTHER_MAX}
+                aria-label={`Your own answer to: ${q.header}`}
+                className="h-8 w-full rounded-md border border-line bg-transparent px-2.5 text-fg placeholder:text-muted focus:border-accent focus:outline-none"
+              />
+            </div>
+          </fieldset>
+        ))}
+      </div>
+      <div className="mt-3 flex flex-wrap justify-end gap-2">
+        <Button size="sm" variant="ghost" disabled={sending} onClick={() => void send(null)}>
+          Skip
+        </Button>
+        <Button size="sm" variant="primary" disabled={sending || !complete} onClick={() => void send(answers)}>
+          Send
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/** Keeps what "Other" holds within what the main process takes (see OTHER_CHARS in chat/approvals.ts). */
+const OTHER_MAX = 4000
+
+/** An ask_user call that's over: what was asked and how you answered, or that you skipped it or it never ran. */
+function QuestionSummary({ e }: { e: ToolEvent }) {
+  const ask = e.ask
+  if (!ask) return <ToolCard e={e} />
+  const state = e.pending
+    ? 'Waiting for your answer…'
+    : ask.skipped
+      ? 'You skipped'
+      : ask.answers
+        ? 'You answered'
+        : e.summary.endsWith('(not run)')
+          ? 'Not answered'
+          : 'Asked'
+  return (
+    <div data-testid="question-summary" className="basis-full rounded-ollmost border border-line px-3 py-2 font-ui text-xs text-muted">
+      <div className="flex items-center gap-1.5">
+        <MessageCircleQuestion className="size-3.5 shrink-0" />
+        {state}
+      </div>
+      {ask.questions.map((q: AskQuestion, i) => {
+        const a = ask.answers?.[i]
+        const chosen = a ? [...a.selected.map((n) => q.options[n]?.label ?? ''), ...(a.other ? [a.other] : [])] : []
+        return (
+          <div key={i} className="mt-1.5 min-w-0">
+            <div className={cn(askText, 'text-fg')}>{q.question}</div>
+            {chosen.length > 0 && <div className={cn(askText, 'pl-3')}>→ {chosen.join('; ')}</div>}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
 /** Tool calls made at one point in a reply, in the order they were made. */
 export function ToolGroup({
   events,
@@ -510,6 +661,8 @@ export function ToolGroup({
       {shown.map(({ event: e, index }) =>
         e.tool === 'delegate' && depth === 0 ? (
           <DelegateCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} scope={scope} />
+        ) : e.awaiting && e.ask ? (
+          <QuestionCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} />
         ) : e.awaiting ? (
           <ApprovalCard key={index} e={e} conversationId={conversationId} messageId={messageId} index={index} scope={scope} child={child} />
         ) : e.tool === 'run_code' ? (
@@ -524,6 +677,8 @@ export function ToolGroup({
           <WebEvent key={index} e={e} />
         ) : SKILL_TOOL_NAMES.has(e.tool) ? (
           <SkillEvent key={index} e={e} />
+        ) : e.tool === 'ask_user' ? (
+          <QuestionSummary key={index} e={e} />
         ) : (
           <ToolCard key={index} e={e} />
         )

@@ -1526,6 +1526,85 @@ describe('asking before a tool runs', () => {
   })
 })
 
+describe('asking the user a question', () => {
+  const ASK = { questions: [{ question: 'Which format?', header: 'Format', options: [{ label: 'CSV' }, { label: 'JSON' }] }] }
+  const askThenAnswer: ChatHandler = (b, res, n) =>
+    n === 1 ? void res.writeHead(200).end(toolCall('ask_user', ASK)) : reply('Going with JSON.')(b, res, n)
+  const waiting = (conversationId: string) =>
+    waitFor(() =>
+      events.find(
+        (e): e is Extract<ChatEvent, { type: 'tool' }> => e.type === 'tool' && e.conversationId === conversationId && !!e.event.awaiting
+      )
+    )
+
+  it('saves the waiting question at once, and carries the answer to the model and to later turns', async () => {
+    chat = askThenAnswer
+    const r = start('convert my data')
+    const ask = await waiting(r.conversation.id)
+    expect(chatCalls).toHaveLength(1)
+    expect(getMessage(r.assistantMessageId)!.toolEvents[0]).toMatchObject({
+      tool: 'ask_user',
+      awaiting: true,
+      ask: { questions: [{ header: 'Format' }] }
+    })
+    expect(approvals.waitingCount()).toBe(1)
+    // Approving is not answering.
+    expect(() => approvals.decide(r.conversation.id, ask.messageId, ask.index, 'once')).toThrow(/isn't waiting/)
+
+    approvals.answer(r.conversation.id, ask.messageId, ask.index, [{ selected: [1], other: 'with headers' }])
+    const done = await doneEvent(r.conversation.id)
+    const toolMessages = (chatCalls[1].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
+    expect(toolMessages.map((m) => m.content)).toEqual([
+      'The user answered:\n1. Format: Which format?\n   Answer: JSON; (typed by the user) with headers'
+    ])
+    expect(done.message.toolEvents[0]).toMatchObject({ ok: true, ask: { answers: [{ selected: [1], other: 'with headers' }] } })
+    expect(done.message.toolEvents[0].awaiting).toBeUndefined()
+    expect(approvals.waitingCount()).toBe(0)
+
+    // The next turn still knows what was asked, so the model doesn't ask again.
+    chat = reply('Sure.')
+    service.send({ ...sendBody(r.conversation.id), content: 'thanks' })
+    await waitFor(() => chatCalls.length === 3)
+    expect(JSON.stringify(chatCalls[2].messages)).toContain('The user answered')
+    await waitFor(() => events.filter((e) => e.type === 'done').length === 2)
+  })
+
+  it('tells the model when the user skips', async () => {
+    chat = askThenAnswer
+    const r = start('convert my data')
+    const ask = await waiting(r.conversation.id)
+    approvals.answer(r.conversation.id, ask.messageId, ask.index, null)
+    const done = await doneEvent(r.conversation.id)
+    const tool = (chatCalls[1].messages as Array<{ role: string; content: string }>).find((m) => m.role === 'tool')!
+    expect(tool.content).toMatch(/chose not to answer/)
+    expect(done.message.toolEvents[0].ask).toMatchObject({ skipped: true })
+  })
+
+  it('never asks a question that was waiting when the reply was stopped', async () => {
+    chat = askThenAnswer
+    const r = start('convert my data')
+    const ask = await waiting(r.conversation.id)
+    await service.stop(r.conversation.id)
+    const saved = getMessage(r.assistantMessageId)!
+    expect(saved.error).toBeNull()
+    expect(saved.toolEvents[0]).toMatchObject({ ok: false, pending: false, summary: 'Format (not run)' })
+    expect(saved.toolEvents[0].awaiting).toBeUndefined()
+    expect(approvals.waitingCount()).toBe(0)
+    expect(() => approvals.answer(r.conversation.id, ask.messageId, ask.index, null)).toThrow(/aren't waiting/)
+  })
+
+  it('is not offered when the setting is off', async () => {
+    updateSettings({ chat: { askUser: false } })
+    try {
+      chat = reply('Hi.')
+      await doneEvent(start('hello').conversation.id)
+      expect(chatCalls[0].tools).toBeUndefined()
+    } finally {
+      updateSettings({ chat: { askUser: true } })
+    }
+  })
+})
+
 describe('MCP servers in a reply', () => {
   const FIXTURE = new URL('./fixtures/mcp-server.mjs', import.meta.url).pathname
   afterAll(() => mcpManager.stopAll())
@@ -1598,7 +1677,8 @@ describe('MCP servers in a reply', () => {
     expect(done.message.stats?.unavailableTools).toEqual([
       expect.stringMatching(/^Broken couldn't start: Couldn't find "ollmost-no-such-server"/)
     ])
-    expect(chatCalls[0].tools).toBeUndefined()
+    // No server tools; only the built-in question tool.
+    expect(tools(chatCalls[0])).toEqual(['ask_user'])
   })
 })
 

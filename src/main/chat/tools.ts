@@ -2,6 +2,7 @@ import type { ThinkSetting, ToolEvent } from '@shared/types'
 import type { ToolCall, ToolDef } from '../providers/types'
 import { errorMessage } from '../util'
 import type { AssembleInput, PastToolCall } from './assemble'
+import { askTools } from './askTools'
 import { capText, TOOL_RESULT_CHARS } from './results'
 import { codeTools } from '../code/tools'
 import { mcpTools } from '../mcp/provider'
@@ -20,6 +21,8 @@ export interface ToolContext {
   mode: TurnMode
   skills: boolean
   web: boolean
+  /** The model may ask the user questions (ask_user): it can call tools, and the setting is on. */
+  ask?: boolean
   /** Tool sources switched on for the chat (Conversation.toolSources): `mcp:<server id>`. */
   sources: readonly string[]
   /** The chat holds files the user shared: attachments, or its project's knowledge. */
@@ -139,7 +142,7 @@ export interface ToolProvider {
 }
 
 // In order: a name offered by two providers belongs to the first.
-const BUILT_IN: ToolProvider[] = [skillTools, webTools, runnerTools, codeTools, mcpTools]
+const BUILT_IN: ToolProvider[] = [skillTools, askTools, webTools, runnerTools, codeTools, mcpTools]
 let registered: ToolProvider[] = []
 
 /** Add a provider; returns a function that removes it. */
