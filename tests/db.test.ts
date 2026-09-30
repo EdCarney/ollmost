@@ -399,6 +399,9 @@ describe('message references', () => {
     // An edit of the message's text keeps them; only setMessageReferences changes them.
     updateMessage(m.id, { content: 'see @a.ts again' })
     expect(getMessage(m.id)!.references).toEqual(refs)
+    // Read and naming nothing ([]) stays apart from not read yet (null).
+    setMessageReferences(m.id, [])
+    expect(getMessage(m.id)!.references).toEqual([])
     setMessageReferences(m.id, null)
     expect(getMessage(m.id)!.references).toBeNull()
   })

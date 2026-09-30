@@ -2463,7 +2463,8 @@ const evilSvg = (port) =>
     // the schema is taken out first, or they'd fail on it. A new schema migration means updating this too.
     const KILN_DB_VERSION = 8
     const version = db.prepare('PRAGMA user_version').get().user_version
-    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 9, `database version ${version}`)
+    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 10, `database version ${version}`)
+    db.exec('ALTER TABLE messages DROP COLUMN refs')
     // The model-key migration (model endpoints): its two columns go, and model names lose the 'ollama/' it put in front,
     // or running it again would prefix them twice.
     db.exec('ALTER TABLE model_profiles DROP COLUMN detected; ALTER TABLE usage_events DROP COLUMN billing')
