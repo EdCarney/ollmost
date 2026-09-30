@@ -23,8 +23,8 @@ export interface CachedModelInfo {
   contextLength: number | null
   family: string | null
   parameterSize: string | null
-  /** OpenAI-compatible servers: the server reported this model's capabilities (they aren't the assumed defaults). */
-  capabilitiesReported?: boolean
+  /** OpenAI-compatible servers: the server said whether this model can call tools (it isn't the assumed default). */
+  toolsReported?: boolean
   /** OpenAI-compatible servers: the thinking profile the server reported (LM Studio). */
   thinkPreset?: ThinkProfile['kind'] | null
 }

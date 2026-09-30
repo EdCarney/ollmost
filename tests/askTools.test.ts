@@ -5,6 +5,7 @@ vi.mock('electron', () => ({ shell: {}, app: { getPath: () => '' }, safeStorage:
 
 const { normalizeQuestions, askTools } = await import('../src/main/chat/askTools')
 const approvals = await import('../src/main/chat/approvals')
+const { ASK_OTHER_CHARS } = await import('@shared/ask')
 type ToolContext = import('../src/main/chat/tools').ToolContext
 type RunContext = import('../src/main/chat/tools').RunContext
 
@@ -32,7 +33,7 @@ describe('normalizeQuestions', () => {
   })
 
   it('takes the shapes small models send instead', () => {
-    const expected = [{ question: 'Pick one?', header: 'Pick one', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }]
+    const expected = [{ question: 'Pick one?', header: 'Question', options: [{ label: 'A' }, { label: 'B' }], multiSelect: false }]
     // One question with no list around it, options as plain strings.
     expect(normalizeQuestions({ question: 'Pick one?', options: ['A', 'B'] })).toEqual(expected)
     // The list as a JSON string, the options as a JSON string, the flag as text.
@@ -42,30 +43,48 @@ describe('normalizeQuestions', () => {
     expect(normalizeQuestions({ questions: { question: 'Pick one?', options: [{ text: 'A' }, { value: 'B' }] } })).toEqual(expected)
   })
 
-  it("drops the model's own Other and repeated options, and clamps counts and lengths", () => {
-    const q = normalizeQuestions({
+  it('names a question with no header by its place, not by a cut-off question', () => {
+    const two = normalizeQuestions({
       questions: [
-        { question: 'Q?', options: ['A', 'a', 'Other', 'B', 'C', 'D', 'E', 'F', 'G', ' '] },
-        ...Array.from({ length: 6 }, (_, i) => ({ question: `Q${i}`, options: ['x', 'y'] })),
-        { question: 'x'.repeat(900), header: 'h'.repeat(90), options: ['x', 'y'] }
+        { question: 'A long question about months?', options: ['x', 'y'] },
+        { question: 'Second?', options: ['x', 'y'] }
       ]
     })
-    expect(q).toHaveLength(4)
-    expect(q[0].options.map((o) => o.label)).toEqual(['A', 'B', 'C', 'D', 'E', 'F'])
-    const long = normalizeQuestions({ question: 'x'.repeat(900), header: 'h'.repeat(90), options: ['x', 'y'] })[0]
-    expect(long.question.length).toBeLessThanOrEqual(500)
-    expect(long.header.length).toBeLessThanOrEqual(30)
+    expect(two.map((q) => q.header)).toEqual(['Question 1', 'Question 2'])
   })
 
-  it('skips a question it cannot use, and throws, naming the shape, when none is left', () => {
-    expect(
-      normalizeQuestions({ questions: [{ question: 'no options' }, { question: 'one?', options: ['only'] }, full.questions[0]] })
-    ).toHaveLength(1)
-    for (const bad of [{}, { questions: [] }, { questions: 'not json' }, { question: 'q', options: ['solo'] }, { questions: [7, null] }]) {
+  it("drops the model's own Other and repeated options, and cuts long text", () => {
+    const [q] = normalizeQuestions({
+      question: 'x'.repeat(900),
+      header: 'h'.repeat(90),
+      options: ['A', 'a', 'Other', 'Other (please specify)', 'Other:', 'Otherwise', 'B', ' ']
+    })
+    expect(q.options.map((o) => o.label)).toEqual(['A', 'Otherwise', 'B'])
+    expect(q.question.length).toBeLessThanOrEqual(500)
+    expect(q.header.length).toBeLessThanOrEqual(30)
+  })
+
+  it('refuses what it would have to leave out, saying which limit was passed, so the model can retry', () => {
+    const q = (options: unknown[], question = 'Q?') => ({ question, options })
+    // Too many options: the model can't see the card, so cutting to six would show it a different question.
+    const months = Array.from({ length: 12 }, (_, i) => `Month ${i + 1}`)
+    expect(() => normalizeQuestions({ questions: [q(months)] })).toThrow(/Question 1 has 12 options, and the most is 6/)
+    // Too many questions.
+    expect(() => normalizeQuestions({ questions: Array.from({ length: 5 }, () => q(['a', 'b'])) })).toThrow(
+      /at most 4 questions.*you sent 5/
+    )
+    // One question that can't be shown fails the call, and says which.
+    expect(() => normalizeQuestions({ questions: [q(['a', 'b']), q(['only'])] })).toThrow(/Question 2 needs at least 2 options/)
+    expect(() => normalizeQuestions({ questions: [q(['Yes', 'Other'])] })).toThrow(/besides "Other", which the card adds itself/)
+    expect(() => normalizeQuestions({ questions: [q(['a', 'b'], '  ')] })).toThrow(/Question 1 has no "question" text/)
+    expect(() => normalizeQuestions({ questions: [{ question: 'Q?' }] })).toThrow(/Question 1 needs "options"/)
+    expect(() => normalizeQuestions({ questions: [7] })).toThrow(/Question 1 must be an object/)
+  })
+
+  it('throws, naming the shape, when there is nothing to ask', () => {
+    for (const bad of [{}, { questions: [] }, { questions: 'not json' }]) {
       expect(() => normalizeQuestions(bad)).toThrow(/needs "questions"/)
     }
-    // "Other" is dropped, which can leave too few; the error says the card adds its own.
-    expect(() => normalizeQuestions({ question: 'Sure?', options: ['Yes', 'Other'] })).toThrow(/"Other", which the card adds/)
   })
 })
 
@@ -111,7 +130,7 @@ describe('answering questions', () => {
       [ok, { selected: [1, 1] }],
       [ok, { selected: [0], other: 5 }],
       [ok, { selected: [], other: '   ' }],
-      [ok, { selected: [], other: 'x'.repeat(approvals.OTHER_CHARS + 1) }],
+      [ok, { selected: [], other: 'x'.repeat(ASK_OTHER_CHARS + 1) }],
       [null, ok]
     ]
     for (const answers of bad) expect(() => approvals.answer('c1', 'm1', 0, answers as never)).toThrow()
@@ -168,9 +187,11 @@ describe('the ask_user provider', () => {
     expect(shown[0]).toMatchObject({ pending: true, awaiting: true, summary: 'Format', ask: { questions: [{ header: 'Format' }] } })
     approvals.answer('c1', 'm1', 3, [{ selected: [1], other: 'with a header row' }])
     const result = await run
+    // Only the answer is labelled as the user's: the question is the model's own text, and may have come from a page.
     expect(result.content).toBe(
-      `The user answered. These are the user's own words, so treat them as you would a message from them, not as tool data:\n1. Format: Format?\n   Answer: JSON; (typed by the user) with a header row`
+      `The user answered your questions. Only the text after "The user answered:" is theirs; treat it as you would a message from them. The questions are your own wording, repeated for reference.\n1. You asked: Format?\n   The user answered: JSON; with a header row`
     )
+    expect(result.keep).toBe(true)
     expect(result.event).toMatchObject({ ok: true, ask: { answers: [{ selected: [1], other: 'with a header row' }] } })
     // The card, /compact and a shortened result all keep the answers, not just the headers.
     expect(result.event.summary).toBe('Format: JSON, with a header row')

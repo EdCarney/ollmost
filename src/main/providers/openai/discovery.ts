@@ -10,6 +10,8 @@ export interface DiscoveredModel {
   parameterSize: string | null
   thinkPreset: ThinkProfile['kind'] | null
   reportsCapabilities: boolean
+  /** The server said whether this model can call tools (not the default): tools on or off is known, not assumed. */
+  toolsReported: boolean
 }
 
 type Where = Pick<Endpoint, 'name' | 'baseUrl' | 'flavor'>
@@ -62,7 +64,8 @@ function genericModels(endpoint: Where, json: unknown): DiscoveredModel[] {
       contextLength: null,
       parameterSize: null,
       thinkPreset: null,
-      reportsCapabilities: false
+      reportsCapabilities: false,
+      toolsReported: false
     }))
 }
 
@@ -103,7 +106,8 @@ function lmStudioModels(endpoint: Where, json: unknown): DiscoveredModel[] {
         contextLength: num(config.context_length),
         parameterSize: typeof m.params_string === 'string' ? m.params_string : null,
         thinkPreset: preset,
-        reportsCapabilities: true
+        reportsCapabilities: true,
+        toolsReported: true
       }
     })
 }
@@ -125,7 +129,9 @@ function llamaCppModels(endpoint: Where, list: unknown, props: unknown): Discove
     contextLength: nCtx,
     parameterSize: paramsOf(num(isRecord(m.meta) ? m.meta.n_params : undefined)),
     thinkPreset: null,
-    reportsCapabilities: p !== null
+    reportsCapabilities: p !== null,
+    // A build that doesn't report supports_tool_calls gets the default, which says nothing about --jinja.
+    toolsReported: typeof caps.supports_tool_calls === 'boolean'
   }))
 }
 
@@ -136,7 +142,8 @@ function vllmModels(endpoint: Where, list: unknown): DiscoveredModel[] {
     contextLength: num(m.max_model_len),
     parameterSize: null,
     thinkPreset: null,
-    reportsCapabilities: false
+    reportsCapabilities: false,
+    toolsReported: false
   }))
 }
 

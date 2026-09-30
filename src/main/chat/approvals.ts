@@ -1,3 +1,4 @@
+import { ASK_OTHER_CHARS } from '@shared/ask'
 import type { AskAnswer, AskQuestion, ToolDecision } from '@shared/types'
 
 // Tool calls waiting for the user, by `messageId:index` (the call's place in its reply): to allow or deny a call, or
@@ -30,6 +31,35 @@ const listeners = new Set<(count: number) => void>()
 const key = (messageId: string, index: number) => `${messageId}:${index}`
 const changed = () => listeners.forEach((cb) => cb(waiting.size))
 
+/**
+ * Hold a wait until it's answered, or until the reply's stop signal fires (which rejects with its reason). `make` gets
+ * the function that settles the wait with a value, and returns the entry to register.
+ */
+function hold<T>(messageId: string, index: number, signal: AbortSignal, make: (settle: (value: T) => void) => Waiting): Promise<T> {
+  return new Promise((resolve, reject) => {
+    if (signal.aborted) return reject(signal.reason)
+    const k = key(messageId, index)
+    const done = () => {
+      waiting.delete(k)
+      signal.removeEventListener('abort', onAbort)
+      changed()
+    }
+    const onAbort = () => {
+      done()
+      reject(signal.reason)
+    }
+    signal.addEventListener('abort', onAbort, { once: true })
+    waiting.set(
+      k,
+      make((value) => {
+        done()
+        resolve(value)
+      })
+    )
+    changed()
+  })
+}
+
 /** Wait for the user's answer to a call. Rejects with the signal's reason if the reply is stopped first. */
 export function waitForDecision(
   conversationId: string,
@@ -38,30 +68,7 @@ export function waitForDecision(
   signal: AbortSignal,
   choices: readonly ToolDecision[] = DECISIONS
 ): Promise<ToolDecision> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(signal.reason)
-    const k = key(messageId, index)
-    const settle = () => {
-      waiting.delete(k)
-      signal.removeEventListener('abort', onAbort)
-      changed()
-    }
-    const onAbort = () => {
-      settle()
-      reject(signal.reason)
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-    waiting.set(k, {
-      kind: 'decision',
-      conversationId,
-      choices,
-      answer: (decision) => {
-        settle()
-        resolve(decision)
-      }
-    })
-    changed()
-  })
+  return hold(messageId, index, signal, (answer) => ({ kind: 'decision', conversationId, choices, answer }))
 }
 
 /** Answer a waiting call. Throws when it isn't waiting any more (answered in another window, or stopped). */
@@ -76,9 +83,6 @@ export function decide(conversationId: string, messageId: string, index: number,
   w.answer(decision)
 }
 
-/** The most text a user's "Other" answer may hold. */
-export const OTHER_CHARS = 4000
-
 /** Wait for the user's answers to a call's questions. Resolves to null if they skip; rejects if the reply is stopped. */
 export function waitForAnswer(
   conversationId: string,
@@ -87,30 +91,7 @@ export function waitForAnswer(
   signal: AbortSignal,
   questions: readonly AskQuestion[]
 ): Promise<AskAnswer[] | null> {
-  return new Promise((resolve, reject) => {
-    if (signal.aborted) return reject(signal.reason)
-    const k = key(messageId, index)
-    const settle = () => {
-      waiting.delete(k)
-      signal.removeEventListener('abort', onAbort)
-      changed()
-    }
-    const onAbort = () => {
-      settle()
-      reject(signal.reason)
-    }
-    signal.addEventListener('abort', onAbort, { once: true })
-    waiting.set(k, {
-      kind: 'question',
-      conversationId,
-      questions,
-      answer: (answers) => {
-        settle()
-        resolve(answers)
-      }
-    })
-    changed()
-  })
+  return hold(messageId, index, signal, (answer) => ({ kind: 'question', conversationId, questions, answer }))
 }
 
 /**
@@ -129,7 +110,7 @@ export function checkAnswers(questions: readonly AskQuestion[], answers: unknown
     if (selected.length > 1 && !q.multiSelect) throw new Error('That question takes one option.')
     if (a.other !== undefined && typeof a.other !== 'string') throw new Error('Malformed answer.')
     const other = (a.other ?? '').trim()
-    if (other.length > OTHER_CHARS) throw new Error(`Keep an answer under ${OTHER_CHARS} characters.`)
+    if (other.length > ASK_OTHER_CHARS) throw new Error(`Keep an answer under ${ASK_OTHER_CHARS} characters.`)
     if (!selected.length && !other) throw new Error('Answer every question, or skip them all.')
     return { selected: selected as number[], ...(other && { other }) }
   })

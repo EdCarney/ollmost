@@ -68,6 +68,11 @@ export interface ToolResult {
   event: ToolEvent
   /** Skill id to add to the conversation's active skills, so later turns keep it. */
   loadedSkillId?: string
+  /**
+   * Later rounds of the reply never shorten this result to make room: it can't be had again by calling the tool
+   * (ask_user would ask the user the same thing twice).
+   */
+  keep?: boolean
   /** The model called a tool Ollmost doesn't provide (often a web or code tool it saw in training). */
   unknown?: boolean
   /** The tool exists but this reply may not use it (a write in a session's plan mode): refused with the reason. */

@@ -21,6 +21,7 @@ import {
 } from 'lucide-react'
 import { memo, useEffect, useMemo, useRef, useState } from 'react'
 import { parseMessage, parseMessageRanges, typeForCodeLanguage } from '@shared/artifactParser'
+import { ASK_OTHER_CHARS } from '@shared/ask'
 import { diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
 import type {
@@ -580,7 +581,7 @@ export function QuestionCard({
                 value={other[qi]}
                 onChange={(ev) => type(qi, ev.target.value)}
                 placeholder="Other: type your own answer"
-                maxLength={OTHER_MAX}
+                maxLength={ASK_OTHER_CHARS}
                 aria-label={`Your own answer to: ${q.header}`}
                 className="h-8 w-full rounded-md border border-line bg-transparent px-2.5 text-fg placeholder:text-muted focus:border-accent focus:outline-none"
               />
@@ -600,22 +601,11 @@ export function QuestionCard({
   )
 }
 
-/** Keeps what "Other" holds within what the main process takes (see OTHER_CHARS in chat/approvals.ts). */
-const OTHER_MAX = 4000
-
 /** An ask_user call that's over: what was asked and how you answered, or that you skipped it or it never ran. */
 function QuestionSummary({ e }: { e: ToolEvent }) {
   const ask = e.ask
   if (!ask) return <ToolCard e={e} />
-  const state = e.pending
-    ? 'Waiting for your answer…'
-    : ask.skipped
-      ? 'You skipped'
-      : ask.answers
-        ? 'You answered'
-        : e.summary.endsWith('(not run)')
-          ? 'Not answered'
-          : 'Asked'
+  const state = e.pending ? 'Waiting for your answer…' : ask.skipped ? 'You skipped' : ask.answers ? 'You answered' : 'Not answered'
   return (
     <div data-testid="question-summary" className="basis-full rounded-ollmost border border-line px-3 py-2 font-ui text-xs text-muted">
       <div className="flex items-center gap-1.5">

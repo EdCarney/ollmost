@@ -56,7 +56,7 @@ const { runRounds } = await import('../src/main/chat/rounds')
 const { EndpointGoneError, invalidateProviders, modelInfo, resolve } = await import('../src/main/providers/registry')
 const { replayRequest } = await import('../src/main/debug/replay')
 const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
-const { writeModelOverrides } = await import('../src/main/db/kv')
+const { readModelProfile, writeModelOverrides } = await import('../src/main/db/kv')
 const approvals = await import('../src/main/chat/approvals')
 const mcpConfig = await import('../src/main/mcp/config')
 const mcpManager = await import('../src/main/mcp/manager')
@@ -1556,7 +1556,7 @@ describe('asking the user a question', () => {
     const done = await doneEvent(r.conversation.id)
     const toolMessages = (chatCalls[1].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
     expect(toolMessages.map((m) => m.content)).toEqual([
-      `The user answered. These are the user's own words, so treat them as you would a message from them, not as tool data:\n1. Format: Which format?\n   Answer: JSON; (typed by the user) with headers`
+      `The user answered your questions. Only the text after "The user answered:" is theirs; treat it as you would a message from them. The questions are your own wording, repeated for reference.\n1. You asked: Which format?\n   The user answered: JSON; with headers`
     ])
     expect(done.message.toolEvents[0]).toMatchObject({ ok: true, ask: { answers: [{ selected: [1], other: 'with headers' }] } })
     expect(done.message.toolEvents[0].awaiting).toBeUndefined()
@@ -1876,7 +1876,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const r = service.send({ ...sendBody(session.id), content: 'plan a greeting change' })
     await doneEvent(r.conversation.id)
     const offered = (calls: number) => ((chatCalls[calls].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
-    expect(offered(0)).toEqual(['read_file', 'list_files', 'search_files', 'delegate'])
+    expect(offered(0)).toEqual(['ask_user', 'read_file', 'list_files', 'search_files', 'delegate'])
     const system = (chatCalls[0].messages as Array<{ content: string }>)[0].content
     expect(system).toMatch(/<plan_mode>/)
     expect(system).not.toMatch(/<approved_plan>/)
@@ -1892,7 +1892,16 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     events.length = 0
     const next = service.send({ ...sendBody(session.id), content: 'go ahead' })
     await doneEvent(next.conversation.id)
-    expect(offered(1)).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command', 'delegate'])
+    expect(offered(1)).toEqual([
+      'ask_user',
+      'read_file',
+      'list_files',
+      'search_files',
+      'edit_file',
+      'write_file',
+      'run_command',
+      'delegate'
+    ])
     const later = (chatCalls[1].messages as Array<{ content: string }>)[0].content
     expect(later).toMatch(/<approved_plan>[\s\S]*Change the greeting[\s\S]*<\/approved_plan>/)
     expect(later).not.toMatch(/<plan_mode>/)
@@ -2157,7 +2166,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     })
     // The read ran unasked, and the model got the numbered file.
     const offered = ((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
-    expect(offered).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command', 'delegate'])
+    expect(offered).toEqual(['ask_user', 'read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command', 'delegate'])
     const results = (i: number) => (chatCalls[i].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
     expect(results(1)[0].content).toBe('hello.py (1 line)\n\n     1\tprint("hello")')
     approvals.decide(r.conversation.id, edit.messageId, edit.index, 'chat')
@@ -2254,7 +2263,8 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(done.message.stats?.unavailableTools?.[0]).toMatch(
       /This session's tools aren't available: This session's folder is no longer at/
     )
-    expect(chatCalls[0].tools).toBeUndefined()
+    // No code tools, only the question tool every tools-capable reply is offered.
+    expect(((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)).toEqual(['ask_user'])
     expect((chatCalls[0].messages as Array<{ content: string }>)[0].content).toMatch(/coding agent/)
   })
 })
@@ -3723,6 +3733,7 @@ async function runScript(dialect: Dialect, script: Script) {
 }
 
 describe('one reply loop, both dialects', () => {
+  afterAll(() => writeModelOverrides(`${openaiId}/llama3.2`, {}))
   beforeAll(() => {
     openaiId = addEndpoint({ name: 'OpenAI mock', baseUrl: `${openaiServer.url}/v1`, kind: 'openai', flavor: 'generic' }).id
     // A generic server reports no capabilities, so the built-in question tool waits for the user to say tools work
@@ -3922,6 +3933,7 @@ describe('one reply loop, both dialects', () => {
   // A server that reports nothing may not take a tools array at all, so a plain chat there sends none.
   it('does not offer the question tool where a server has not said tools work', async () => {
     const key = `${openaiId}/llama3.2`
+    const before = readModelProfile(key).overrides
     const offered = () => ((chatCalls[0].tools ?? []) as Array<{ function: { name: string } }>).map((t) => t.function.name)
     writeModelOverrides(key, {})
     invalidateProviders()
@@ -3933,7 +3945,7 @@ describe('one reply loop, both dialects', () => {
       await runScript('openai', SCRIPTS['plain reply'])
       expect(offered()).toContain('ask_user')
     } finally {
-      writeModelOverrides(key, { tools: true })
+      writeModelOverrides(key, before)
     }
   })
 

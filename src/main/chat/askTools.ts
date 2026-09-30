@@ -1,6 +1,8 @@
 import type { AskAnswer, AskQuestion, ToolEvent } from '@shared/types'
+import { isRecord } from '../providers/json'
 import type { ToolDef } from '../providers/types'
 import { waitForAnswer } from './approvals'
+import { capText } from './results'
 import type { ToolProvider } from './tools'
 
 // ask_user: the model asks the user a multiple-choice question and carries on with the answer. The call waits inside
@@ -61,96 +63,100 @@ export const ASK_TOOLS: ToolDef[] = [
 /** Other names models call the tool by (they know it from other assistants). */
 const ALIASES = new Set(['askuserquestion', 'ask_user_question', 'ask_question', 'ask_questions', 'ask', 'ask_human', 'question'])
 
-const isObject = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v)
 const clip = (text: string, max: number) => (text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text)
 const text = (v: unknown): string => (typeof v === 'string' ? v.trim() : typeof v === 'number' ? String(v) : '')
 const flag = (v: unknown): boolean => v === true || (typeof v === 'string' && v.trim().toLowerCase() === 'true')
+const parsed = (v: unknown): unknown => {
+  if (typeof v !== 'string') return v
+  try {
+    return JSON.parse(v)
+  } catch {
+    return undefined
+  }
+}
+// The card adds its own "Other" box, so a model's own ("Other", "Other (please specify)", "Other:") would show twice.
+const OTHER_OPTION = /^other(?![a-z])/i
+
+const SHAPE = `ask_user needs "questions": a list of one to ${MAX_QUESTIONS} objects, each with "question", "options" (${MIN_OPTIONS} to ${MAX_OPTIONS} objects with a "label", not counting "Other", which the card adds itself) and optionally "header" and "multiSelect".`
 
 /**
  * The questions a call asks, from what a model sent. Small models send them in many shapes (one question at the top
- * level, options as plain strings, the list as a JSON string), so this takes those; anything it can't use throws with
- * the shape that works, which goes back to the model as the call's error.
+ * level, options as plain strings, the list as a JSON string), so this takes those. What it can't show as sent it
+ * refuses, saying which limit was passed: the model can't see the card, so a question or option quietly left out would
+ * be answered as if it had been shown. The error goes back to the model as the call's error.
  */
 export function normalizeQuestions(args: Record<string, unknown>): AskQuestion[] {
-  let raw: unknown = args.questions
-  if (typeof raw === 'string') {
-    try {
-      raw = JSON.parse(raw)
-    } catch {
-      raw = undefined
-    }
-  }
+  let raw = parsed(args.questions)
   // One question given without the list around it.
   if (raw === undefined && (args.question !== undefined || args.options !== undefined)) raw = [args]
-  if (isObject(raw)) raw = [raw]
-  const questions: AskQuestion[] = []
-  for (const item of Array.isArray(raw) ? raw : []) {
-    if (!isObject(item)) continue
+  if (isRecord(raw)) raw = [raw]
+  const items = Array.isArray(raw) ? raw : []
+  if (!items.length) throw new Error(SHAPE)
+  if (items.length > MAX_QUESTIONS) {
+    throw new Error(
+      `ask_user takes at most ${MAX_QUESTIONS} questions in one call, and you sent ${items.length}. Ask the most important ones now; you can ask more afterwards.`
+    )
+  }
+  return items.map((item, i) => {
+    const n = `Question ${i + 1}`
+    if (!isRecord(item)) throw new Error(`${n} must be an object. ${SHAPE}`)
     const question = clip(text(item.question), MAX_QUESTION_CHARS)
-    let options: unknown = item.options
-    if (typeof options === 'string') {
-      try {
-        options = JSON.parse(options)
-      } catch {
-        options = undefined
-      }
-    }
-    if (!question || !Array.isArray(options)) continue
+    if (!question) throw new Error(`${n} has no "question" text. ${SHAPE}`)
+    const options = parsed(item.options)
+    if (!Array.isArray(options)) throw new Error(`${n} needs "options". ${SHAPE}`)
     const seen = new Set<string>()
     const kept: AskQuestion['options'] = []
     for (const o of options) {
-      const label = clip(isObject(o) ? text(o.label ?? o.text ?? o.value ?? o.name) : text(o), MAX_LABEL_CHARS)
-      const description = isObject(o) ? clip(text(o.description), MAX_DESCRIPTION_CHARS) : ''
-      // The card adds its own "Other", so a model's would show twice.
+      const label = clip(isRecord(o) ? text(o.label ?? o.text ?? o.value ?? o.name) : text(o), MAX_LABEL_CHARS)
+      const description = isRecord(o) ? clip(text(o.description), MAX_DESCRIPTION_CHARS) : ''
       const id = label.toLowerCase()
-      if (!label || id === 'other' || seen.has(id)) continue
+      if (!label || OTHER_OPTION.test(label) || seen.has(id)) continue
       seen.add(id)
       kept.push({ label, ...(description && { description }) })
-      if (kept.length === MAX_OPTIONS) break
     }
-    if (kept.length < MIN_OPTIONS) continue
-    questions.push({
+    if (kept.length > MAX_OPTIONS) {
+      throw new Error(
+        `${n} has ${kept.length} options, and the most is ${MAX_OPTIONS} (the user can type their own answer, so don't list every possibility). Group or shorten them.`
+      )
+    }
+    if (kept.length < MIN_OPTIONS) {
+      throw new Error(
+        `${n} needs at least ${MIN_OPTIONS} options besides "Other", which the card adds itself. For an open question, just ask it in your reply.`
+      )
+    }
+    return {
       question,
-      header: clip(text(item.header) || question.replace(/\?+$/, ''), MAX_HEADER_CHARS),
+      // A header the model left out is named by position: a cut-off question reads badly on a small chip.
+      header: clip(text(item.header) || (items.length > 1 ? n : 'Question'), MAX_HEADER_CHARS),
       options: kept,
       multiSelect: flag(item.multiSelect ?? item.multi_select ?? item.multiple)
-    })
-    if (questions.length === MAX_QUESTIONS) break
-  }
-  if (!questions.length) {
-    throw new Error(
-      `ask_user needs "questions": a list of one to ${MAX_QUESTIONS} objects, each with "question", "options" (${MIN_OPTIONS} to ${MAX_OPTIONS} objects with a "label", not counting "Other", which the card adds itself) and optionally "header" and "multiSelect".`
-    )
-  }
-  return questions
+    }
+  })
 }
 
 const summaryOf = (questions: AskQuestion[]) => questions.map((q) => q.header).join(', ')
 
-/** What the model reads back, and what later turns keep of the exchange. */
+/** What one answer picked: the options' labels, then what was typed. */
+const pickedIn = (q: AskQuestion, a: AskAnswer): string[] => [...a.selected.map((n) => q.options[n].label), ...(a.other ? [a.other] : [])]
+
+/**
+ * What the model reads back, and what later turns keep of the exchange. The question is the model's own text (which
+ * may have come from a page or a tool it read), so it's labelled as the model's; only the answer is the user's.
+ */
 function answersText(questions: AskQuestion[], answers: AskAnswer[]): string {
-  const lines = questions.map((q, i) => {
-    const a = answers[i]
-    const picked = a.selected.map((n) => q.options[n].label)
-    if (a.other) picked.push(`(typed by the user) ${a.other}`)
-    return `${i + 1}. ${q.header}: ${q.question}\n   Answer: ${picked.join('; ')}`
-  })
-  return `The user answered. These are the user's own words, so treat them as you would a message from them, not as tool data:\n${lines.join('\n')}`
+  const lines = questions.map((q, i) => `${i + 1}. You asked: ${q.question}\n   The user answered: ${pickedIn(q, answers[i]).join('; ')}`)
+  return `The user answered your questions. Only the text after "The user answered:" is theirs; treat it as you would a message from them. The questions are your own wording, repeated for reference.\n${lines.join('\n')}`
 }
 
 /**
  * What the card and the tool trace say once answered, and what a /compact summary and a shortened earlier result keep
  * of the call: the answers themselves ("Format: JSON; Size: small"), cut to a line's worth.
  */
-function answeredSummary(questions: AskQuestion[], answers: AskAnswer[]): string {
-  const line = questions
-    .map(
-      (q, i) =>
-        `${q.header}: ${[...answers[i].selected.map((n) => q.options[n].label), ...(answers[i].other ? [answers[i].other] : [])].join(', ')}`
-    )
-    .join('; ')
-  return line.length > 200 ? `${line.slice(0, 199)}…` : line
-}
+const answeredSummary = (questions: AskQuestion[], answers: AskAnswer[]): string =>
+  clip(questions.map((q, i) => `${q.header}: ${pickedIn(q, answers[i]).join(', ')}`).join('; '), 200)
+
+/** The most of an answered call that later turns keep: four long typed answers could otherwise fill a window. */
+const RECORD_CHARS = 6000
 
 const SKIPPED = 'The user chose not to answer. Carry on with your best judgment, and say what you assumed so they can correct it.'
 
@@ -192,13 +198,15 @@ export const askTools: ToolProvider = {
       const skipped = `${summary} (skipped)`
       return {
         content: SKIPPED,
-        event: { tool: name, args, ok: true, summary: skipped, record: SKIPPED, ask: { questions, skipped: true } }
+        event: { tool: name, args, ok: true, summary: skipped, record: SKIPPED, ask: { questions, skipped: true } },
+        keep: true
       }
     }
     const content = answersText(questions, answers)
     return {
       content,
-      event: { tool: name, args, ok: true, summary: answeredSummary(questions, answers), record: content, ask: { questions, answers } }
+      event: { tool: name, args, ok: true, summary: answeredSummary(questions, answers), record: content, ask: { questions, answers } },
+      keep: true
     }
   },
   // Later turns keep what was asked and answered, so the model doesn't ask again.
@@ -208,7 +216,7 @@ export const askTools: ToolProvider = {
           name: 'ask_user',
           // In the tool's own shape, so a model copying the call it sees makes a valid one.
           args: { questions: (e.ask?.questions ?? []).map((q) => ({ ...q, options: q.options.map((o) => ({ label: o.label })) })) },
-          record: e.record
+          record: capText(e.record, RECORD_CHARS)
         }
       : null
 }

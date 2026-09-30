@@ -5,7 +5,7 @@ import { displayAddress, hostnameOf, OLLAMA_CLOUD_URL } from '@shared/endpoints'
 import type { ModelWhere } from '@shared/types'
 import { cloudUnreachableMessage, fetchFailureMessage } from '../fetchFailure'
 import { isRecord } from '../json'
-import { createStallTimer, STREAM_TIMEOUTS, type StreamTimeouts } from '../stream'
+import { createStallTimer, idleMsFor, STREAM_TIMEOUTS, type StreamTimeouts } from '../stream'
 import type { ToolDef } from '../types'
 
 // Kept here too, where the Ollama side and its tests have always found them.
@@ -201,7 +201,7 @@ export async function* chatStream(
     if (!res.body) throw new OllamaError(`${t.name} returned an empty response`)
     const reader = res.body.getReader()
     const decoder = new TextDecoder()
-    const idleMs = body.tools?.length ? timeouts.toolIdleMs : timeouts.idleMs
+    const idleMs = idleMsFor(body.tools, timeouts)
     const idle = `${t.name} stopped responding in the middle of the reply (nothing for ${Math.round(idleMs / 60_000)} minutes).`
     let buffer = ''
     let finished = false
