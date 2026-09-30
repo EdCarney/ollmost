@@ -1,5 +1,5 @@
 import { FileText, Folder } from 'lucide-react'
-import { useEffect, useRef } from 'react'
+import { type RefObject, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { type AtRow, type AtToken, hitRuns, splitMarked } from '@shared/atRefs'
 import { cn } from '@/lib/format'
 
@@ -39,6 +39,32 @@ function Matched({ text, hits, offset }: { text: string; hits: readonly number[]
   )
 }
 
+/** The gap between the menu and the composer (its mb-2), and the least it keeps from the window's top edge. */
+const GAP = 8
+const EDGE = 12
+
+/**
+ * How tall the menu can be: the room above what it's placed against (the composer), kept up to date as the composer
+ * grows and the window changes, so a short window shortens the list rather than pushing the menu off the top.
+ */
+function useRoomAbove(menu: RefObject<HTMLDivElement | null>): number | undefined {
+  const [room, setRoom] = useState<number>()
+  useLayoutEffect(() => {
+    const anchor = menu.current?.offsetParent
+    if (!anchor) return
+    const measure = () => setRoom(Math.max(0, Math.floor(anchor.getBoundingClientRect().top) - GAP - EDGE))
+    measure()
+    const observer = new ResizeObserver(measure)
+    observer.observe(anchor)
+    window.addEventListener('resize', measure)
+    return () => {
+      observer.disconnect()
+      window.removeEventListener('resize', measure)
+    }
+  }, [menu])
+  return room
+}
+
 /** The @ menu: above the composer, like the / menu, wider so a name and its folder fit on one row. */
 export function AtMenu({
   heading,
@@ -53,8 +79,10 @@ export function AtMenu({
   footer: string | null
   onChoose: (path: string) => void
 }) {
+  const menu = useRef<HTMLDivElement>(null)
   const list = useRef<HTMLDivElement>(null)
   const current = useRef<HTMLButtonElement>(null)
+  const room = useRoomAbove(menu)
   // Keep the chosen row in sight by scrolling the list alone: scrollIntoView could scroll the window's own panes too.
   useEffect(() => {
     const box = list.current
@@ -67,12 +95,14 @@ export function AtMenu({
 
   return (
     <div
+      ref={menu}
       data-testid="at-menu"
-      className="absolute bottom-full left-0 z-30 mb-2 w-[420px] rounded-ollmost border border-line bg-panel p-1 shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
+      style={{ maxHeight: room }}
+      className="absolute bottom-full left-0 z-30 mb-2 flex w-[420px] flex-col rounded-ollmost border border-line bg-panel p-1 shadow-[0_8px_30px_rgba(0,0,0,0.12)]"
     >
-      {heading && <div className="px-2 pb-1 pt-1.5 text-xs font-medium text-subtle">{heading}</div>}
+      {heading && <div className="shrink-0 px-2 pb-1 pt-1.5 text-xs font-medium text-subtle">{heading}</div>}
       {rows.length > 0 && (
-        <div ref={list} className="relative max-h-[296px] overflow-y-auto">
+        <div ref={list} className="relative max-h-[296px] min-h-0 overflow-y-auto">
           {rows.map((row, i) => (
             <button
               key={row.path}
@@ -98,7 +128,9 @@ export function AtMenu({
           ))}
         </div>
       )}
-      {footer && <div className={cn('px-2 pb-1 pt-2 text-xs text-muted', rows.length > 0 && 'mt-1 border-t border-line')}>{footer}</div>}
+      {footer && (
+        <div className={cn('shrink-0 px-2 pb-1 pt-2 text-xs text-muted', rows.length > 0 && 'mt-1 border-t border-line')}>{footer}</div>
+      )}
     </div>
   )
 }

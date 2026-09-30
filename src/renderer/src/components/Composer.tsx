@@ -444,6 +444,7 @@ export function Composer({
     setSlash(m ? { query: m[2], index: 0, atStart: m.index === 0 && m[1] === '' } : null)
   }
 
+  /** Open, follow or close the @ menu for the @ at the caret, after typing or when the caret moves. */
   const updateAt = (value: string, caret: number) => {
     if (!sessionId) return
     const found = atQueryAt(value, caret)
@@ -452,7 +453,8 @@ export function Composer({
       busyTries.current = 0
       loadPaths()
     }
-    setAt(found ? { ...found, index: 0 } : null)
+    // A select event follows each change too: the same @ and query keep the row that's highlighted.
+    setAt((prev) => (!found ? null : prev && prev.start === found.start && prev.query === found.query ? prev : { ...found, index: 0 }))
   }
 
   /** Put "@path " in place of the @ being typed; the reference is read when the message is sent. */
@@ -720,6 +722,12 @@ export function Composer({
               updateAt(e.target.value, e.target.selectionStart)
             }}
             onKeyDown={onKeyDown}
+            onSelect={(e) => {
+              // The caret moved (the arrow keys, Home or End, a click): the @ menu follows it, and a selection closes it.
+              const el = e.currentTarget
+              if (el.selectionStart !== el.selectionEnd) setAt(null)
+              else updateAt(el.value, el.selectionStart)
+            }}
             onCompositionStart={() => setComposing(true)}
             onCompositionEnd={() => setComposing(false)}
             onScroll={(e) => {
