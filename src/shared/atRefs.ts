@@ -59,10 +59,13 @@ export function normalizeAtPath(path: string): string {
   return `${lead}${kept.join('/')}${last === '' || last === '.' ? '/' : ''}`
 }
 
-/** A path that starts outside the folder or climbs out of it: never a reference, so it stays plain text. */
+/**
+ * A path that starts outside the folder (at "/", or at "~", the home folder) or climbs out of it: never a reference, so
+ * it stays plain text. A name that only starts with "~" ("~$Report.docx") is a file in the folder.
+ */
 function leaves(path: string): boolean {
   const p = normalizeAtPath(path)
-  return p.startsWith('/') || p.startsWith('~') || p.split('/').includes('..')
+  return p.startsWith('/') || p === '~' || p.startsWith('~/') || p.split('/').includes('..')
 }
 
 /**
@@ -71,6 +74,7 @@ function leaves(path: string): boolean {
  */
 function fences(text: string): Array<[number, number]> {
   const ranges: Array<[number, number]> = []
+  if (!text.includes('```') && !text.includes('~~~')) return ranges
   let open: { at: number; fence: string } | null = null
   let at = 0
   for (const line of text.split('\n')) {
@@ -92,24 +96,26 @@ function fences(text: string): Array<[number, number]> {
 
 const inFence = (ranges: ReadonlyArray<[number, number]>, i: number): boolean => ranges.some(([a, b]) => i >= a && i <= b)
 
-const occurrences = (s: string, ch: string): number => s.split(ch).length - 1
-
 /** A token's text without the punctuation after it: a sentence's, and any closing bracket the path didn't open. */
 function trimEnd(text: string): string {
-  let path = text
-  while (path) {
-    const last = path[path.length - 1]
+  // The brackets are counted once, and a closer's count drops as it's stripped, so a long run of them takes one pass.
+  const brackets: Record<string, number> = { '(': 0, ')': 0, '[': 0, ']': 0, '{': 0, '}': 0 }
+  for (const ch of text) if (ch in brackets) brackets[ch]++
+  let end = text.length
+  while (end > 0) {
+    const last = text[end - 1]
     const opener = OPENERS[last]
-    const unopened = opener !== undefined && occurrences(path, last) > occurrences(path, opener)
+    const unopened = opener !== undefined && brackets[last] > brackets[opener]
     if (!TRAILING.includes(last) && !unopened) break
-    path = path.slice(0, -1)
+    if (opener !== undefined) brackets[last]--
+    end--
   }
-  return path
+  return text.slice(0, end)
 }
 
 /**
  * Every @ token in `text`. A path with spaces isn't supported: the token stops at the space. A path that starts at "/"
- * or "~", or has a ".." in it, isn't a token.
+ * or "~/", or has a ".." in it, isn't a token.
  */
 export function findAtTokens(text: string): AtToken[] {
   const ranges = fences(text)
@@ -118,7 +124,7 @@ export function findAtTokens(text: string): AtToken[] {
     const start = (m.index ?? 0) + m[1].length
     const path = trimEnd(m[2])
     // The text as typed is checked too, so "@src/.." isn't read as "@src/" once its dots are taken for a full stop.
-    if (!path || inFence(ranges, start) || leaves(path) || leaves(m[2])) continue
+    if (!path || inFence(ranges, start) || leaves(path) || (path !== m[2] && leaves(m[2]))) continue
     tokens.push({ start, end: start + 1 + path.length, path })
   }
   return tokens
@@ -200,14 +206,23 @@ function entry(path: string): Entry {
   return { path, lower: bare, nameAt: bare.lastIndexOf('/') + 1 }
 }
 
+/** Whether "@path" is one token that names exactly `path`. */
+function readsBack(path: string): boolean {
+  const tokens = findAtTokens(`@${path}`)
+  return tokens.length === 1 && tokens[0].path === path
+}
+
 /** Each list's entries, made once, since the menu matches the same list at every keystroke: a list is never edited. */
 const entries = new WeakMap<readonly string[], Entry[]>()
 
-/** `paths` ready to match, less any with a space: its token would stop at the space, so choosing it names another. */
+/**
+ * `paths` ready to match, less any that "@path" wouldn't name: once chosen, a path with a space, or with punctuation or
+ * an unopened bracket at its end ("notes.", "a)"), would read back as something else.
+ */
 function entriesOf(paths: readonly string[]): Entry[] {
   let list = entries.get(paths)
   if (!list) {
-    list = paths.filter((p) => !/\s/.test(p)).map(entry)
+    list = paths.filter(readsBack).map(entry)
     entries.set(paths, list)
   }
   return list

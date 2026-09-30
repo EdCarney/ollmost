@@ -55,9 +55,21 @@ describe('findAtTokens', () => {
     expect(findAtTokens('(see @app/(auth)). {or @b.ts},').map((t) => t.path)).toEqual(['app/(auth)', 'b.ts'])
   })
 
+  it('strips a long run of closing brackets in one pass', () => {
+    const started = performance.now()
+    expect(findAtTokens(`@a${')'.repeat(20_000)}`)).toEqual([{ start: 0, end: 2, path: 'a' }])
+    // Recounting the brackets at each one took seconds; one pass takes a few milliseconds, so this leaves a slow machine room.
+    expect(performance.now() - started).toBeLessThan(1000)
+  })
+
   it('reports a path as it’s spelled, and leaves one that starts outside the folder or climbs out of it as plain text', () => {
     expect(findAtTokens('@src//a.ts @./src/./a.ts @./').map((t) => t.path)).toEqual(['src//a.ts', './src/./a.ts', './'])
     expect(findAtTokens('@/etc/hosts @~/x @../x @src/../a.ts @src/.. @./..')).toEqual([])
+  })
+
+  it('refuses "~" only as the home folder, so a file whose name starts with "~" can be named', () => {
+    expect(findAtTokens('@~ @~/x')).toEqual([])
+    expect(findAtTokens('@~$Report.docx')).toEqual([{ start: 0, end: 14, path: '~$Report.docx' }])
   })
 })
 
@@ -171,6 +183,11 @@ describe('atRows', () => {
     })
   })
 
+  it('offers only a path whose token reads back as that path', () => {
+    expect(atRows(['~$Report.docx'], 'rep', []).rows.map((r) => r.path)).toEqual(['~$Report.docx'])
+    expect(atRows(['notes.', 'a)', 'b(c)', 'notes.md'], '', []).rows.map((r) => r.path)).toEqual(['b(c)', 'notes.md'])
+  })
+
   it('reads a query that starts "./" as the path after it', () => {
     expect(atRows(paths, './fil', [])).toEqual(atRows(paths, 'fil', []))
     expect(atRows(paths, './', []).heading).toBe('In this folder')
@@ -186,6 +203,16 @@ describe('atRows', () => {
     const rows = atRows(many, 'f', []).rows.map((r) => r.path)
     expect(rows.slice(0, 11)).toEqual([...Array.from({ length: 10 }, (_, i) => `f${i}.ts`), 'f10.ts'])
     expect(rows[AT_ROWS - 1]).toBe('f49.ts')
+  })
+
+  it('still finds a better path-contains match once AT_ROWS rows are held', () => {
+    const paths = [...Array.from({ length: 50 }, (_, i) => `zzdir${i}/longname${i}.ts`), 'zz/a.ts']
+    expect(atRows(paths, 'zz', []).rows[0].path).toBe('zz/a.ts')
+  })
+
+  it('still finds a better fuzzy match once AT_ROWS rows are held', () => {
+    const paths = [...Array.from({ length: 50 }, (_, i) => `main/lots${i}/files${i}.ts`), 'm/f.ts']
+    expect(atRows(paths, 'mf', []).rows[0].path).toBe('m/f.ts')
   })
 })
 
