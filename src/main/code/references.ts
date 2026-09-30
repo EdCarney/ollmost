@@ -108,11 +108,11 @@ async function pastTheLimit(ws: Workspace, given: string, folderOnly: boolean, l
   const found = await pathKind(ws, given)
   if (!found || (folderOnly && !found.folder)) return null
   const path = found.folder ? folderPath(found.rel) : found.rel
-  return {
-    tokens: [given],
-    path,
-    kind: found.folder ? 'folder' : 'file',
-    refused: 'over the limit',
-    text: `This message's references reached their limit of ${limit.toLocaleString('en-US')} characters, so ${path} wasn't included. Use ${found.folder ? 'list_files' : 'read_file'} for it.`
-  }
+  const tool = found.folder ? 'list_files' : 'read_file'
+  // A limit too small for any reference to be read is the model's window having no room left, not a limit reached.
+  const why =
+    limit < MIN_ROOM + BLOCK_CHARS
+      ? `There was no room left in the model's context window for ${path}, so it wasn't included.`
+      : `This message's references reached their limit of ${limit.toLocaleString('en-US')} characters, so ${path} wasn't included.`
+  return { tokens: [given], path, kind: found.folder ? 'folder' : 'file', refused: 'over the limit', text: `${why} Use ${tool} for it.` }
 }

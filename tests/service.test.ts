@@ -2336,6 +2336,15 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
 
   it('stores and sends nothing when the reply is stopped while its references are read, so a Retry reads them afresh', async () => {
     const { folder, session } = sessionOn({ 'a.ts': 'old\n' })
+    // A server that can't start: the note it leaves is gathered before the references are read.
+    const absent = mcpConfig.saveServer({
+      name: 'Absent',
+      command: 'ollmost-no-such-server',
+      args: [],
+      cwd: null,
+      env: {},
+      defaultOn: false
+    })
     chat = reply('Read it.')
     let release!: () => void
     const held = new Promise<void>((r) => (release = r))
@@ -2348,7 +2357,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     }
     let asked: string
     try {
-      const r = service.send({ ...sendBody(session.id), content: 'Look at @a.ts' })
+      const r = service.send({ ...sendBody(session.id), content: 'Look at @a.ts', toolSources: [`mcp:${absent.id}`] })
       asked = r.userMessage!.id
       await waitFor(() => reading, 60_000)
       const stopped = service.stop(session.id)
@@ -2356,6 +2365,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       await stopped
       const done = await replied(session.id)
       expect(done.message.error).toBeNull()
+      expect(done.message.stats?.unavailableTools).toEqual([expect.stringMatching(/^Absent couldn't start/)])
       expect(chatCalls).toHaveLength(0)
       expect(getMessage(asked)!.references).toBeNull()
       expect(events.some((e) => e.type === 'references')).toBe(false)
@@ -2390,7 +2400,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       expect(getMessage(asked)!.references).toBeNull()
       expect(done.message.error).toBeNull()
       expect(done.message.stats?.unavailableTools).toEqual([
-        "This message's @ references weren't sent: a command was running in this folder. Retry sends them."
+        "Your message's @ references weren't sent: a command was running in the session's folder. Retry sends them."
       ])
       expect(warn).toHaveBeenCalledTimes(1)
 
@@ -2399,7 +2409,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       await retry(session.id)
       done = await replied(session.id)
       expect(done.message.stats?.unavailableTools).toEqual([
-        `This message's @ references weren't sent. This session's folder is no longer at ${folder} (moved, renamed or deleted). Choose it again to carry on.`
+        `Your message's @ references weren't sent. This session's folder is no longer at ${folder} (moved, renamed or deleted). Choose it again to carry on.`
       ])
       expect(warn).toHaveBeenCalledTimes(2)
 
@@ -2408,7 +2418,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       await retry(session.id)
       done = await replied(session.id)
       expect(done.message.stats?.unavailableTools).toEqual([
-        "This message's @ references weren't sent: they couldn't be read. Retry sends them."
+        "Your message's @ references weren't sent: they couldn't be read. Retry sends them."
       ])
       expect(error).toHaveBeenCalledWith(expect.stringContaining('@ references'), expect.objectContaining({ message: 'disk on fire' }))
       expect(getMessage(asked)!.references).toBeNull()
@@ -2425,25 +2435,45 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(done.message.stats?.unavailableTools).toBeUndefined()
   }, 120_000)
 
-  it('gives a message’s references only the room the model’s window has left', async () => {
+  it('gives a message’s references half the room the model’s window has left, so the turn’s tool rounds fit too', async () => {
     const { promptBudget } = await import('../src/main/chat/assemble')
     const line = `${'x'.repeat(40)}\n`
     // About 24,000 characters each: two of them are twice what an 8,192-token window has room for.
     const { session } = sessionOn({ 'a.txt': line.repeat(600), 'b.txt': line.repeat(600) })
-    chat = reply('Both big.')
+    // Two earlier exchanges with some substance, as a real session has: they fill what the references leave.
+    chat = reply(`Noted. ${'It keeps its sources under src and its tests under tests. '.repeat(10)}`)
+    for (const q of ['What is this project?', 'And how is it tested?']) {
+      events.length = 0
+      service.send({ ...sendBody(session.id), content: q })
+      await replied(session.id)
+      await waitFor(() => !service.isReplyingIn(session.id))
+    }
+    const earlier = chatCalls.length
+    // One round reads more of a file, then the model answers.
+    chat = (b, res, n) =>
+      n === earlier + 1 ? void res.writeHead(200).end(toolCall('read_file', { path: 'a.txt', offset: 300 })) : reply('Both big.')(b, res, n)
+    events.length = 0
     const r = service.send({ ...sendBody(session.id), content: 'Compare @a.txt with @b.txt' })
-    await replied(session.id)
+    const done = await replied(session.id)
+    expect(done.message.toolEvents.map((e) => [e.tool, e.ok])).toEqual([['read_file', true]])
     const refs = getMessage(r.userMessage!.id)!.references!
     expect(refs.map((ref) => ref.refused ?? 'read')).toEqual(['read', 'over the limit'])
     expect(refs[0].lines!.to).toBeLessThan(600)
     const limit = Number(/reached their limit of ([\d,]+) characters, so b\.txt wasn't included/.exec(refs[1].text)![1].replace(/,/g, ''))
-    expect(limit).toBeLessThan(24_000)
     expect(refs[0].text.length).toBeLessThanOrEqual(limit)
-    // The whole request, the references in it, fits what the window leaves for a prompt.
-    const body = chatCalls[0] as { messages: Array<{ content: string }>; tools?: unknown[] }
-    const tokens =
-      body.messages.reduce((n, m) => n + Math.ceil(m.content.length / 4), 0) + Math.ceil(JSON.stringify(body.tools ?? []).length / 4)
-    expect(tokens).toBeLessThanOrEqual(promptBudget(8192))
+    // Each request of the turn, its references, the earlier turns and the round's result in it, fits what the window
+    // leaves for a prompt.
+    const tokens = (body: Record<string, unknown>) =>
+      (body.messages as Array<{ content: string }>).reduce((n, m) => n + Math.ceil(m.content.length / 4), 0) +
+      Math.ceil(JSON.stringify(body.tools ?? []).length / 4)
+    const turn = chatCalls.slice(earlier)
+    expect(turn).toHaveLength(2)
+    expect((turn[0].messages as Array<{ content: string }>).map((m) => m.content)).toContain('And how is it tested?')
+    for (const body of turn) expect(tokens(body)).toBeLessThanOrEqual(promptBudget(8192))
+    // The references took about half the room the first request had for its history, not all of it.
+    const system = Math.ceil((turn[0].messages as Array<{ content: string }>)[0].content.length / 4)
+    const room = promptBudget(8192) - system - Math.ceil(JSON.stringify(turn[0].tools ?? []).length / 4)
+    expect(limit).toBeLessThanOrEqual(room * 4 * 0.55)
   }, 120_000)
 
   it('reads a message that named nothing only once: a Retry sends it as it was', async () => {

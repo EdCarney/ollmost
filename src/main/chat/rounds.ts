@@ -28,7 +28,7 @@ import {
 // Sharing a round's room between its tool results: estimateTokens counts 4 characters a token, and a tenth is left
 // for the notes and framing around them. Each result still gets a little, so the model sees what came back.
 export const CHARS_PER_TOKEN = 4
-export const ROOM_SHARE = 0.9
+const ROOM_SHARE = 0.9
 const MIN_RESULT_CHARS = 1_500
 // A round timed by the clock counts toward tok/s only across this long: a shorter span over n−1 gaps between tokens
 // gives absurd figures.

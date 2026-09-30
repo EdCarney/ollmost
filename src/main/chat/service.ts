@@ -60,7 +60,7 @@ import { hasPrivateFiles } from './exposure'
 import { assemble, type AssembleInput, type HistoryTurn, historyRoom, promptBudget } from './assemble'
 import { TITLE_PROMPT } from './prompts'
 import { delegateTools, subAgentReplyChars, subAgentsAtOnce } from './delegate'
-import { CHARS_PER_TOKEN, ROOM_SHARE, runRounds, toolsTokens } from './rounds'
+import { CHARS_PER_TOKEN, runRounds, toolsTokens } from './rounds'
 import { missingAbilities, registerToolProvider, replayCalls, settleToolEvent, type ToolContext, toolGrants, toolsFor } from './tools'
 import type { WebStatus } from './prompts'
 import { turnPolicy } from './turn'
@@ -79,6 +79,8 @@ export interface ReplyOptions {
 }
 // How often a streaming reply is saved, so a quit or crash loses at most this much.
 const CHECKPOINT_MS = 1500
+/** A message's @ references get half the room its request has left: the turn's tool rounds and recent history keep the rest. */
+const REFERENCES_ROOM_SHARE = 0.5
 
 /**
  * Replies in progress, by conversation. `settled` resolves once the reply has been saved. `quiet` marks a
@@ -293,9 +295,9 @@ function unreadReferences(err: unknown): string {
     console.warn('Ollmost: a message’s @ references were left unread:', err.message)
   else console.error('Ollmost: a message’s @ references couldn’t be read:', err)
   if (err instanceof CodeRunningError)
-    return "This message's @ references weren't sent: a command was running in this folder. Retry sends them."
-  if (err instanceof RootMissingError) return `This message's @ references weren't sent. ${err.message}`
-  return "This message's @ references weren't sent: they couldn't be read. Retry sends them."
+    return "Your message's @ references weren't sent: a command was running in the session's folder. Retry sends them."
+  if (err instanceof RootMissingError) return `Your message's @ references weren't sent. ${err.message}`
+  return "Your message's @ references weren't sent: they couldn't be read. Retry sends them."
 }
 
 async function generate(
@@ -402,6 +404,9 @@ async function generate(
         }
       }
     }
+    // Set now, so a reply that ends early (a Stop, a failure below) still saves these; the list is the same one, so a
+    // note added later shows too.
+    if (unavailable.length) stats.unavailableTools = unavailable
 
     const project = conversation.projectId ? getProject(conversation.projectId) : null
     const messages = listMessages(conversationId)
@@ -477,18 +482,18 @@ async function generate(
 
     // The files and folders the user's @ tokens name (#129): read once, as the first reply to the message starts, and
     // kept with it, so a Retry, a later turn or a /compact sees what this reply was sent. An edit forgets them, to be
-    // read again. They get the room the request has left once the system prompt, the tools and the message itself are
-    // in, shared as a round's tool results share theirs, within the limit per message: the message is never dropped
-    // to fit, so more would only overflow the window. When the folder isn't ready or a command runs there, they're
-    // left unread, the reply says so, and a Retry reads them. A Stop meanwhile stores nothing and sends nothing. No lock
-    // is held here (prepareCodeSession's has ended), and each read takes its own.
+    // read again. They get a share of the room the request has left once the system prompt, the tools and the message
+    // itself are in (REFERENCES_ROOM_SHARE), within the limit per message: the message is never dropped to fit, so more
+    // would only overflow the window. When the folder isn't ready or a command runs there, they're left unread, the
+    // reply says so, and a Retry reads them. A Stop meanwhile stores nothing and sends nothing. No lock is held here
+    // (prepareCodeSession's has ended), and each read takes its own.
     if (policy.mode === 'code' && workspace) {
       const parentId = getMessage(messageId)?.parentId
       const asked = parentId ? getMessage(parentId) : null
       if (asked?.role === 'user' && asked.references === null) {
         const room = historyRoom(prompt) - estimateTokens(asked.content)
         const read = await resolveReferences(workspace, asked.content, {
-          maxChars: Math.floor(room * CHARS_PER_TOKEN * ROOM_SHARE),
+          maxChars: Math.floor(room * CHARS_PER_TOKEN * REFERENCES_ROOM_SHARE),
           signal: controller.signal
         }).then(
           (references) => ({ references }),
@@ -506,6 +511,7 @@ async function generate(
         }
       }
     }
+    // The references' note may be the first.
     if (unavailable.length) stats.unavailableTools = unavailable
 
     const history = await Promise.all(

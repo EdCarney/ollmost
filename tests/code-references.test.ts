@@ -167,6 +167,18 @@ describe('resolveReferences', () => {
     expect(reads().files).toEqual(['a.txt'])
   })
 
+  it('says the window had no room when no reference could be read, rather than name a limit of nothing', async () => {
+    const { ws } = project({ 'a.txt': 'x\n', 'src/b.ts': '' })
+    // 1,200 characters is the least a reference can be read in: 1,000 of text and its block's 200.
+    const refs = await resolveReferences(ws, '@a.txt @src', { maxChars: 1_199 })
+    expect(refs.map((r) => [r.refused, r.text])).toEqual([
+      ['over the limit', "There was no room left in the model's context window for a.txt, so it wasn't included. Use read_file for it."],
+      ['over the limit', "There was no room left in the model's context window for src/, so it wasn't included. Use list_files for it."]
+    ])
+    expect(reads()).toEqual({ files: [], folders: [] })
+    expect(await resolveReferences(ws, '@a.txt', { maxChars: 1_200 })).toMatchObject([{ path: 'a.txt', text: '     1\tx' }])
+  })
+
   it('keeps its own limit when given a larger one', async () => {
     const { ws } = project({ 'a.txt': LONG, 'b.txt': LONG, 'c.txt': LONG })
     const refs = await resolveReferences(ws, '@a.txt @b.txt @c.txt', { maxChars: 1_000_000 })
