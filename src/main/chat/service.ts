@@ -49,17 +49,18 @@ import { MCP_SOURCE } from '../mcp/provider'
 import { dropSessionPaths } from '../code/pathList'
 import { resolveReferences } from '../code/references'
 import { type CodeSession, prepareCodeSession } from '../code/session'
+import { CodeRunningError } from '../runner/lock'
 import { CODE_SOURCE } from '../runner/provider'
 import { runnerStatus } from '../runner/status'
-import { prepareWorkspace, type Workspace, workspaceFor } from '../runner/workspace'
+import { prepareWorkspace, RootMissingError, type Workspace, workspaceFor } from '../runner/workspace'
 import { conversationUsage, insertUsageEvent } from '../db/usage'
 import { requestCost } from '../usage/pricing'
 import { errorMessage, estimateTokens, now } from '../util'
 import { hasPrivateFiles } from './exposure'
-import { assemble, type HistoryTurn, promptBudget } from './assemble'
+import { assemble, type AssembleInput, type HistoryTurn, historyRoom, promptBudget } from './assemble'
 import { TITLE_PROMPT } from './prompts'
 import { delegateTools, subAgentReplyChars, subAgentsAtOnce } from './delegate'
-import { CHARS_PER_TOKEN, runRounds, toolsTokens } from './rounds'
+import { CHARS_PER_TOKEN, ROOM_SHARE, runRounds, toolsTokens } from './rounds'
 import { missingAbilities, registerToolProvider, replayCalls, settleToolEvent, type ToolContext, toolGrants, toolsFor } from './tools'
 import type { WebStatus } from './prompts'
 import { turnPolicy } from './turn'
@@ -283,6 +284,20 @@ async function toTurn(message: Message, vision: boolean): Promise<HistoryTurn> {
   return turn
 }
 
+/**
+ * The note under a reply whose message's @ references were left unread (#129), and why. A command running in the
+ * folder or the folder gone is expected, and warned of; anything else is logged as an error.
+ */
+function unreadReferences(err: unknown): string {
+  if (err instanceof CodeRunningError || err instanceof RootMissingError)
+    console.warn('Ollmost: a message’s @ references were left unread:', err.message)
+  else console.error('Ollmost: a message’s @ references couldn’t be read:', err)
+  if (err instanceof CodeRunningError)
+    return "This message's @ references weren't sent: a command was running in this folder. Retry sends them."
+  if (err instanceof RootMissingError) return `This message's @ references weren't sent. ${err.message}`
+  return "This message's @ references weren't sent: they couldn't be read. Retry sends them."
+}
+
 async function generate(
   conversationId: string,
   messageId: string,
@@ -387,27 +402,6 @@ async function generate(
         }
       }
     }
-    if (unavailable.length) stats.unavailableTools = unavailable
-
-    // The files and folders the user's @ tokens name (#129): read once, as the first reply to the message starts, and
-    // kept with it, so a Retry, a later turn or a /compact sees what this reply was sent. An edit forgets them, to be
-    // read again. When the folder isn't ready, or a command runs there, they're left unread: the tokens go as plain
-    // text this time, and a Retry reads them. No lock is held here (prepareCodeSession's has ended), and each read
-    // takes its own.
-    if (policy.mode === 'code' && workspace) {
-      const parentId = getMessage(messageId)?.parentId
-      const asked = parentId ? getMessage(parentId) : null
-      if (asked?.role === 'user' && asked.references === null) {
-        const references = await resolveReferences(workspace, asked.content).catch((err: unknown) => {
-          console.warn('Ollmost: a message’s @ references were left unread:', errorMessage(err))
-          return null
-        })
-        if (references) {
-          setMessageReferences(asked.id, references)
-          if (references.length) emit({ type: 'references', conversationId, messageId: asked.id, references })
-        }
-      }
-    }
 
     const project = conversation.projectId ? getProject(conversation.projectId) : null
     const messages = listMessages(conversationId)
@@ -454,13 +448,8 @@ async function generate(
 
     // After a /compact, the request replays the summary in the system prompt and only the messages that followed.
     const compaction = conversation.compaction
-    const history = await Promise.all(
-      messages
-        .filter((m) => m.id !== messageId && !(m.role === 'assistant' && !m.content) && (!compaction || m.createdAt > compaction.upTo))
-        .map((m) => toTurn(m, vision))
-    )
-
-    const assembled = assemble({
+    // Everything the request holds but the history.
+    const prompt: Omit<AssembleInput, 'history'> = {
       model: model.name,
       contextLength: numCtx,
       userName: settings.userName,
@@ -483,9 +472,48 @@ async function generate(
       skillIndex,
       selectedSkills: await load(selectedIds),
       loadedSkills: await load(loadedIds),
-      history,
       compaction: compaction ? { summary: compaction.summary, messages: compaction.messages } : null
-    })
+    }
+
+    // The files and folders the user's @ tokens name (#129): read once, as the first reply to the message starts, and
+    // kept with it, so a Retry, a later turn or a /compact sees what this reply was sent. An edit forgets them, to be
+    // read again. They get the room the request has left once the system prompt, the tools and the message itself are
+    // in, shared as a round's tool results share theirs, within the limit per message: the message is never dropped
+    // to fit, so more would only overflow the window. When the folder isn't ready or a command runs there, they're
+    // left unread, the reply says so, and a Retry reads them. A Stop meanwhile stores nothing and sends nothing. No lock
+    // is held here (prepareCodeSession's has ended), and each read takes its own.
+    if (policy.mode === 'code' && workspace) {
+      const parentId = getMessage(messageId)?.parentId
+      const asked = parentId ? getMessage(parentId) : null
+      if (asked?.role === 'user' && asked.references === null) {
+        const room = historyRoom(prompt) - estimateTokens(asked.content)
+        const read = await resolveReferences(workspace, asked.content, {
+          maxChars: Math.floor(room * CHARS_PER_TOKEN * ROOM_SHARE),
+          signal: controller.signal
+        }).then(
+          (references) => ({ references }),
+          (failed: unknown) => ({ failed })
+        )
+        controller.signal.throwIfAborted()
+        if ('failed' in read) unavailable.push(unreadReferences(read.failed))
+        else {
+          const { references } = read
+          setMessageReferences(asked.id, references)
+          // The history is made from the messages listed above: this one carries them there too.
+          const i = messages.findIndex((m) => m.id === asked.id)
+          if (i >= 0) messages[i] = { ...messages[i], references }
+          if (references.length) emit({ type: 'references', conversationId, messageId: asked.id, references })
+        }
+      }
+    }
+    if (unavailable.length) stats.unavailableTools = unavailable
+
+    const history = await Promise.all(
+      messages
+        .filter((m) => m.id !== messageId && !(m.role === 'assistant' && !m.content) && (!compaction || m.createdAt > compaction.upTo))
+        .map((m) => toTurn(m, vision))
+    )
+    const assembled = assemble({ ...prompt, history })
     if (assembled.droppedTurns) stats.truncatedHistory = assembled.droppedTurns
 
     const request: ChatRequest = {

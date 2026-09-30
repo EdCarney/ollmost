@@ -21,13 +21,22 @@ const NAMES_NOTHING = new Set(['no path', 'bad path', 'outside the folder', 'not
  * What `text`'s @ tokens name in the session's folder, in the order the message names them: a file's numbered lines,
  * cut to the room left; a folder's listing; or why it wasn't sent. Throws the lock's and the folder's errors (a command
  * running, the folder gone), so the reply can leave them unread for a Retry.
+ *
+ * `maxChars` lowers the message's limit below REFERENCES_TOTAL_CHARS, to the room the model's window has left for
+ * them. `signal` is looked at before each reference: once it's aborted, the abort is thrown and nothing more is read.
  */
-export async function resolveReferences(ws: Workspace, text: string): Promise<MessageReference[]> {
+export async function resolveReferences(
+  ws: Workspace,
+  text: string,
+  opts: { maxChars?: number; signal?: AbortSignal } = {}
+): Promise<MessageReference[]> {
   const refs: MessageReference[] = []
   // A spelling already looked at is the reference made from it, or nothing again.
   const seen = new Set<string>()
-  let room = REFERENCES_TOTAL_CHARS
+  const limit = Math.max(0, Math.floor(Math.min(REFERENCES_TOTAL_CHARS, opts.maxChars ?? REFERENCES_TOTAL_CHARS)))
+  let room = limit
   for (const token of findAtTokens(text)) {
+    opts.signal?.throwIfAborted()
     if (seen.has(token.path)) continue
     seen.add(token.path)
     // Another spelling of a path already found ("./src/a.ts" after "src/a.ts", "src/" after "src") is that reference,
@@ -37,7 +46,7 @@ export async function resolveReferences(ws: Workspace, text: string): Promise<Me
       known.tokens.push(token.path)
       continue
     }
-    const ref = await resolveOne(ws, token.path, Math.min(TOOL_RESULT_CHARS, room) - BLOCK_CHARS)
+    const ref = await resolveOne(ws, token.path, Math.min(TOOL_RESULT_CHARS, room) - BLOCK_CHARS, limit)
     if (!ref) continue
     // Should two spellings still only turn out the same once read, they're one reference all the same.
     const same = refs.find((r) => r.path === ref.path)
@@ -63,13 +72,13 @@ function foundAs(refs: MessageReference[], given: string): MessageReference | un
   return refs.find((r) => r.path === path || (r.kind === 'folder' && r.path === `${path}/`))
 }
 
-async function resolveOne(ws: Workspace, given: string, room: number): Promise<MessageReference | null> {
+async function resolveOne(ws: Workspace, given: string, room: number, limit: number): Promise<MessageReference | null> {
   const tokens = [given]
   const normal = normalizeAtPath(given)
   // "src/" and "./" name only a folder: "a.ts/" is nothing, as it is to `cat a.ts/` (and to the composer's marks).
   const folderOnly = normal === '' || normal.endsWith('/')
   try {
-    if (room < MIN_ROOM) return await pastTheLimit(ws, given, folderOnly)
+    if (room < MIN_ROOM) return await pastTheLimit(ws, given, folderOnly, limit)
     if (!folderOnly) {
       try {
         const r = await readFile(ws, given, { maxChars: room })
@@ -90,8 +99,11 @@ async function resolveOne(ws: Workspace, given: string, room: number): Promise<M
   }
 }
 
-/** A reference past the message's limit: named, so the model knows of it, but not read. Null when it names nothing. */
-async function pastTheLimit(ws: Workspace, given: string, folderOnly: boolean): Promise<MessageReference | null> {
+/**
+ * A reference past the message's limit (`limit`, in characters): named, so the model knows of it, but not read. Null
+ * when it names nothing.
+ */
+async function pastTheLimit(ws: Workspace, given: string, folderOnly: boolean, limit: number): Promise<MessageReference | null> {
   // By what a link leads to: a link to a folder is a folder.
   const found = await pathKind(ws, given)
   if (!found || (folderOnly && !found.folder)) return null
@@ -101,6 +113,6 @@ async function pastTheLimit(ws: Workspace, given: string, folderOnly: boolean): 
     path,
     kind: found.folder ? 'folder' : 'file',
     refused: 'over the limit',
-    text: `This message's references reached their limit of ${REFERENCES_TOTAL_CHARS.toLocaleString('en-US')} characters, so ${path} wasn't included. Use ${found.folder ? 'list_files' : 'read_file'} for it.`
+    text: `This message's references reached their limit of ${limit.toLocaleString('en-US')} characters, so ${path} wasn't included. Use ${found.folder ? 'list_files' : 'read_file'} for it.`
   }
 }

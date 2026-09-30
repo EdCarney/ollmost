@@ -153,6 +153,42 @@ describe('resolveReferences', () => {
     expect(refs.reduce((n, r) => n + r.text.length, 0)).toBeLessThan(48_000)
   })
 
+  it('stops at a lower limit when the model’s window has less room, and names that limit', async () => {
+    const { ws } = project({ 'a.txt': LONG, 'b.txt': LONG })
+    const refs = await resolveReferences(ws, '@a.txt @b.txt', { maxChars: 10_000 })
+    expect(refs.map((r) => r.refused ?? 'read')).toEqual(['read', 'over the limit'])
+    expect(refs[0].text.length).toBeLessThanOrEqual(10_000 - 200)
+    expect(refs[1].text).toMatch(/reached their limit of 10,000 characters, so b\.txt wasn't included\. Use read_file for it\.$/)
+    // No room at all: each is named, and none is read.
+    expect((await resolveReferences(ws, '@a.txt @b.txt', { maxChars: -500 })).map((r) => r.refused)).toEqual([
+      'over the limit',
+      'over the limit'
+    ])
+    expect(reads().files).toEqual(['a.txt'])
+  })
+
+  it('keeps its own limit when given a larger one', async () => {
+    const { ws } = project({ 'a.txt': LONG, 'b.txt': LONG, 'c.txt': LONG })
+    const refs = await resolveReferences(ws, '@a.txt @b.txt @c.txt', { maxChars: 1_000_000 })
+    expect(refs[2].text).toMatch(/reached their limit of 48,000 characters/)
+  })
+
+  it('stops reading once the reply is stopped', async () => {
+    const { ws } = project({ 'a.ts': 'x\n', 'b.ts': 'y\n' })
+    const controller = new AbortController()
+    const real = await vi.importActual<typeof import('../src/main/code/files')>('../src/main/code/files')
+    vi.mocked(files.readFile).mockImplementationOnce(async (...args) => {
+      const r = await real.readFile(...args)
+      controller.abort()
+      return r
+    })
+    await expect(resolveReferences(ws, '@a.ts @b.ts', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(reads().files).toEqual(['a.ts'])
+    // Stopped before it began: nothing is read.
+    await expect(resolveReferences(ws, '@a.ts', { signal: controller.signal })).rejects.toMatchObject({ name: 'AbortError' })
+    expect(reads().files).toEqual(['a.ts'])
+  })
+
   it('names a folder past the limit as a folder, the session’s own too', async () => {
     const { dir, ws } = project({ 'a.txt': LONG, 'b.txt': LONG, 'src/c.ts': '' })
     symlinkSync(join(dir, 'src'), join(dir, 'src-link'))

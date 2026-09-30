@@ -115,6 +115,14 @@ export function promptBudget(contextLength: number | null): number {
   return context - Math.min(16_000, Math.floor(context / 4))
 }
 
+/**
+ * The tokens a request leaves its history: the prompt budget less the system prompt (`system`, built from `input` when
+ * not given) and the tool definitions.
+ */
+export function historyRoom(input: Omit<AssembleInput, 'history'>, system = buildSystemPrompt(input)): number {
+  return promptBudget(input.contextLength) - estimateTokens(system) - (input.toolTokens ?? 0)
+}
+
 /** The summary /compact made of the conversation's older turns, which the request no longer carries. */
 function compactionPrompt(c: { summary: string; messages: number }): string {
   return [
@@ -126,7 +134,7 @@ function compactionPrompt(c: { summary: string; messages: number }): string {
   ].join('\n')
 }
 
-export function buildSystemPrompt(input: AssembleInput): string {
+export function buildSystemPrompt(input: Omit<AssembleInput, 'history'>): string {
   const identity = { userName: input.userName, model: input.model, date: input.date, web: input.web, grants: input.grants }
   const parts = [input.codeSession ? codeSessionPrompt({ ...input.codeSession, ...identity }) : basePrompt(identity)]
   if (input.child) parts.push(subAgentPrompt(input.child.task, input.child.replyChars))
@@ -240,7 +248,7 @@ export function collapseSupersededArtifacts(history: HistoryTurn[]): HistoryTurn
 export function assemble(input: AssembleInput): Assembled {
   const system = buildSystemPrompt(input)
   const history = collapseSupersededArtifacts(input.history).map((t) => (input.pastTools || !t.tools ? t : { ...t, tools: undefined }))
-  const budget = promptBudget(input.contextLength) - estimateTokens(system) - (input.toolTokens ?? 0)
+  const budget = historyRoom(input, system)
 
   // Walk backwards so the newest turns always survive; always keep the final user turn.
   const kept: HistoryTurn[] = []

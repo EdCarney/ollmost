@@ -92,6 +92,12 @@ describe('assemble', () => {
     expect(referred - plain).toBeGreaterThanOrEqual(10_000)
   })
 
+  it('says a referenced file is empty rather than send an empty block', () => {
+    const empty = { tokens: ['e.ts'], path: 'e.ts', kind: 'file' as const, lines: { from: 1, to: 0, total: 0 }, text: '' }
+    const { messages } = assemble({ ...base, history: [turn('user', 'Fill @e.ts', { references: [empty] })] })
+    expect(messages[1].content).toBe('<referenced_file path="e.ts">\n(empty file)\n</referenced_file>\n\nFill @e.ts')
+  })
+
   it('names a folder’s block and a refusal', () => {
     const folder = { tokens: ['src'], path: 'src/', kind: 'folder' as const, text: 'src/a.ts' }
     const binary = { tokens: ['x.png'], path: 'x.png', kind: 'file' as const, refused: 'binary file', text: 'x.png is a binary file.' }
