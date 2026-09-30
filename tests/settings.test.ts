@@ -37,7 +37,7 @@ describe('settings saved by an earlier version', () => {
   it('read what they lack from the defaults: a chat’s reply gets up to 20 tool calls', async () => {
     // Saved before chats had their own tool-call limit.
     const { settings } = await load({ userName: 'Ed' })
-    expect(settings.getSettings().chat).toEqual({ maxRounds: 20 })
+    expect(settings.getSettings().chat).toEqual({ maxRounds: 20, askUser: true })
     expect(settings.getSettings().userName).toBe('Ed')
   })
 })

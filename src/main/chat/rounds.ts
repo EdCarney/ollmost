@@ -424,7 +424,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
           if (!result.withheld) onlyWithheld = false
           body.messages.push({ role: 'tool', content: result.content, toolName: call.function.name, toolCallId: call.id })
           const note = `[Ollmost shortened this earlier ${call.function.name} result to make room in the context window. It was: ${result.event.summary}. Call the tool again if you need it in full.]`
-          if (result.content.length > note.length) turnResults.push({ index: body.messages.length - 1, round, note })
+          if (result.content.length > note.length && !result.keep) turnResults.push({ index: body.messages.length - 1, round, note })
         }
         // Checked only after the results are recorded, so a call that finished isn't saved as stopped.
         input.signal.throwIfAborted()

@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { createStallTimer, STREAM_TIMEOUTS } from '../src/main/providers/stream'
+import { createStallTimer, idleMsFor, STREAM_TIMEOUTS } from '../src/main/providers/stream'
 
 beforeEach(() => vi.useFakeTimers())
 afterEach(() => vi.useRealTimers())
@@ -41,5 +41,17 @@ describe('createStallTimer', () => {
 
   it('keeps the long quiet allowance for tool calls', () => {
     expect(STREAM_TIMEOUTS.toolIdleMs).toBeGreaterThan(STREAM_TIMEOUTS.idleMs)
+  })
+})
+
+describe('idleMsFor', () => {
+  const tool = (name: string) => ({ function: { name } })
+  it('gives the long allowance only where a tool may write long arguments', () => {
+    expect(idleMsFor(undefined, STREAM_TIMEOUTS)).toBe(STREAM_TIMEOUTS.idleMs)
+    expect(idleMsFor([], STREAM_TIMEOUTS)).toBe(STREAM_TIMEOUTS.idleMs)
+    expect(idleMsFor([tool('web_search')], STREAM_TIMEOUTS)).toBe(STREAM_TIMEOUTS.toolIdleMs)
+    // The question tool's arguments are short: a chat offering only it stalls as quickly as one with no tools.
+    expect(idleMsFor([tool('ask_user')], STREAM_TIMEOUTS)).toBe(STREAM_TIMEOUTS.idleMs)
+    expect(idleMsFor([tool('ask_user'), tool('write_file')], STREAM_TIMEOUTS)).toBe(STREAM_TIMEOUTS.toolIdleMs)
   })
 })

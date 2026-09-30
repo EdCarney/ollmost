@@ -1,13 +1,14 @@
 import type { Conversation, Message } from '@shared/types'
 import { getConversation, listMessages } from '../db/conversations'
 import { hasProjectFiles } from '../db/projects'
+import { ASK_TOOLS } from './askTools'
 import { SKILL_TOOLS } from './skillTools'
 import { WEB_TOOLS } from './webTools'
 
 // What a chat exposes, for the checks that stop a model-written URL from carrying data out: a web_fetch asks first
 // (#62), and a link's hover preview isn't fetched (#63).
 
-const BUILT_IN = new Set([...SKILL_TOOLS, ...WEB_TOOLS].map((t) => t.function.name))
+const BUILT_IN = new Set([...SKILL_TOOLS, ...ASK_TOOLS, ...WEB_TOOLS].map((t) => t.function.name))
 
 /**
  * The chat holds files the user shared: attachments, or its project's knowledge. A code session holds a whole folder

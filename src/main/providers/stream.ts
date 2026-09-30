@@ -15,6 +15,14 @@ export interface StreamTimeouts {
 // Generous on purpose: these catch a dead connection, not a slow model.
 export const STREAM_TIMEOUTS: StreamTimeouts = { firstByteMs: 10 * 60_000, idleMs: 3 * 60_000, toolIdleMs: 30 * 60_000 }
 
+/** Tools whose arguments are always short, so offering only these doesn't make a healthy reply go quiet. */
+const SHORT_ARGUMENT_TOOLS = new Set(['ask_user'])
+
+/** How long a reply may go quiet between chunks: the long tool-call allowance only where a tool may write long arguments. */
+export function idleMsFor(tools: ReadonlyArray<{ function: { name: string } }> | undefined, timeouts: StreamTimeouts): number {
+  return tools?.some((t) => !SHORT_ARGUMENT_TOOLS.has(t.function.name)) ? timeouts.toolIdleMs : timeouts.idleMs
+}
+
 export interface StallTimer {
   /** (Re)start the countdown: after `ms` of silence `abort` runs, and `stalled()` then returns `message`. */
   arm(ms: number, message: string): void

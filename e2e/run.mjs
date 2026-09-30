@@ -244,6 +244,9 @@ async function expectedQuota(win) {
 
 const { app, win } = await launch()
 try {
+  // Questions are on by default for models that can call tools; a card nothing answers would stall the steps below
+  // that expect a plain reply. (The question card has its own coverage in tests/.)
+  await win.evaluate(() => window.ollmost.settings.update({ chat: { askUser: false } }))
   // 1. Plain chat + auto title
   await pickModel(win, CHAT_MODEL)
   const reply = await send(win, 'Reply with the single word: pong')
