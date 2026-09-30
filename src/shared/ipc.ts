@@ -177,7 +177,8 @@ export interface OllmostApi {
     remove(id: ID): Promise<void>
   }
   artifacts: {
-    list(): Promise<ArtifactSummary[]>
+    /** The latest artifacts, or only those made in a project's chats. */
+    list(projectId?: ID): Promise<ArtifactSummary[]>
     /** Stage HTML/SVG for the sandboxed frame; returns an artifact:// URL. */
     stage(type: ArtifactType, content: string): Promise<string>
     save(title: string, type: ArtifactType, language: string | null, content: string): Promise<boolean>

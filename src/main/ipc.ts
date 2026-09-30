@@ -352,7 +352,7 @@ const impl: Impl = {
   },
 
   artifacts: {
-    list: async () => listAllArtifacts(),
+    list: async (projectId) => listAllArtifacts(typeof projectId === 'string' ? projectId : undefined),
     stage: async (type, content) => stageArtifact(type, content),
     save: async (title, type, language, content) => {
       const win = BrowserWindow.getFocusedWindow()

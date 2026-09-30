@@ -75,7 +75,7 @@ export interface AppState {
 
   projects: Project[]
   loadProjects: () => Promise<void>
-  /** Bumped when a project's files change anywhere, so the sidebar's explorer reloads them. */
+  /** Bumped when a project's files change, so its page reloads them. */
   projectFilesVersion: number
   touchProjectFiles: () => void
 

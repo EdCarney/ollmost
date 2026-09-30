@@ -122,12 +122,15 @@ export function pruneEmptyArtifacts(conversationId: string): void {
   )
 }
 
-export function listAllArtifacts(): ArtifactSummary[] {
+/** The latest artifacts, from every chat or only a project's. */
+export function listAllArtifacts(projectId?: string): ArtifactSummary[] {
   return all<ArtifactRow & { conversation_title: string; project_id: string | null; version_count: number }>(
     `SELECT a.*, c.title AS conversation_title, c.project_id,
        (SELECT COUNT(*) FROM artifact_versions v WHERE v.artifact_id = a.id) AS version_count
      FROM artifacts a JOIN conversations c ON c.id = a.conversation_id
-     ORDER BY a.updated_at DESC LIMIT 500`
+     ${projectId ? 'WHERE c.project_id = ?' : ''}
+     ORDER BY a.updated_at DESC LIMIT 500`,
+    ...(projectId ? [projectId] : [])
   ).map((r) => ({
     id: r.id,
     conversationId: r.conversation_id,

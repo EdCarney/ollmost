@@ -1,13 +1,13 @@
 import { FolderClosed, MessageSquare, PanelLeft, Plus, Settings, Shapes, Sparkles, SquareTerminal } from 'lucide-react'
-import { type ReactNode, useEffect } from 'react'
+import { type PointerEvent, type ReactNode, useRef } from 'react'
 import { cn } from '@/lib/format'
 import { type Route, useApp } from '@/stores/app'
 import { useArtifactPanel } from '@/stores/artifactPanel'
 import { useChat } from '@/stores/chat'
-import { useExplorer } from '@/stores/explorer'
+import { SIDEBAR_WIDTH, useSidebar } from '@/stores/sidebar'
 import { ConversationRow } from './ConversationMenu'
 import { OllmostMark } from './OllmostMark'
-import { ProjectExplorer } from './ProjectExplorer'
+import { SidebarProjects } from './SidebarProjects'
 import { IconButton } from './ui'
 
 function NavItem({
@@ -41,28 +41,69 @@ function SectionTitle({ children }: { children: ReactNode }) {
   return <div className="px-2.5 pb-1 pt-4 text-xs font-medium text-subtle">{children}</div>
 }
 
+/** The sidebar's right edge: drag it to make the sidebar narrower or wider, double-click it (or use ←/→) to size it. */
+function ResizeHandle() {
+  const { width, setWidth } = useSidebar()
+  const start = useRef<{ x: number; width: number } | null>(null)
+
+  const end = () => {
+    if (!start.current) return
+    start.current = null
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    // Kept once, as the drag ends, not on every move.
+    setWidth(useSidebar.getState().width)
+  }
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      aria-valuemin={SIDEBAR_WIDTH.min}
+      aria-valuemax={SIDEBAR_WIDTH.max}
+      aria-valuenow={width}
+      tabIndex={0}
+      onPointerDown={(e: PointerEvent<HTMLDivElement>) => {
+        if (e.button !== 0) return
+        e.preventDefault()
+        e.currentTarget.setPointerCapture(e.pointerId)
+        start.current = { x: e.clientX, width }
+        document.body.style.cursor = 'col-resize'
+        document.body.style.userSelect = 'none'
+      }}
+      onPointerMove={(e) => {
+        if (start.current) setWidth(start.current.width + e.clientX - start.current.x, false)
+      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onLostPointerCapture={end}
+      onDoubleClick={() => setWidth(SIDEBAR_WIDTH.default)}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+        e.preventDefault()
+        setWidth(width + (e.key === 'ArrowLeft' ? -16 : 16))
+      }}
+      className="no-drag group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize outline-none"
+    >
+      <span className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors group-hover:bg-line-strong group-focus-visible:bg-line-strong" />
+    </div>
+  )
+}
+
 export function Sidebar() {
-  const { route, navigate, toggleSidebar, conversations, projects, settings } = useApp()
+  const { route, navigate, toggleSidebar, conversations, settings } = useApp()
   const streams = useChat((s) => s.streams)
+  const width = useSidebar((s) => s.width)
 
   const go = (r: Route) => {
     if (r.name !== 'chat') useArtifactPanel.getState().close()
     navigate(r)
   }
 
-  // The explorer shows the pinned projects and the one in view (open on its page, or the open chat's): the sidebar is
-  // narrow, and a project's tree must not vanish when one of its chats is opened from it.
   const activeChatId = route.name === 'chat' ? route.id : null
-  const openChat = useChat((s) => s.conversation)
-  const chatProject = (id: string) => conversations.find((c) => c.id === id)?.projectId ?? (openChat?.id === id ? openChat.projectId : null)
-  const viewedProjectId = route.name === 'project' ? route.id : activeChatId ? chatProject(activeChatId) : null
-  const openProject = viewedProjectId ? projects.find((p) => p.id === viewedProjectId) : null
-  const shownProjects = [...projects.filter((p) => p.pinned), ...(openProject && !openProject.pinned ? [openProject] : [])]
   const pinnedChats = conversations.filter((c) => c.pinned)
   const recents = conversations.filter((c) => !c.pinned).slice(0, 40)
-  useEffect(() => {
-    if (projects.length) useExplorer.getState().prune(projects.map((p) => p.id))
-  }, [projects])
   const name = settings?.userName?.trim()
 
   const row = (c: (typeof conversations)[number]) => (
@@ -77,7 +118,8 @@ export function Sidebar() {
   )
 
   return (
-    <aside className="flex h-full w-[272px] shrink-0 flex-col border-r border-line bg-sidebar">
+    <aside style={{ width }} className="relative flex h-full shrink-0 flex-col border-r border-line bg-sidebar">
+      <ResizeHandle />
       <div className="drag flex h-12 shrink-0 items-center justify-end gap-1 pl-20 pr-2">
         <IconButton label="Close sidebar (⌘⇧S)" onClick={toggleSidebar} size="sm">
           <PanelLeft className="size-4" />
@@ -124,14 +166,7 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        {shownProjects.length > 0 && (
-          <>
-            <SectionTitle>Projects</SectionTitle>
-            {shownProjects.map((p) => (
-              <ProjectExplorer key={p.id} project={p} />
-            ))}
-          </>
-        )}
+        <SidebarProjects go={go} />
         {pinnedChats.length > 0 && (
           <>
             <SectionTitle>Pinned</SectionTitle>
