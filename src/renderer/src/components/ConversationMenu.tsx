@@ -1,4 +1,4 @@
-import { Ellipsis, FolderInput, FolderMinus, Hand, Pencil, Pin, PinOff, ScrollText, Trash2 } from 'lucide-react'
+import { ChevronRight, Ellipsis, FolderInput, FolderMinus, Hand, Pencil, Pin, PinOff, ScrollText, Trash2 } from 'lucide-react'
 import { type ReactNode, useState } from 'react'
 import { describeAllowKey } from '@shared/toolAllow'
 import type { Conversation, McpServer } from '@shared/types'
@@ -252,7 +252,8 @@ export function ConversationRow({
   active,
   onOpen,
   streaming,
-  waiting
+  waiting,
+  expand
 }: {
   conversation: Conversation
   active: boolean
@@ -260,6 +261,11 @@ export function ConversationRow({
   streaming: boolean
   /** A tool call in this chat is waiting for your approval. */
   waiting: boolean
+  /**
+   * In a tree (a project's chats in the sidebar): a chevron that opens the chat's own rows beneath it, or null for a
+   * chat with none, which keeps its title in line with the others. Left out elsewhere.
+   */
+  expand?: { open: boolean; onToggle: () => void } | null
 }) {
   return (
     <div
@@ -268,10 +274,28 @@ export function ConversationRow({
       onClick={onOpen}
       onKeyDown={(e) => e.key === 'Enter' && onOpen()}
       className={cn(
-        'group flex h-8 items-center gap-2 rounded-lg pl-2.5 pr-1 text-[13px]',
+        'group flex h-8 items-center gap-2 rounded-lg pr-1 text-[13px]',
+        expand === undefined ? 'pl-2.5' : 'pl-1.5',
         active ? 'bg-hover text-fg' : 'text-muted hover:bg-hover hover:text-fg'
       )}
     >
+      {expand ? (
+        <button
+          onClick={(e) => {
+            e.stopPropagation()
+            expand.onToggle()
+          }}
+          // Enter here toggles, and mustn't also reach the row, which would open the chat.
+          onKeyDown={(e) => e.stopPropagation()}
+          aria-label={`${expand.open ? 'Collapse' : 'Expand'} ${conversation.title}`}
+          aria-expanded={expand.open}
+          className="-mr-1 flex size-4 shrink-0 items-center justify-center rounded text-subtle hover:text-fg"
+        >
+          <ChevronRight className={cn('size-3.5 transition-transform', expand.open && 'rotate-90')} />
+        </button>
+      ) : (
+        expand === null && <span className="-mr-1 size-4 shrink-0" />
+      )}
       <span className="min-w-0 flex-1 truncate">{conversation.title}</span>
       {waiting ? (
         <Tooltip content="Waiting for your approval">

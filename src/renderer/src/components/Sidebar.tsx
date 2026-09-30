@@ -1,9 +1,10 @@
 import { FolderClosed, MessageSquare, PanelLeft, Plus, Settings, Shapes, Sparkles, SquareTerminal } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { type PointerEvent, type ReactNode, useRef } from 'react'
 import { cn } from '@/lib/format'
 import { type Route, useApp } from '@/stores/app'
 import { useArtifactPanel } from '@/stores/artifactPanel'
 import { useChat } from '@/stores/chat'
+import { SIDEBAR_WIDTH, useSidebar } from '@/stores/sidebar'
 import { ConversationRow } from './ConversationMenu'
 import { OllmostMark } from './OllmostMark'
 import { SidebarProjects } from './SidebarProjects'
@@ -40,9 +41,60 @@ function SectionTitle({ children }: { children: ReactNode }) {
   return <div className="px-2.5 pb-1 pt-4 text-xs font-medium text-subtle">{children}</div>
 }
 
+/** The sidebar's right edge: drag it to make the sidebar narrower or wider, double-click it (or use ←/→) to size it. */
+function ResizeHandle() {
+  const { width, setWidth } = useSidebar()
+  const start = useRef<{ x: number; width: number } | null>(null)
+
+  const end = () => {
+    if (!start.current) return
+    start.current = null
+    document.body.style.cursor = ''
+    document.body.style.userSelect = ''
+    // Kept once, as the drag ends, not on every move.
+    setWidth(useSidebar.getState().width)
+  }
+
+  return (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      aria-valuemin={SIDEBAR_WIDTH.min}
+      aria-valuemax={SIDEBAR_WIDTH.max}
+      aria-valuenow={width}
+      tabIndex={0}
+      onPointerDown={(e: PointerEvent<HTMLDivElement>) => {
+        if (e.button !== 0) return
+        e.preventDefault()
+        e.currentTarget.setPointerCapture(e.pointerId)
+        start.current = { x: e.clientX, width }
+        document.body.style.cursor = 'col-resize'
+        document.body.style.userSelect = 'none'
+      }}
+      onPointerMove={(e) => {
+        if (start.current) setWidth(start.current.width + e.clientX - start.current.x, false)
+      }}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onLostPointerCapture={end}
+      onDoubleClick={() => setWidth(SIDEBAR_WIDTH.default)}
+      onKeyDown={(e) => {
+        if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return
+        e.preventDefault()
+        setWidth(width + (e.key === 'ArrowLeft' ? -16 : 16))
+      }}
+      className="no-drag group absolute inset-y-0 -right-1 z-20 w-2 cursor-col-resize outline-none"
+    >
+      <span className="absolute inset-y-0 left-1/2 w-0.5 -translate-x-1/2 transition-colors group-hover:bg-line-strong group-focus-visible:bg-line-strong" />
+    </div>
+  )
+}
+
 export function Sidebar() {
   const { route, navigate, toggleSidebar, conversations, settings } = useApp()
   const streams = useChat((s) => s.streams)
+  const width = useSidebar((s) => s.width)
 
   const go = (r: Route) => {
     if (r.name !== 'chat') useArtifactPanel.getState().close()
@@ -66,7 +118,8 @@ export function Sidebar() {
   )
 
   return (
-    <aside className="flex h-full w-[272px] shrink-0 flex-col border-r border-line bg-sidebar">
+    <aside style={{ width }} className="relative flex h-full shrink-0 flex-col border-r border-line bg-sidebar">
+      <ResizeHandle />
       <div className="drag flex h-12 shrink-0 items-center justify-end gap-1 pl-20 pr-2">
         <IconButton label="Close sidebar (⌘⇧S)" onClick={toggleSidebar} size="sm">
           <PanelLeft className="size-4" />

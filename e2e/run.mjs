@@ -519,7 +519,8 @@ try {
     .waitFor({ timeout: 5000 })
     .catch(() => {})
   check('expanding a project lists its chats', (await heronChats.count()) === 1)
-  // An artifact in that chat, made the way "Save as artifact" makes one; expanding again loads it.
+  // An artifact in that chat, made the way "Save as artifact" makes one; expanding the project again loads it, under
+  // its chat, which now expands too.
   const heronArtifact = await win.evaluate(async () => {
     const [project] = await window.ollmost.projects.list()
     const [chat] = await window.ollmost.conversations.list({ projectId: project.id })
@@ -536,22 +537,31 @@ try {
   })
   await heron.locator('button[aria-label="Collapse Heron launch"]').click()
   await heron.locator('button[aria-label="Expand Heron launch"]').click()
-  await heron
-    .locator('[data-testid="sidebar-artifact"]')
+  const heronChat = heron.locator('[data-testid="sidebar-chat"]')
+  const sideArtifacts = heron.locator('[data-testid="sidebar-artifact"]')
+  await heronChat
+    .locator('button[aria-label^="Expand "]')
+    .waitFor({ timeout: 5000 })
+    .catch(() => {})
+  const hiddenAtFirst = await sideArtifacts.count()
+  await heronChat.locator('button[aria-label^="Expand "]').click()
+  await sideArtifacts
     .first()
     .waitFor({ timeout: 5000 })
     .catch(() => {})
   check(
-    'an expanded project lists its artifacts',
-    (await heron
-      .locator('[data-testid="sidebar-artifact"]')
-      .innerText()
-      .catch(() => '')) === heronArtifact
+    "a project's chat expands to the artifacts made in it",
+    hiddenAtFirst === 0 && (await sideArtifacts.innerText().catch(() => '')) === heronArtifact
   )
-  await heron.locator('[data-testid="sidebar-artifact"]').click()
+  await sideArtifacts.click()
   const planHeading = win.locator('main').getByRole('heading', { name: 'Launch plan', exact: true })
   await planHeading.waitFor({ timeout: 5000 }).catch(() => {})
   check('choosing an artifact there opens it in its panel', (await planHeading.count()) === 1)
+  await heronChat.locator('button[aria-label^="Collapse "]').click()
+  check(
+    "collapsing the chat hides its artifacts, and leaves the chat's row",
+    (await sideArtifacts.count()) === 0 && (await heronChats.count()) === 1
+  )
   // Eight more projects, the last made with the section's +: the section lists the 8 most recent, so not Heron launch.
   await win.evaluate(async () => {
     for (let i = 1; i <= 8; i++) await window.ollmost.projects.create({ name: `Side project ${i}` })
@@ -614,6 +624,26 @@ try {
     asked === 1 && (await win.evaluate(async () => (await window.ollmost.projects.list()).map((p) => p.name).join())) === 'Heron launch'
   )
   await win.screenshot({ path: join(SHOTS, 'sidebar-projects.png') })
+  // The sidebar's width: dragged at its right edge, kept after a reload, and back to the default on a double-click.
+  const sidebarWidth = async () => (await win.locator('aside').first().boundingBox())?.width ?? 0
+  const edge = win.locator('[role="separator"][aria-label="Resize sidebar"]')
+  const edgeBox = await edge.boundingBox()
+  const narrowest = await sidebarWidth()
+  await win.mouse.move(edgeBox.x + edgeBox.width / 2, edgeBox.y + edgeBox.height / 2)
+  await win.mouse.down()
+  await win.mouse.move(edgeBox.x + edgeBox.width / 2 + 100, edgeBox.y + edgeBox.height / 2, { steps: 5 })
+  await win.mouse.up()
+  const dragged = await sidebarWidth()
+  await win.reload()
+  await win.waitForSelector('textarea')
+  const reloaded = await sidebarWidth()
+  check(
+    "dragging the sidebar's edge widens it, and it keeps that width",
+    narrowest === 272 && Math.abs(dragged - 372) <= 2 && reloaded === dragged,
+    `${narrowest} → ${dragged} → ${reloaded} after a reload`
+  )
+  await edge.dblclick()
+  check('double-clicking the edge puts the default width back', (await sidebarWidth()) === 272, String(await sidebarWidth()))
 
   // 7. Chat cost in the title bar
   await win.locator('aside [role="button"]').first().click()

@@ -1,7 +1,7 @@
 import { ArrowUpRight, ChevronRight, Ellipsis, FolderClosed, Pencil, Pin, PinOff, Plus, Trash2 } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { SIDEBAR_PROJECT_ITEMS, sidebarProjects } from '@shared/sidebarProjects'
-import type { Project } from '@shared/types'
+import type { ArtifactSummary, Project } from '@shared/types'
 import { api } from '@/lib/api'
 import { cn } from '@/lib/format'
 import { reportError, type Route, useApp } from '@/stores/app'
@@ -15,8 +15,8 @@ import { DeleteProjectDialog, RenameProjectDialog } from './ProjectDialogs'
 import { IconButton, Menu, MenuContent, MenuItem, MenuSeparator, MenuTrigger } from './ui'
 
 /**
- * The sidebar's Projects section, like Claude desktop's (#128): the projects in use, each expanding to its latest chats
- * and artifacts, with ↗ to the projects page for the rest and + for a new one.
+ * The sidebar's Projects section, like Claude desktop's (#128): the projects in use, each expanding to its latest chats,
+ * and each chat to the artifacts made in it, with ↗ to the projects page for the rest and + for a new one.
  */
 export function SidebarProjects({ go }: { go: (r: Route) => void }) {
   const { route, projects, conversations } = useApp()
@@ -33,6 +33,9 @@ export function SidebarProjects({ go }: { go: (r: Route) => void }) {
   useEffect(() => {
     if (projects.length) useExplorer.getState().prune(projects.map((p) => p.id))
   }, [projects])
+  useEffect(() => {
+    if (conversations.length) useExplorer.getState().pruneChats(conversations.map((c) => c.id))
+  }, [conversations])
 
   return (
     <div data-testid="sidebar-projects">
@@ -74,12 +77,18 @@ function ProjectRow({
 }) {
   const { conversations, loadProjects } = useApp()
   const streams = useChat((s) => s.streams)
-  const { expanded, toggle } = useExplorer()
+  const { expanded, expandedChats, toggle, toggleChat } = useExplorer()
   const [renaming, setRenaming] = useState(false)
   const [deleting, setDeleting] = useState(false)
   const open = expanded.includes(project.id)
   const chats = conversations.filter((c) => c.projectId === project.id)
   const artifacts = useProjectArtifacts(project.id, open)
+  // Each chat's artifacts, latest first, as the list comes.
+  const byChat = useMemo(() => {
+    const out = new Map<string, ArtifactSummary[]>()
+    for (const a of artifacts ?? []) out.set(a.conversationId, [...(out.get(a.conversationId) ?? []), a])
+    return out
+  }, [artifacts])
   const moreChats = Math.max(chats.length, project.conversationCount ?? 0) > SIDEBAR_PROJECT_ITEMS
   const openPage = () => go({ name: 'project', id: project.id })
 
@@ -140,38 +149,51 @@ function ProjectRow({
       </div>
       {open && (
         <div className="pl-4" data-testid="sidebar-project-items">
-          {chats.slice(0, SIDEBAR_PROJECT_ITEMS).map((c) => (
-            <ConversationRow
-              key={c.id}
-              conversation={c}
-              active={c.id === activeChatId}
-              streaming={!!streams[c.id]}
-              waiting={!!streams[c.id]?.toolEvents.some((e) => e?.awaiting)}
-              onOpen={() => go({ name: 'chat', id: c.id })}
-            />
-          ))}
-          {moreChats && <ShowAll onClick={openPage}>Show all chats</ShowAll>}
-          {artifacts?.slice(0, SIDEBAR_PROJECT_ITEMS).map((a) => {
-            const Icon = ARTIFACT_META[a.type].icon
+          {chats.slice(0, SIDEBAR_PROJECT_ITEMS).map((c) => {
+            const own = byChat.get(c.id) ?? []
+            const chatOpen = own.length > 0 && expandedChats.includes(c.id)
             return (
-              <button
-                key={a.id}
-                data-testid="sidebar-artifact"
-                onClick={() => openArtifact(a)}
-                className="flex h-8 w-full items-center gap-2 rounded-lg pl-2.5 pr-1 text-left text-[13px] text-muted hover:bg-hover hover:text-fg"
-              >
-                <Icon className="size-3.5 shrink-0" />
-                <span className="truncate">{a.title}</span>
-              </button>
+              <div key={c.id} data-testid="sidebar-chat">
+                <ConversationRow
+                  conversation={c}
+                  active={c.id === activeChatId}
+                  streaming={!!streams[c.id]}
+                  waiting={!!streams[c.id]?.toolEvents.some((e) => e?.awaiting)}
+                  onOpen={() => go({ name: 'chat', id: c.id })}
+                  expand={own.length ? { open: chatOpen, onToggle: () => toggleChat(c.id) } : null}
+                />
+                {chatOpen && (
+                  <div className="pl-4">
+                    {own.slice(0, SIDEBAR_PROJECT_ITEMS).map((a) => (
+                      <ArtifactRow key={a.id} artifact={a} />
+                    ))}
+                    {own.length > SIDEBAR_PROJECT_ITEMS && <ShowAll onClick={openPage}>Show all artifacts</ShowAll>}
+                  </div>
+                )}
+              </div>
             )
           })}
-          {artifacts && artifacts.length > SIDEBAR_PROJECT_ITEMS && <ShowAll onClick={openPage}>Show all artifacts</ShowAll>}
-          {!chats.length && artifacts?.length === 0 && <div className="py-1 pl-2.5 text-xs text-subtle">No chats yet</div>}
+          {moreChats && <ShowAll onClick={openPage}>Show all chats</ShowAll>}
+          {!chats.length && <div className="py-1 pl-2.5 text-xs text-subtle">No chats yet</div>}
         </div>
       )}
       <RenameProjectDialog project={project} open={renaming} onOpenChange={setRenaming} />
       <DeleteProjectDialog project={project} open={deleting} onOpenChange={setDeleting} />
     </div>
+  )
+}
+
+function ArtifactRow({ artifact }: { artifact: ArtifactSummary }) {
+  const Icon = ARTIFACT_META[artifact.type].icon
+  return (
+    <button
+      data-testid="sidebar-artifact"
+      onClick={() => openArtifact(artifact)}
+      className="flex h-8 w-full items-center gap-2 rounded-lg pl-2.5 pr-1 text-left text-[13px] text-muted hover:bg-hover hover:text-fg"
+    >
+      <Icon className="size-3.5 shrink-0" />
+      <span className="truncate">{artifact.title}</span>
+    </button>
   )
 }
 

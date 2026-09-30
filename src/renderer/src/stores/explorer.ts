@@ -2,14 +2,15 @@ import { create } from 'zustand'
 import { readJson, strings, writeJson } from '@/lib/storage'
 
 // Per-viewer conveniences for projects, kept in browser storage: in the sidebar, whether the Projects section is
-// collapsed and which projects are expanded; on a project's page, which of its folders are closed, and folders made
-// but not yet filled (a folder is its files' paths, so an empty one exists only here). One store, so every view on
-// screen reads and writes the same copy.
+// collapsed and which projects, and which of their chats, are expanded; on a project's page, which of its folders are
+// closed, and folders made but not yet filled (a folder is its files' paths, so an empty one exists only here). One
+// store, so every view on screen reads and writes the same copy.
 
 const EXPANDED_KEY = 'ollmost.explorer.expanded'
 const CLOSED_KEY = 'ollmost.explorer.closedFolders'
 const FOLDERS_KEY = 'ollmost.explorer.folders'
 const COLLAPSED_KEY = 'ollmost.sidebar.projectsCollapsed'
+const CHATS_KEY = 'ollmost.sidebar.expandedChats'
 
 function stringLists(v: unknown): Record<string, string[]> {
   if (!v || typeof v !== 'object' || Array.isArray(v)) return {}
@@ -24,14 +25,17 @@ interface ExplorerState {
   projectsCollapsed: boolean
   /** Projects expanded in the sidebar, by id. */
   expanded: string[]
+  /** A project's chats expanded in the sidebar to their artifacts, by id. */
+  expandedChats: string[]
   /** Folders closed on their project's page, as `folderKey`s; a folder is open until closed. */
   closedFolders: string[]
   /** Folders the viewer made, kept here until removed (a folder is otherwise only its files' paths), by project id. */
   emptyFolders: Record<string, string[]>
   toggleProjects: () => void
   toggle: (projectId: string) => void
-  /** Expands a project in the sidebar (and leaves an expanded one as it is). */
-  expand: (projectId: string) => void
+  toggleChat: (conversationId: string) => void
+  /** Drops what was kept for chats that no longer exist. */
+  pruneChats: (conversationIds: string[]) => void
   toggleFolder: (projectId: string, folder: string) => void
   /** Opens a folder on its project's page (and leaves an open one as it is). */
   openFolder: (projectId: string, folder: string) => void
@@ -48,6 +52,7 @@ export const useExplorer = create<ExplorerState>((set, get) => ({
   projectsCollapsed: readJson(COLLAPSED_KEY) === true,
   // Before #128 this also held the sidebar tree's open folders, as `<project id>/<folder>`; those mean nothing now.
   expanded: strings(readJson(EXPANDED_KEY)).filter((k) => !k.includes('/')),
+  expandedChats: strings(readJson(CHATS_KEY)),
   closedFolders: strings(readJson(CLOSED_KEY)),
   emptyFolders: stringLists(readJson(FOLDERS_KEY)),
   toggleProjects: () => {
@@ -60,8 +65,18 @@ export const useExplorer = create<ExplorerState>((set, get) => ({
     set({ expanded: next })
     writeJson(EXPANDED_KEY, next)
   },
-  expand: (projectId) => {
-    if (!get().expanded.includes(projectId)) get().toggle(projectId)
+  toggleChat: (conversationId) => {
+    const next = flip(get().expandedChats, conversationId)
+    set({ expandedChats: next })
+    writeJson(CHATS_KEY, next)
+  },
+  pruneChats: (conversationIds) => {
+    const ids = new Set(conversationIds)
+    const { expandedChats } = get()
+    const next = expandedChats.filter((id) => ids.has(id))
+    if (next.length === expandedChats.length) return
+    set({ expandedChats: next })
+    writeJson(CHATS_KEY, next)
   },
   toggleFolder: (projectId, folder) => {
     const next = flip(get().closedFolders, folderKey(projectId, folder))
