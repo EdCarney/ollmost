@@ -1,7 +1,7 @@
 {
   "name": "ollmost",
   "productName": "Ollmost",
-  "version": "0.3.0",
+  "version": "0.4.0",
   "private": true,
   "description": "A Claude-desktop-style chat app for Ollama models",
   "main": "./out/main/index.js",
