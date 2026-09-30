@@ -257,6 +257,23 @@ export function listFiles(ws: Workspace, opts: { pattern?: string; path?: unknow
   })
 }
 
+/** A listing as the model reads it: the paths, or that there were none, and which limit stopped it. */
+export function listingText(r: ListResult, pattern?: string): string {
+  const where = r.rel ? ` in ${r.rel}` : ''
+  const body = r.files.length
+    ? r.files.join('\n')
+    : `No files${pattern ? ` match ${pattern}` : ''}${where} (what .gitignore ignores, and .git, are left out; run_command with ls sees everything).`
+  const note =
+    r.stopped === 'limit'
+      ? `\n[… the list stops at ${LIST_LIMIT} files; narrow the pattern or the folder]`
+      : r.stopped === 'visits'
+        ? '\n[… the folder holds more entries than a listing looks at; narrow the folder]'
+        : r.stopped === 'time'
+          ? '\n[… the listing stopped at its time limit; narrow the folder]'
+          : ''
+  return `${body}${note}`
+}
+
 function checkGlob(glob: string | undefined): void {
   if (glob && glob.length > GLOB_MAX_CHARS) throw new Refused('pattern too long', `The glob is over ${GLOB_MAX_CHARS} characters.`)
 }
