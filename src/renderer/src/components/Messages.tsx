@@ -19,7 +19,7 @@ import {
   TriangleAlert,
   Wrench
 } from 'lucide-react'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { parseMessage, parseMessageRanges, typeForCodeLanguage } from '@shared/artifactParser'
 import { referenceMarks, referenceNote } from '@shared/atRefs'
 import { diffCounts } from '@shared/diff'
@@ -67,7 +67,18 @@ function plainText(content: string): string {
  * One @ reference a code session's message sent (#129): its path, and how much was sent or why none was. It opens what
  * the model was given, not the file as it is now: a session has no file preview, and the stored text is what was sent.
  */
-function ReferenceChip({ reference, open, onToggle }: { reference: MessageReference; open: boolean; onToggle: () => void }) {
+function ReferenceChip({
+  reference,
+  open,
+  controls,
+  onToggle
+}: {
+  reference: MessageReference
+  open: boolean
+  /** The id of the panel it opens, while it's open. */
+  controls: string | undefined
+  onToggle: () => void
+}) {
   const note = referenceNote(reference)
   const Icon = reference.kind === 'folder' ? Folder : FileText
   return (
@@ -75,7 +86,9 @@ function ReferenceChip({ reference, open, onToggle }: { reference: MessageRefere
       type="button"
       onClick={onToggle}
       aria-expanded={open}
-      title={open ? 'Hide what was sent' : 'Show what was sent'}
+      aria-controls={controls}
+      // The whole path, which the chip may cut short.
+      title={`${reference.path} · ${open ? 'Hide' : 'Show'} what was sent`}
       data-testid="reference-chip"
       data-path={reference.path}
       className={cn(pill, 'border-line bg-panel text-muted hover:border-line-strong hover:text-fg')}
@@ -107,6 +120,7 @@ export const UserMessage = memo(function UserMessage({
   const marks = useMemo(() => referenceMarks(message.content, message.references ?? []), [message.content, message.references])
   const [shown, setShown] = useState<string | null>(null)
   const open = references.find((r) => r.path === shown) ?? null
+  const panel = useId()
 
   return (
     <div className="group flex flex-col items-end gap-2">
@@ -135,12 +149,23 @@ export const UserMessage = memo(function UserMessage({
       {references.length > 0 && (
         <div className="flex max-w-[85%] flex-wrap justify-end gap-2">
           {references.map((r) => (
-            <ReferenceChip key={r.path} reference={r} open={shown === r.path} onToggle={() => setShown(shown === r.path ? null : r.path)} />
+            <ReferenceChip
+              key={r.path}
+              reference={r}
+              open={shown === r.path}
+              controls={shown === r.path ? panel : undefined}
+              onToggle={() => setShown(shown === r.path ? null : r.path)}
+            />
           ))}
         </div>
       )}
       {open && (
-        <div className="w-full max-w-[85%] rounded-ollmost border border-line bg-panel p-2.5">
+        <div
+          id={panel}
+          role="region"
+          aria-label={`What was sent for ${open.path}`}
+          className="w-full max-w-[85%] rounded-ollmost border border-line bg-panel p-2.5"
+        >
           {/* Exactly what the model was given, as plain text: never markdown or HTML. */}
           <pre data-testid="reference-text" className="selectable max-h-80 overflow-auto whitespace-pre font-mono text-xs text-fg">
             {open.text}
@@ -169,7 +194,11 @@ export const UserMessage = memo(function UserMessage({
                 // disabled button while this is in flight rules out a double submit.
                 setSaving(true)
                 try {
-                  if (await onEdit(draft.trim())) setEditing(false)
+                  if (await onEdit(draft.trim())) {
+                    setEditing(false)
+                    // The edited message's references are read again, and a chip open before shouldn't open itself then.
+                    setShown(null)
+                  }
                 } finally {
                   setSaving(false)
                 }
@@ -599,12 +628,6 @@ export function ToolGroup({
   )
 }
 
-/**
- * A reply's note that its message's @ references weren't sent (main's unreadReferences, #129). It says what happened on
- * its own, so it doesn't go under the header for tools that weren't available.
- */
-const unsentReferences = (line: string) => line.startsWith("Your message's @ references")
-
 /** The reply's cost as its stats say it: dollars (≈ when estimated), 'local', 'cost not tracked', or nothing. */
 function replyCost(s: MessageStats): string | null {
   const label = billingLabel(s.billing ?? legacyBilling(s.costUsd), s.costUsd ?? null)
@@ -779,16 +802,22 @@ export const AssistantMessage = memo(function AssistantMessage({
             ))}
         </div>
       )}
-      {!streaming && message.stats?.unavailableTools?.length ? (
+      {!streaming && (message.stats?.unavailableTools?.length || message.stats?.unsentReferences) ? (
         <div className="mt-2 flex items-start gap-2 rounded-ollmost border border-line px-3 py-2 text-xs text-muted">
           <TriangleAlert className="mt-px size-3.5 shrink-0 text-warn" />
           <div className="selectable space-y-0.5">
-            {message.stats.unavailableTools.some((line) => !unsentReferences(line)) && (
-              <div>Some of this {scope}'s tools weren't available for this reply:</div>
-            )}
-            {message.stats.unavailableTools.map((line) => (
-              <div key={line}>{line}</div>
-            ))}
+            {/* The message's @ references weren't sent (#129): not a tool, so it says so on its own. */}
+            {message.stats.unsentReferences && <div>{message.stats.unsentReferences}</div>}
+            {message.stats.unavailableTools?.length ? (
+              <>
+                <div className={message.stats.unsentReferences ? 'pt-1' : undefined}>
+                  Some of this {scope}'s tools weren't available for this reply:
+                </div>
+                {message.stats.unavailableTools.map((line) => (
+                  <div key={line}>{line}</div>
+                ))}
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}

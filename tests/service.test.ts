@@ -2399,27 +2399,30 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       expect(lastUserText()).toBe('Look at @a.ts')
       expect(getMessage(asked)!.references).toBeNull()
       expect(done.message.error).toBeNull()
-      expect(done.message.stats?.unavailableTools).toEqual([
+      expect(done.message.stats?.unsentReferences).toBe(
         "Your message's @ references weren't sent: a command was running in the session's folder. Retry sends them."
-      ])
+      )
+      expect(done.message.stats?.unavailableTools).toBeUndefined()
       expect(warn).toHaveBeenCalledTimes(1)
 
       referenceReader.stand = () => Promise.reject(new RootMissingError(folder))
       events.length = 0
       await retry(session.id)
       done = await replied(session.id)
-      expect(done.message.stats?.unavailableTools).toEqual([
+      expect(done.message.stats?.unsentReferences).toBe(
         `Your message's @ references weren't sent. This session's folder is no longer at ${folder} (moved, renamed or deleted). Choose it again to carry on.`
-      ])
+      )
+      expect(done.message.stats?.unavailableTools).toBeUndefined()
       expect(warn).toHaveBeenCalledTimes(2)
 
       referenceReader.stand = () => Promise.reject(new Error('disk on fire'))
       events.length = 0
       await retry(session.id)
       done = await replied(session.id)
-      expect(done.message.stats?.unavailableTools).toEqual([
+      expect(done.message.stats?.unsentReferences).toBe(
         "Your message's @ references weren't sent: they couldn't be read. Retry sends them."
-      ])
+      )
+      expect(done.message.stats?.unavailableTools).toBeUndefined()
       expect(error).toHaveBeenCalledWith(expect.stringContaining('@ references'), expect.objectContaining({ message: 'disk on fire' }))
       expect(getMessage(asked)!.references).toBeNull()
     } finally {
@@ -2433,6 +2436,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const done = await replied(session.id)
     expect(lastUserText()).toBe('<referenced_file path="a.ts" lines="1-1 of 1">\n     1\tx\n</referenced_file>\n\nLook at @a.ts')
     expect(done.message.stats?.unavailableTools).toBeUndefined()
+    expect(done.message.stats?.unsentReferences).toBeUndefined()
   }, 120_000)
 
   it('gives a message’s references half the room the model’s window has left, so the turn’s tool rounds fit too', async () => {

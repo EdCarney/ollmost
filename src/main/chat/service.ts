@@ -404,8 +404,7 @@ async function generate(
         }
       }
     }
-    // Set now, so a reply that ends early (a Stop, a failure below) still saves these; the list is the same one, so a
-    // note added later shows too.
+    // Set now, so a reply that ends early (a Stop, a failure below) still saves these.
     if (unavailable.length) stats.unavailableTools = unavailable
 
     const project = conversation.projectId ? getProject(conversation.projectId) : null
@@ -500,7 +499,7 @@ async function generate(
           (failed: unknown) => ({ failed })
         )
         controller.signal.throwIfAborted()
-        if ('failed' in read) unavailable.push(unreadReferences(read.failed))
+        if ('failed' in read) stats.unsentReferences = unreadReferences(read.failed)
         else {
           const { references } = read
           setMessageReferences(asked.id, references)
@@ -511,8 +510,6 @@ async function generate(
         }
       }
     }
-    // The references' note may be the first.
-    if (unavailable.length) stats.unavailableTools = unavailable
 
     const history = await Promise.all(
       messages

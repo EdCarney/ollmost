@@ -207,6 +207,8 @@ export interface MessageStats {
   shortenedToolResults?: number
   /** Tool sources switched on for the chat that couldn't be used for this reply, and why. */
   unavailableTools?: string[]
+  /** Why this reply's message's @ references weren't sent (#129); a Retry sends them. */
+  unsentReferences?: string
 }
 
 /**
