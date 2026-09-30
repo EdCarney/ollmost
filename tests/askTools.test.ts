@@ -57,9 +57,22 @@ describe('normalizeQuestions', () => {
     const [q] = normalizeQuestions({
       question: 'x'.repeat(900),
       header: 'h'.repeat(90),
-      options: ['A', 'a', 'Other', 'Other (please specify)', 'Other:', 'Otherwise', 'B', ' ']
+      options: [
+        'A',
+        'a',
+        'Other',
+        'Other (please specify)',
+        'Other:',
+        'other: please specify',
+        'Other...',
+        'Other - specify',
+        'Otherwise',
+        'Other people',
+        'B',
+        ' '
+      ]
     })
-    expect(q.options.map((o) => o.label)).toEqual(['A', 'Otherwise', 'B'])
+    expect(q.options.map((o) => o.label)).toEqual(['A', 'Otherwise', 'Other people', 'B'])
     expect(q.question.length).toBeLessThanOrEqual(500)
     expect(q.header.length).toBeLessThanOrEqual(30)
   })
@@ -77,7 +90,7 @@ describe('normalizeQuestions', () => {
     expect(() => normalizeQuestions({ questions: [q(['a', 'b']), q(['only'])] })).toThrow(/Question 2 needs at least 2 options/)
     expect(() => normalizeQuestions({ questions: [q(['Yes', 'Other'])] })).toThrow(/besides "Other", which the card adds itself/)
     expect(() => normalizeQuestions({ questions: [q(['a', 'b'], '  ')] })).toThrow(/Question 1 has no "question" text/)
-    expect(() => normalizeQuestions({ questions: [{ question: 'Q?' }] })).toThrow(/Question 1 needs "options"/)
+    expect(() => normalizeQuestions({ questions: [{ question: 'Q?' }] })).toThrow(/Question 1 needs "options".*just ask it in your reply/)
     expect(() => normalizeQuestions({ questions: [7] })).toThrow(/Question 1 must be an object/)
   })
 

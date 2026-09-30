@@ -75,7 +75,8 @@ const parsed = (v: unknown): unknown => {
   }
 }
 // The card adds its own "Other" box, so a model's own ("Other", "Other (please specify)", "Other:") would show twice.
-const OTHER_OPTION = /^other(?![a-z])/i
+// Only the placeholder forms: a real option that starts with the word ("Other people") stays.
+const OTHER_OPTION = /^other\s*(\(.*\)|:.*|\.{3}|…|[-–—]\s*(please\s+)?specify.*)?\s*$/i
 
 const SHAPE = `ask_user needs "questions": a list of one to ${MAX_QUESTIONS} objects, each with "question", "options" (${MIN_OPTIONS} to ${MAX_OPTIONS} objects with a "label", not counting "Other", which the card adds itself) and optionally "header" and "multiSelect".`
 
@@ -103,7 +104,7 @@ export function normalizeQuestions(args: Record<string, unknown>): AskQuestion[]
     const question = clip(text(item.question), MAX_QUESTION_CHARS)
     if (!question) throw new Error(`${n} has no "question" text. ${SHAPE}`)
     const options = parsed(item.options)
-    if (!Array.isArray(options)) throw new Error(`${n} needs "options". ${SHAPE}`)
+    if (!Array.isArray(options)) throw new Error(`${n} needs "options". For an open question, just ask it in your reply. ${SHAPE}`)
     const seen = new Set<string>()
     const kept: AskQuestion['options'] = []
     for (const o of options) {
