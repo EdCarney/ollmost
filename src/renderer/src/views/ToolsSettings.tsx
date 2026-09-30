@@ -509,7 +509,7 @@ function ChatsSection() {
       </Row>
       <Row
         label="Ask me questions"
-        hint="Lets a model that can call tools stop and ask you a multiple-choice question when it needs your answer."
+        hint="Lets a model stop and ask you a multiple-choice question when it needs your answer. Only for models known to call tools: a server that reports nothing waits until you set the model's Tools on in Settings → Models."
       >
         <Switch checked={c.askUser} onChange={(askUser) => update({ askUser })} label="Let models ask questions" />
       </Row>

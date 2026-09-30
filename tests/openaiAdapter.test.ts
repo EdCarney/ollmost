@@ -706,6 +706,21 @@ describe('models', () => {
     })
   })
 
+  it('knows a model can call tools only when its server said so or the user did', async () => {
+    // A generic server reports nothing: tools are assumed on, not known.
+    server.handler = list({ n: 0 })
+    const [assumed, told] = await generic().listModels(false)
+    expect(assumed).toMatchObject({ capabilities: ['completion', 'tools'], toolsKnown: false })
+    // The user setting them, either way, settles it.
+    fake.rows.set('gen/qwen3-coder-30b-a3b', { info: null, fetchedAt: 0, overrides: { tools: true }, detected: {} })
+    expect((await generic().listModels(false))[1]).toMatchObject({ toolsKnown: true })
+    expect(told.toolsKnown).toBe(false)
+    // LM Studio reports each model's capabilities.
+    server.handler = (r, res) =>
+      r.url === '/api/v1/models' ? void res.writeHead(200).end(fixtureText('discovery/lmstudio-docs.json')) : void res.writeHead(404).end()
+    expect((await provider().listModels(false)).every((m) => m.toolsKnown)).toBe(true)
+  })
+
   it('carries LM Studio’s thinking preset into the model', async () => {
     server.handler = (r, res) =>
       r.url === '/api/v1/models' ? void res.writeHead(200).end(fixtureText('discovery/lmstudio-docs.json')) : void res.writeHead(404).end()

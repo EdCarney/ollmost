@@ -77,6 +77,7 @@ const infoOf = (d: DiscoveredModel): CachedModelInfo => ({
   contextLength: d.contextLength,
   family: null,
   parameterSize: d.parameterSize,
+  capabilitiesReported: d.reportsCapabilities,
   thinkPreset: d.thinkPreset
 })
 
@@ -408,6 +409,9 @@ export class OpenAIProvider implements Provider {
       contextWindow: contextWindowFor({ ...sizes, overrides }, this.endpoint),
       installed,
       capabilities,
+      // Tools are known when the server said so (a profile saved before that was recorded counts as assumed until it's
+      // read again) or the user set them.
+      toolsKnown: overrides.tools !== undefined || info.capabilitiesReported === true,
       contextLength: info.contextLength,
       family: info.family,
       parameterSize: info.parameterSize,

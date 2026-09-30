@@ -395,7 +395,9 @@ async function generate(
       stage: conversation.stage,
       skills: skillIndex.length > 0,
       web: web === 'on',
-      ask: toolsCapable && settings.chat.askUser,
+      // Only where tool support is known: a server that reports nothing may not take a tools array at all, and this is
+      // the one tool sent without the user switching anything on.
+      ask: toolsCapable && model.toolsKnown === true && settings.chat.askUser,
       sources,
       // Files the user shared are private, and a fetch URL could carry them out (#62).
       privateFiles: hasPrivateFiles(conversation, messages),

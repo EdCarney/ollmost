@@ -56,6 +56,7 @@ const { runRounds } = await import('../src/main/chat/rounds')
 const { EndpointGoneError, invalidateProviders, modelInfo, resolve } = await import('../src/main/providers/registry')
 const { replayRequest } = await import('../src/main/debug/replay')
 const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
+const { writeModelOverrides } = await import('../src/main/db/kv')
 const approvals = await import('../src/main/chat/approvals')
 const mcpConfig = await import('../src/main/mcp/config')
 const mcpManager = await import('../src/main/mcp/manager')
@@ -3724,6 +3725,9 @@ async function runScript(dialect: Dialect, script: Script) {
 describe('one reply loop, both dialects', () => {
   beforeAll(() => {
     openaiId = addEndpoint({ name: 'OpenAI mock', baseUrl: `${openaiServer.url}/v1`, kind: 'openai', flavor: 'generic' }).id
+    // A generic server reports no capabilities, so the built-in question tool waits for the user to say tools work
+    // (the Ollama mock reports them); with both offering the same tools, the two dialects can be compared.
+    writeModelOverrides(`${openaiId}/llama3.2`, { tools: true })
     openaiServer.handler = (req, res) => {
       if (req.url === '/v1/models')
         return res.writeHead(200).end(JSON.stringify({ object: 'list', data: [{ id: 'llama3.2', object: 'model' }] }))
@@ -3913,6 +3917,24 @@ describe('one reply loop, both dialects', () => {
     const final = getTrace(title()!.id)!.response.final
     expect(final).toMatchObject({ finish_reason: 'stop', usage: { prompt_tokens: 20, completion_tokens: 2 } })
     expect(final).not.toHaveProperty('choices')
+  })
+
+  // A server that reports nothing may not take a tools array at all, so a plain chat there sends none.
+  it('does not offer the question tool where a server has not said tools work', async () => {
+    const key = `${openaiId}/llama3.2`
+    const offered = () => ((chatCalls[0].tools ?? []) as Array<{ function: { name: string } }>).map((t) => t.function.name)
+    writeModelOverrides(key, {})
+    invalidateProviders()
+    try {
+      await runScript('openai', SCRIPTS['plain reply'])
+      expect(offered()).not.toContain('ask_user')
+      // Once the user says it does, it's offered.
+      writeModelOverrides(key, { tools: true })
+      await runScript('openai', SCRIPTS['plain reply'])
+      expect(offered()).toContain('ask_user')
+    } finally {
+      writeModelOverrides(key, { tools: true })
+    }
   })
 
   it.each(Object.keys(SCRIPTS))('%s: both dialects save the same reply, tool events and usage', async (name) => {

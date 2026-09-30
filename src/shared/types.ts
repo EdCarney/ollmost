@@ -374,6 +374,12 @@ export interface ModelInfo {
   contextWindow: number | null
   installed: boolean
   capabilities: string[]
+  /**
+   * Whether `capabilities` says for certain if the model can call tools: its server reported it, or you set it. False
+   * where the server says nothing (vLLM, a generic server) and tools are only assumed on. Features that would send
+   * tools unasked wait for this.
+   */
+  toolsKnown?: boolean
   contextLength: number | null
   family: string | null
   parameterSize: string | null
