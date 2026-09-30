@@ -14,6 +14,7 @@ import { decide } from './chat/approvals'
 import { compact, edit, isReplyingIn, regenerate, send, setStage, stop, stopAll } from './chat/service'
 import { changes, diff, stopPanelRuns } from './code/changes'
 import { readBranch } from './code/git'
+import { dropSessionPaths, sessionPaths } from './code/pathList'
 import { addArtifactVersion, getArtifact, listAllArtifacts, listArtifacts } from './db/artifacts'
 import {
   createConversation,
@@ -497,12 +498,18 @@ const impl: Impl = {
     changes: async (id) => {
       const root = sessionRoot(id)
       assertNoReplyOn(root)
+      // A refresh is when the user expects the @ menu to see what changed too (#129).
+      dropSessionPaths(root)
       return changes(workspaceFor(id), { replying: () => replyingOn(root) })
     },
     diff: async (id, path) => {
       const root = sessionRoot(id)
       assertNoReplyOn(root)
       return diff(workspaceFor(id), path, { replying: () => replyingOn(root) })
+    },
+    paths: async (id) => {
+      sessionRoot(id)
+      return sessionPaths(workspaceFor(id))
     }
   },
 

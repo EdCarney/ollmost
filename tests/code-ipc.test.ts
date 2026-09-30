@@ -226,3 +226,11 @@ describe('a session’s folder', () => {
     await expect(call('locate', c.id)).rejects.toThrow(/no longer exists/)
   })
 })
+
+describe('the @ menu’s paths (#129)', () => {
+  it('lists a session’s files relative to its folder, and refuses a chat', async () => {
+    const c = session(folder())
+    expect(await call('paths', c.id)).toEqual({ paths: ['README.md'], cut: false, busy: false })
+    await expect(call('paths', chat().id)).rejects.toThrow(/isn.t a code session/)
+  })
+})

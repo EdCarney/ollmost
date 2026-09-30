@@ -4,6 +4,7 @@ import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { structuredPatch } from 'diff'
 import { NO_LINKS, openNoLinks, readyForSession, type Workspace } from '../runner/workspace'
+import { dropSessionPaths } from './pathList'
 import searchWorker from './search.worker.js?raw'
 import { walkFiles } from './walk'
 
@@ -519,12 +520,19 @@ export interface WriteArgs {
 }
 
 /** Replace one exact passage of a text file (every occurrence with `replaceAll`). */
-export const editFile = (ws: Workspace, args: EditArgs): Promise<Change> =>
-  readyForSession(ws, async (root) => apply(await planEdit(root, args)))
+export async function editFile(ws: Workspace, args: EditArgs): Promise<Change> {
+  const change = await readyForSession(ws, async (root) => apply(await planEdit(root, args)))
+  // The @ menu's list may no longer be what's there (#129).
+  dropSessionPaths(ws.key)
+  return change
+}
 
 /** Write a whole text file, creating it and its folders, or replacing it. */
-export const writeFile = (ws: Workspace, args: WriteArgs): Promise<Change> =>
-  readyForSession(ws, async (root) => apply(await planWrite(root, args)))
+export async function writeFile(ws: Workspace, args: WriteArgs): Promise<Change> {
+  const change = await readyForSession(ws, async (root) => apply(await planWrite(root, args)))
+  dropSessionPaths(ws.key)
+  return change
+}
 
 /** The diff edit_file would make, for the approval that asks first. Throws what the edit would. */
 export const editDiff = (ws: Workspace, args: EditArgs): Promise<string> =>
