@@ -519,8 +519,9 @@ try {
     .waitFor({ timeout: 5000 })
     .catch(() => {})
   check('expanding a project lists its chats', (await heronChats.count()) === 1)
-  // An artifact in that chat, made the way "Save as artifact" makes one; expanding the project again loads it, under
-  // its chat, which now expands too.
+  // An artifact in that chat, made through the call "Save as artifact" makes. That leaves the open chat's own list as
+  // it was (the button also adds it there), and opening the same chat again keeps that list, so the panel would find
+  // nothing: a reload starts the window afresh, with the project still expanded, and lists the artifact under its chat.
   const heronArtifact = await win.evaluate(async () => {
     const [project] = await window.ollmost.projects.list()
     const [chat] = await window.ollmost.conversations.list({ projectId: project.id })
@@ -535,13 +536,13 @@ try {
     })
     return a.title
   })
-  await heron.locator('button[aria-label="Collapse Heron launch"]').click()
-  await heron.locator('button[aria-label="Expand Heron launch"]').click()
+  await win.reload()
+  await win.waitForSelector('textarea')
   const heronChat = heron.locator('[data-testid="sidebar-chat"]')
   const sideArtifacts = heron.locator('[data-testid="sidebar-artifact"]')
   await heronChat
     .locator('button[aria-label^="Expand "]')
-    .waitFor({ timeout: 5000 })
+    .waitFor({ timeout: 15000 })
     .catch(() => {})
   const hiddenAtFirst = await sideArtifacts.count()
   await heronChat.locator('button[aria-label^="Expand "]').click()
