@@ -1,13 +1,12 @@
 import { FolderClosed, MessageSquare, PanelLeft, Plus, Settings, Shapes, Sparkles, SquareTerminal } from 'lucide-react'
-import { type ReactNode, useEffect } from 'react'
+import type { ReactNode } from 'react'
 import { cn } from '@/lib/format'
 import { type Route, useApp } from '@/stores/app'
 import { useArtifactPanel } from '@/stores/artifactPanel'
 import { useChat } from '@/stores/chat'
-import { useExplorer } from '@/stores/explorer'
 import { ConversationRow } from './ConversationMenu'
 import { OllmostMark } from './OllmostMark'
-import { ProjectExplorer } from './ProjectExplorer'
+import { SidebarProjects } from './SidebarProjects'
 import { IconButton } from './ui'
 
 function NavItem({
@@ -42,7 +41,7 @@ function SectionTitle({ children }: { children: ReactNode }) {
 }
 
 export function Sidebar() {
-  const { route, navigate, toggleSidebar, conversations, projects, settings } = useApp()
+  const { route, navigate, toggleSidebar, conversations, settings } = useApp()
   const streams = useChat((s) => s.streams)
 
   const go = (r: Route) => {
@@ -50,19 +49,9 @@ export function Sidebar() {
     navigate(r)
   }
 
-  // The explorer shows the pinned projects and the one in view (open on its page, or the open chat's): the sidebar is
-  // narrow, and a project's tree must not vanish when one of its chats is opened from it.
   const activeChatId = route.name === 'chat' ? route.id : null
-  const openChat = useChat((s) => s.conversation)
-  const chatProject = (id: string) => conversations.find((c) => c.id === id)?.projectId ?? (openChat?.id === id ? openChat.projectId : null)
-  const viewedProjectId = route.name === 'project' ? route.id : activeChatId ? chatProject(activeChatId) : null
-  const openProject = viewedProjectId ? projects.find((p) => p.id === viewedProjectId) : null
-  const shownProjects = [...projects.filter((p) => p.pinned), ...(openProject && !openProject.pinned ? [openProject] : [])]
   const pinnedChats = conversations.filter((c) => c.pinned)
   const recents = conversations.filter((c) => !c.pinned).slice(0, 40)
-  useEffect(() => {
-    if (projects.length) useExplorer.getState().prune(projects.map((p) => p.id))
-  }, [projects])
   const name = settings?.userName?.trim()
 
   const row = (c: (typeof conversations)[number]) => (
@@ -124,14 +113,7 @@ export function Sidebar() {
       </nav>
 
       <div className="mt-2 min-h-0 flex-1 overflow-y-auto px-2 pb-3">
-        {shownProjects.length > 0 && (
-          <>
-            <SectionTitle>Projects</SectionTitle>
-            {shownProjects.map((p) => (
-              <ProjectExplorer key={p.id} project={p} />
-            ))}
-          </>
-        )}
+        <SidebarProjects go={go} />
         {pinnedChats.length > 0 && (
           <>
             <SectionTitle>Pinned</SectionTitle>

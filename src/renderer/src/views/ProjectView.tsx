@@ -1,30 +1,30 @@
-import { ChevronLeft, Ellipsis, FileText, Pencil, Pin, Plus, Trash2, X } from 'lucide-react'
+import { ChevronLeft, Ellipsis, Pencil, Pin, Trash2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { labelForKey } from '@shared/modelLabel'
 import type { ProjectFile } from '@shared/types'
 import { Composer } from '@/components/Composer'
 import { ConversationMenu } from '@/components/ConversationMenu'
+import { ProjectArtifacts } from '@/components/ProjectArtifacts'
+import { DeleteProjectDialog } from '@/components/ProjectDialogs'
+import { ProjectFiles } from '@/components/ProjectFiles'
 import { TopBar } from '@/components/TopBar'
 import { Button, Field, IconButton, Menu, MenuContent, MenuItem, MenuTrigger, Modal, Spinner, TextArea, TextField } from '@/components/ui'
 import { api } from '@/lib/api'
 import { sendMessage } from '@/lib/chatActions'
-import { cn, formatBytes, formatTokens, relativeTime } from '@/lib/format'
+import { cn, formatTokens, relativeTime } from '@/lib/format'
 import { contextWindowFor, findModel, reportError, selectEndpoints, useApp } from '@/stores/app'
-import { useDrafts } from '@/stores/drafts'
 
 export function ProjectView({ id }: { id: string }) {
-  const { projects, conversations, loadProjects, loadConversations, navigate, models, draftModel, projectFilesVersion, touchProjectFiles } =
-    useApp()
+  const { projects, conversations, loadProjects, navigate, models, draftModel, projectFilesVersion } = useApp()
   const endpoints = useApp(selectEndpoints)
   const project = projects.find((p) => p.id === id)
   const [files, setFiles] = useState<ProjectFile[]>([])
-  const [uploading, setUploading] = useState(false)
   const [editing, setEditing] = useState<'details' | 'instructions' | null>(null)
   const [deleting, setDeleting] = useState(false)
   const [draft, setDraft] = useState({ name: '', description: '', instructions: '' })
 
-  const loadFiles = useCallback(() => api.projects.files(id).then(setFiles), [id])
-  // Reloaded when the sidebar's explorer changes the files too.
+  const loadFiles = useCallback(() => api.projects.files(id).then(setFiles).catch(reportError), [id])
+  // Reloaded whenever the files change (see ProjectFiles).
   useEffect(() => {
     void loadFiles()
   }, [loadFiles, projectFilesVersion])
@@ -49,22 +49,6 @@ export function ProjectView({ id }: { id: string }) {
       setEditing(null)
     } catch (err) {
       reportError(err)
-    }
-  }
-
-  const addFiles = async () => {
-    const sources = await api.attachments.pick()
-    if (!sources.length) return
-    setUploading(true)
-    try {
-      const { errors } = await api.projects.addFiles(id, sources)
-      errors.forEach(reportError)
-      await loadProjects()
-      touchProjectFiles() // reloads the list here and in the explorer
-    } catch (err) {
-      reportError(err)
-    } finally {
-      setUploading(false)
     }
   }
 
@@ -169,66 +153,32 @@ export function ProjectView({ id }: { id: string }) {
             </p>
           </section>
 
-          <section className="rounded-ollmost-lg border border-line bg-panel p-4">
-            <div className="mb-2 flex items-center justify-between">
-              <h2 className="text-sm font-medium">Knowledge</h2>
-              <IconButton label="Add files" size="sm" onClick={addFiles} disabled={uploading}>
-                {uploading ? <Spinner className="size-3.5" /> : <Plus className="size-4" />}
-              </IconButton>
-            </div>
-            {files.length > 0 && (
-              <div className="mb-3">
-                <div className="h-1.5 overflow-hidden rounded-full bg-hover">
-                  <div
-                    className={cn('h-full rounded-full', usage > 0.8 ? 'bg-danger' : 'bg-accent')}
-                    style={{ width: `${Math.min(100, Math.max(2, usage * 100))}%` }}
-                  />
+          <ProjectFiles
+            project={project}
+            files={files}
+            summary={
+              files.length > 0 && (
+                <div className="mb-3">
+                  <div className="h-1.5 overflow-hidden rounded-full bg-hover">
+                    <div
+                      className={cn('h-full rounded-full', usage > 0.8 ? 'bg-danger' : 'bg-accent')}
+                      style={{ width: `${Math.min(100, Math.max(2, usage * 100))}%` }}
+                    />
+                  </div>
+                  <div className="mt-1.5 text-xs text-subtle">
+                    {capacity
+                      ? `${Math.round(usage * 100)}% of ${labelForKey(draftModel, endpoints)}'s context (${formatTokens(knowledgeTokens)} tokens)`
+                      : `${formatTokens(knowledgeTokens)} tokens`}
+                  </div>
+                  {usage > 0.8 && (
+                    <div className="mt-1 text-xs text-danger">Near the context limit: older chat history will be trimmed to fit.</div>
+                  )}
                 </div>
-                <div className="mt-1.5 text-xs text-subtle">
-                  {capacity
-                    ? `${Math.round(usage * 100)}% of ${labelForKey(draftModel, endpoints)}'s context (${formatTokens(knowledgeTokens)} tokens)`
-                    : `${formatTokens(knowledgeTokens)} tokens`}
-                </div>
-                {usage > 0.8 && (
-                  <div className="mt-1 text-xs text-danger">Near the context limit: older chat history will be trimmed to fit.</div>
-                )}
-              </div>
-            )}
-            {files.length ? (
-              <ul className="space-y-1">
-                {[...files]
-                  .sort((a, b) => a.folder.localeCompare(b.folder) || a.name.localeCompare(b.name))
-                  .map((f) => (
-                    <li key={f.id} className="group flex items-center gap-2 rounded-lg px-1.5 py-1.5 hover:bg-hover">
-                      <FileText className="size-4 shrink-0 text-muted" />
-                      <div className="min-w-0 flex-1">
-                        <div className="truncate text-[13px]">
-                          {f.folder && <span className="text-subtle">{f.folder}/</span>}
-                          {f.name}
-                        </div>
-                        <div className="text-[11px] text-subtle">
-                          {formatBytes(f.size)} · {f.tokenEstimate ? `${formatTokens(f.tokenEstimate)} tokens` : 'no text found'}
-                        </div>
-                      </div>
-                      <button
-                        aria-label={`Remove ${f.name}`}
-                        onClick={async () => {
-                          await api.projects.removeFile(f.id).catch(reportError)
-                          touchProjectFiles()
-                        }}
-                        className="hidden rounded p-1 text-subtle hover:text-fg group-hover:block"
-                      >
-                        <X className="size-3.5" />
-                      </button>
-                    </li>
-                  ))}
-              </ul>
-            ) : (
-              <p className="text-[13px] text-muted">
-                Add PDFs, documents, spreadsheets or text files. Every chat in this project can use them.
-              </p>
-            )}
-          </section>
+              )
+            }
+          />
+
+          <ProjectArtifacts projectId={id} />
         </aside>
       </div>
 
@@ -287,34 +237,7 @@ export function ProjectView({ id }: { id: string }) {
         </div>
       </Modal>
 
-      <Modal
-        open={deleting}
-        onOpenChange={setDeleting}
-        title="Delete project?"
-        description={`“${project.name}”, its ${chats.length} chats and its knowledge files will be permanently deleted.`}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setDeleting(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="danger"
-              onClick={async () => {
-                try {
-                  await api.projects.delete(id)
-                  useDrafts.getState().discard([`project:${id}`, ...chats.map((c) => c.id)])
-                  await Promise.all([loadProjects(), loadConversations()])
-                  navigate({ name: 'projects' })
-                } catch (err) {
-                  reportError(err)
-                }
-              }}
-            >
-              Delete project
-            </Button>
-          </>
-        }
-      />
+      <DeleteProjectDialog project={project} open={deleting} onOpenChange={setDeleting} />
     </div>
   )
 }
