@@ -182,7 +182,10 @@ export function Composer({
   const [atState, setAt] = useState<{ start: number; query: string; index: number } | null>(null)
   const [listed, setListed] = useState<Listed | null>(null)
   const asking = useRef<string | null>(null)
+  const askAgain = useRef(false)
   const busyTries = useRef(0)
+  // An IME's text being composed: the textarea draws it, so the IME's underline (in the text's colour) shows.
+  const [composing, setComposing] = useState(false)
   const overlayRef = useRef<HTMLDivElement>(null)
   const wasStreaming = useRef(streaming)
   const [submitting, setSubmitting] = useState(false)
@@ -203,29 +206,38 @@ export function Composer({
   // The menu goes with its @: once the text no longer has it (sent, or cleared), it's closed.
   const at = atState && text.startsWith(`@${atState.query}`, atState.start) ? atState : null
   const loadPaths = useCallback(() => {
-    const id = sessionId
-    // One ask at a time: main keeps the list, so the answer to one already on its way is as fresh.
-    if (!id || asking.current === id) return
-    asking.current = id
-    void api.code
-      .paths(id)
-      .then(
-        (got) => {
-          if (!got.busy) busyTries.current = 0
-          setListed((prev) => {
-            const kept = prev?.id === id ? prev : null
-            // A command is running there: keep what was listed before, so its marks stay, and ask again soon.
-            if (got.busy) return { id, list: kept?.list ?? null, set: kept?.set ?? NO_PATHS, trouble: 'busy' }
-            if (kept?.list && sameList(kept.list, got)) return kept.trouble ? { ...kept, trouble: null } : kept
-            return { id, list: got, set: new Set(got.paths), trouble: null }
-          })
-        },
-        // The error can name the folder, so the menu only says that it couldn't list it.
-        () => setListed({ id, list: null, set: NO_PATHS, trouble: 'failed' })
-      )
-      .finally(() => {
-        if (asking.current === id) asking.current = null
-      })
+    const ask = (id: string) => {
+      // One ask at a time. One made meanwhile (a reply ended, say) may need a newer answer than the one on its way, so
+      // that answer is followed by one more ask, however many were made meanwhile.
+      if (asking.current === id) {
+        askAgain.current = true
+        return
+      }
+      asking.current = id
+      askAgain.current = false
+      void api.code
+        .paths(id)
+        .then(
+          (got) => {
+            if (!got.busy) busyTries.current = 0
+            setListed((prev) => {
+              const kept = prev?.id === id ? prev : null
+              // A command is running there: keep what was listed before, so its marks stay, and ask again soon.
+              if (got.busy) return { id, list: kept?.list ?? null, set: kept?.set ?? NO_PATHS, trouble: 'busy' }
+              if (kept?.list && sameList(kept.list, got)) return kept.trouble ? { ...kept, trouble: null } : kept
+              return { id, list: got, set: new Set(got.paths), trouble: null }
+            })
+          },
+          // The error can name the folder, so the menu only says that it couldn't list it.
+          () => setListed({ id, list: null, set: NO_PATHS, trouble: 'failed' })
+        )
+        .finally(() => {
+          if (asking.current !== id) return
+          asking.current = null
+          if (askAgain.current) ask(id)
+        })
+    }
+    if (sessionId) ask(sessionId)
   }, [sessionId])
   const mine = sessionId && listed?.id === sessionId ? listed : null
   const asked = !!mine
@@ -238,7 +250,11 @@ export function Composer({
     if (needsPaths && !asked) loadPaths()
   }, [needsPaths, asked, loadPaths])
   useEffect(() => {
-    if (wasStreaming.current && !streaming && asked) loadPaths()
+    // A reply's end is news: the tries a command used up while it ran start again.
+    if (wasStreaming.current && !streaming && asked) {
+      busyTries.current = 0
+      loadPaths()
+    }
     wasStreaming.current = streaming
   }, [streaming, asked, loadPaths])
   // A command was running: ask again a few times (each busy answer is a new `mine`), then leave it to the next @.
@@ -536,6 +552,11 @@ export function Composer({
         return
       }
     }
+    // Until the first list arrives the menu says "Listing files…": Enter and Tab wait for it rather than send.
+    if (at && atOpen && !asked && (e.key === 'Enter' || e.key === 'Tab') && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      return
+    }
     if (at && e.key === 'Escape' && !e.nativeEvent.isComposing) {
       setAt(null)
       return
@@ -679,7 +700,8 @@ export function Composer({
               data-testid="at-layer"
               className={cn(
                 'pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 text-[15px] leading-relaxed text-fg',
-                large ? 'pt-4' : 'pt-3.5'
+                large ? 'pt-4' : 'pt-3.5',
+                composing && 'invisible'
               )}
             >
               <MarkedText text={text} marks={marks} />
@@ -698,6 +720,8 @@ export function Composer({
               updateAt(e.target.value, e.target.selectionStart)
             }}
             onKeyDown={onKeyDown}
+            onCompositionStart={() => setComposing(true)}
+            onCompositionEnd={() => setComposing(false)}
             onScroll={(e) => {
               if (overlayRef.current) overlayRef.current.scrollTop = e.currentTarget.scrollTop
             }}
@@ -714,7 +738,8 @@ export function Composer({
               'relative block w-full resize-none bg-transparent px-4 text-[15px] leading-relaxed outline-none placeholder:text-subtle',
               // In a session the layer beneath draws the text, with its marks; the textarea keeps the caret and selection,
               // and draws selected text itself, since a theme's selection colour can hide what lies under it.
-              chatMode ? 'text-fg' : 'text-transparent caret-fg selection:text-fg',
+              // While an IME composes, the textarea draws its own text and the layer hides, marks and all.
+              chatMode || composing ? 'text-fg' : 'text-transparent caret-fg selection:text-fg',
               large ? 'min-h-[88px] pt-4' : 'min-h-[52px] pt-3.5'
             )}
           />
