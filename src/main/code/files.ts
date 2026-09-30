@@ -278,14 +278,33 @@ function checkGlob(glob: string | undefined): void {
   if (glob && glob.length > GLOB_MAX_CHARS) throw new Refused('pattern too long', `The glob is over ${GLOB_MAX_CHARS} characters.`)
 }
 
+/**
+ * `given` located (see locate), and what is there by what a link leads to (locate found that inside the folder), or
+ * null when nothing is.
+ */
+async function locateFollowed(root: string, given: unknown): Promise<{ located: Located; stats: Stats | null }> {
+  const located = await locate(root, given)
+  return { located, stats: located.target && (await stat(located.real).catch(() => null)) }
+}
+
 /** A folder to walk from: the root itself when `path` is absent; a real folder inside it otherwise. */
 async function folderIn(root: string, path: unknown): Promise<{ rel: string; walkFrom: string }> {
   if (path === undefined || path === null || path === '') return { rel: '', walkFrom: '' }
-  const located = await locate(root, path)
-  const s = located.target && (await stat(located.real).catch(() => null))
-  if (!s) throw new Refused('not found', `There is no folder at ${located.rel}.`)
-  if (!s.isDirectory()) throw new Refused('not a folder', `${located.rel} is not a folder.`)
+  const { located, stats } = await locateFollowed(root, path)
+  if (!stats) throw new Refused('not found', `There is no folder at ${located.rel}.`)
+  if (!stats.isDirectory()) throw new Refused('not a folder', `${located.rel} is not a folder.`)
   return { rel: located.rel, walkFrom: relative(root, located.real) }
+}
+
+/**
+ * Whether `path` in the session's folder is a folder, by what a link there leads to, without reading it; null when
+ * nothing is there. Refuses as locate does: a path outside the folder, or a link that leaves it or leads nowhere.
+ */
+export function pathKind(ws: Workspace, path: unknown): Promise<{ rel: string; folder: boolean } | null> {
+  return readyForSession(ws, async (root) => {
+    const { located, stats } = await locateFollowed(root, path)
+    return stats && { rel: located.rel, folder: stats.isDirectory() }
+  })
 }
 
 export interface SearchResult {
