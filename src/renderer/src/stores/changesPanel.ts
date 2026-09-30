@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { useArtifactPanel } from './artifactPanel'
+import { useSidebar } from './sidebar'
 
 interface ChangesPanelState {
   open: boolean
@@ -20,12 +21,12 @@ interface ChangesPanelState {
   setCount: (sessionId: string, count: number) => void
 }
 
-/** What the panel must leave: the sidebar, and a session column wide enough for its top bar's title and chips. */
-const SIDEBAR_PX = 272
+/** What the panel must leave: the sidebar (at its dragged width), and a session column wide enough for its top bar's
+ *  title and chips. */
 const SESSION_MIN_PX = 560
 /** A panel width within bounds: at least 360, at most 72% of the window, and leaving the session column its room. */
 export const panelWidth = (width: number): number =>
-  Math.max(360, Math.min(width, window.innerWidth * 0.72, window.innerWidth - SIDEBAR_PX - SESSION_MIN_PX))
+  Math.max(360, Math.min(width, window.innerWidth * 0.72, window.innerWidth - useSidebar.getState().width - SESSION_MIN_PX))
 
 export const useChangesPanel = create<ChangesPanelState>((set, get) => ({
   open: false,

@@ -80,6 +80,8 @@ function toModelInfo(endpoint: Endpoint, name: string, info: CachedModelInfo, in
     contextWindow: contextWindowFor({ contextControl, contextLength: info.contextLength, overrides, detected }, endpoint),
     installed,
     capabilities: effectiveCapabilities(info.capabilities, overrides, detected),
+    // Ollama reports each model's capabilities.
+    toolsKnown: true,
     auto: {
       capabilities: effectiveCapabilities(info.capabilities, {}, detected),
       contextWindow: contextWindowFor({ contextControl, contextLength: info.contextLength, overrides: {}, detected }, endpoint)

@@ -45,7 +45,8 @@ describe('discoverModels', () => {
         contextLength: 16384,
         parameterSize: '8B',
         thinkPreset: 'toggle',
-        reportsCapabilities: true
+        reportsCapabilities: true,
+        toolsReported: true
       },
       {
         name: 'google/gemma-3-12b',
@@ -53,7 +54,8 @@ describe('discoverModels', () => {
         contextLength: null,
         parameterSize: '12B',
         thinkPreset: null,
-        reportsCapabilities: true
+        reportsCapabilities: true,
+        toolsReported: true
       },
       {
         name: 'openai/gpt-oss-20b',
@@ -61,7 +63,8 @@ describe('discoverModels', () => {
         contextLength: null,
         parameterSize: '20B',
         thinkPreset: 'levels',
-        reportsCapabilities: true
+        reportsCapabilities: true,
+        toolsReported: true
       }
     ])
   })
@@ -94,7 +97,8 @@ describe('discoverModels', () => {
         contextLength: 32768,
         parameterSize: '8.2B',
         thinkPreset: null,
-        reportsCapabilities: true
+        reportsCapabilities: true,
+        toolsReported: true
       }
     ])
   })
@@ -107,19 +111,19 @@ describe('discoverModels', () => {
       chat_template_caps: { supports_tools: false, supports_tool_calls: false }
     }
     expect(await discoverModels(ep('llamacpp'), null)).toMatchObject([
-      { name: 'llava.gguf', capabilities: ['completion', 'vision'], contextLength: 4096 }
+      { name: 'llava.gguf', capabilities: ['completion', 'vision'], contextLength: 4096, toolsReported: true }
     ])
   })
 
-  it('gives llama.cpp the defaults when /props says nothing about tools, or isn’t there', async () => {
+  it('gives llama.cpp the defaults, and says tools are only assumed, when /props says nothing about them or isn’t there', async () => {
     routes['/v1/models'] = { data: [{ id: 'm.gguf' }] }
     routes['/props'] = { default_generation_settings: { n_ctx: 8192 } }
     expect(await discoverModels(ep('llamacpp'), null)).toMatchObject([
-      { capabilities: ['completion', 'tools'], contextLength: 8192, reportsCapabilities: true }
+      { capabilities: ['completion', 'tools'], contextLength: 8192, reportsCapabilities: true, toolsReported: false }
     ])
     delete routes['/props']
     expect(await discoverModels(ep('llamacpp'), null)).toMatchObject([
-      { capabilities: ['completion', 'tools'], contextLength: null, reportsCapabilities: false }
+      { capabilities: ['completion', 'tools'], contextLength: null, reportsCapabilities: false, toolsReported: false }
     ])
   })
 
@@ -132,7 +136,8 @@ describe('discoverModels', () => {
         contextLength: 32768,
         parameterSize: null,
         thinkPreset: null,
-        reportsCapabilities: false
+        reportsCapabilities: false,
+        toolsReported: false
       }
     ])
   })

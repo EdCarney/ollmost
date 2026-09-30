@@ -2,12 +2,11 @@ import { Shapes } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import type { ArtifactSummary, ArtifactType } from '@shared/types'
 import { ARTIFACT_META } from '@/components/ArtifactCard'
+import { openArtifact } from '@/components/ProjectArtifacts'
 import { PageHeader, TopBar } from '@/components/TopBar'
 import { EmptyState, Spinner } from '@/components/ui'
 import { api } from '@/lib/api'
 import { cn, relativeTime } from '@/lib/format'
-import { conversationRoute, useApp } from '@/stores/app'
-import { useArtifactPanel } from '@/stores/artifactPanel'
 
 const FILTERS: Array<{ value: ArtifactType | 'all'; label: string }> = [
   { value: 'all', label: 'All' },
@@ -19,7 +18,6 @@ const FILTERS: Array<{ value: ArtifactType | 'all'; label: string }> = [
 ]
 
 export function ArtifactsView() {
-  const navigate = useApp((s) => s.navigate)
   const [items, setItems] = useState<ArtifactSummary[] | null>(null)
   const [filter, setFilter] = useState<ArtifactType | 'all'>('all')
 
@@ -60,10 +58,7 @@ export function ArtifactsView() {
                 return (
                   <button
                     key={a.id}
-                    onClick={() => {
-                      navigate(conversationRoute(a.conversationId, useApp.getState().sessions))
-                      useArtifactPanel.getState().openArtifact(a.id)
-                    }}
+                    onClick={() => openArtifact(a)}
                     className="flex flex-col rounded-ollmost-lg border border-line bg-panel p-4 text-left transition-colors hover:border-line-strong"
                   >
                     <span className="mb-3 flex size-10 items-center justify-center rounded-lg border border-line bg-canvas text-muted">

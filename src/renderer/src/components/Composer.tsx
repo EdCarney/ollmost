@@ -373,7 +373,7 @@ export function Composer({
       // Every drop ends the drag, whoever took it: the browser sends no last dragleave.
       depth = 0
       setDragging(false)
-      // A drop the explorer took (onto a project's folder) is not an attachment.
+      // A drop a project page's Knowledge section took (onto it or one of its folders) is not an attachment.
       if (e.defaultPrevented) return
       e.preventDefault()
       void addFileObjects([...(e.dataTransfer?.files ?? [])])

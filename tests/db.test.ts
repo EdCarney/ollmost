@@ -1,5 +1,6 @@
 import { join } from 'node:path'
 import { beforeAll, describe, expect, it } from 'vitest'
+import { addArtifactVersion, listAllArtifacts } from '../src/main/db/artifacts'
 import { getDb, openDatabase, transaction } from '../src/main/db/index'
 import { paths } from '../src/main/paths'
 import {
@@ -404,5 +405,22 @@ describe('message references', () => {
     expect(getMessage(m.id)!.references).toEqual([])
     setMessageReferences(m.id, null)
     expect(getMessage(m.id)!.references).toBeNull()
+  })
+})
+
+describe('the artifacts list', () => {
+  const make = (conversationId: string, identifier: string) =>
+    addArtifactVersion({ conversationId, messageId: null, identifier, type: 'markdown', title: identifier, language: null, content: 'x' })
+
+  it('lists every chat’s artifacts, or only a project’s', () => {
+    const p = createProject({ name: 'Artifacts' })
+    const other = createProject({ name: 'Other' })
+    make(chat(p.id).id, 'in-project')
+    make(chat(other.id).id, 'in-other')
+    make(chat().id, 'loose')
+    const titles = (list: Array<{ title: string }>) => list.map((a) => a.title)
+    expect(titles(listAllArtifacts())).toEqual(expect.arrayContaining(['in-project', 'in-other', 'loose']))
+    expect(titles(listAllArtifacts(p.id))).toEqual(['in-project'])
+    expect(listAllArtifacts(p.id)[0].projectId).toBe(p.id)
   })
 })

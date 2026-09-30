@@ -10,7 +10,7 @@ import { toModelKey } from '@shared/modelKey'
 import { openWith } from '@shared/workspace'
 import { BUILTIN_THEMES } from '@shared/themes'
 import type { ThemeDef } from '@shared/types'
-import { decide } from './chat/approvals'
+import { answer, decide } from './chat/approvals'
 import { compact, edit, isReplyingIn, regenerate, send, setStage, stop, stopAll } from './chat/service'
 import { changes, diff, stopPanelRuns } from './code/changes'
 import { readBranch } from './code/git'
@@ -320,7 +320,8 @@ const impl: Impl = {
     edit: (messageId, content, opts) => edit(messageId, content, opts),
     compact: (id, opts) => compact(id, opts),
     stop: async (id) => stop(id),
-    decide: async (id, messageId, index, decision) => decide(id, messageId, index, decision)
+    decide: async (id, messageId, index, decision) => decide(id, messageId, index, decision),
+    answer: async (id, messageId, index, answers) => answer(id, messageId, index, answers)
   },
 
   attachments: {
@@ -353,7 +354,7 @@ const impl: Impl = {
   },
 
   artifacts: {
-    list: async () => listAllArtifacts(),
+    list: async (projectId) => listAllArtifacts(typeof projectId === 'string' ? projectId : undefined),
     stage: async (type, content) => stageArtifact(type, content),
     save: async (title, type, language, content) => {
       const win = BrowserWindow.getFocusedWindow()

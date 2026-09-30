@@ -5,7 +5,7 @@ import { setEndpointStreamOptions } from '../../settings'
 import { effectiveCapabilities } from '../capabilities'
 import { contextWindowFor } from '../context'
 import { endpointSecretName, getSecret } from '../secrets'
-import { createStallTimer, STREAM_TIMEOUTS, type StreamTimeouts } from '../stream'
+import { createStallTimer, idleMsFor, STREAM_TIMEOUTS, type StreamTimeouts } from '../stream'
 import type { ChatEvent, ChatRequest, ChatResult, ChatTiming, Provider, RequestUsage, WireRequest } from '../types'
 import { billingOf, whereOf } from '../where'
 import { toOpenAIBody } from './body'
@@ -77,6 +77,7 @@ const infoOf = (d: DiscoveredModel): CachedModelInfo => ({
   contextLength: d.contextLength,
   family: null,
   parameterSize: d.parameterSize,
+  toolsReported: d.toolsReported,
   thinkPreset: d.thinkPreset
 })
 
@@ -201,7 +202,7 @@ export class OpenAIProvider implements Provider {
     try {
       const res = await this.post(this.body(req, true), req.model, inner.signal)
       if (!res.body) throw new OpenAIError(`${name} returned an empty response.`)
-      const idleMs = req.tools?.length ? t.toolIdleMs : t.idleMs
+      const idleMs = idleMsFor(req.tools, t)
       const idle = `${name} stopped responding in the middle of the reply (nothing for ${minutes(idleMs)} minutes).`
       const dropped = `The connection to ${name} dropped before the reply finished.`
       const calls = createToolCallAccumulator()
@@ -408,6 +409,9 @@ export class OpenAIProvider implements Provider {
       contextWindow: contextWindowFor({ ...sizes, overrides }, this.endpoint),
       installed,
       capabilities,
+      // Tools are known when the server said so (a profile saved before that was recorded counts as assumed until it's
+      // read again) or the user set them.
+      toolsKnown: overrides.tools !== undefined || info.toolsReported === true,
       contextLength: info.contextLength,
       family: info.family,
       parameterSize: info.parameterSize,

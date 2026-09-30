@@ -3,6 +3,7 @@ import type {
   Artifact,
   ArtifactSummary,
   ArtifactType,
+  AskAnswer,
   Attachment,
   ChatEvent,
   CodeChanges,
@@ -171,6 +172,8 @@ export interface OllmostApi {
     compact(conversationId: ID, opts: { focus: string; model: string }): Promise<Conversation>
     /** Answer a tool call that's waiting for approval: its reply's id and the call's index in its tool events. */
     decide(conversationId: ID, messageId: ID, index: number, decision: ToolDecision): Promise<void>
+    /** Answer an ask_user call that's waiting: one answer per question, or null to skip them all. */
+    answer(conversationId: ID, messageId: ID, index: number, answers: AskAnswer[] | null): Promise<void>
   }
   attachments: {
     ingest(sources: FileSource[]): Promise<{ added: Attachment[]; errors: string[] }>
@@ -178,7 +181,8 @@ export interface OllmostApi {
     remove(id: ID): Promise<void>
   }
   artifacts: {
-    list(): Promise<ArtifactSummary[]>
+    /** The latest artifacts, or only those made in a project's chats. */
+    list(projectId?: ID): Promise<ArtifactSummary[]>
     /** Stage HTML/SVG for the sandboxed frame; returns an artifact:// URL. */
     stage(type: ArtifactType, content: string): Promise<string>
     save(title: string, type: ArtifactType, language: string | null, content: string): Promise<boolean>
@@ -330,7 +334,7 @@ export const INVOKE_CHANNELS = {
   endpoints: ['list', 'probe', 'add', 'update', 'removalImpact', 'remove', 'setKey'],
   projects: ['list', 'get', 'create', 'update', 'delete', 'files', 'addFiles', 'removeFile', 'moveFile', 'openFile', 'revealFile'],
   conversations: ['list', 'get', 'update', 'delete', 'search'],
-  chat: ['send', 'regenerate', 'edit', 'stop', 'compact', 'decide'],
+  chat: ['send', 'regenerate', 'edit', 'stop', 'compact', 'decide', 'answer'],
   attachments: ['ingest', 'pick', 'remove'],
   artifacts: ['list', 'stage', 'save', 'createFromBlock'],
   skills: ['list', 'get', 'save', 'delete', 'duplicate', 'setEnabled', 'reveal'],

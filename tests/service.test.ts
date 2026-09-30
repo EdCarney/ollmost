@@ -67,6 +67,7 @@ const { runRounds } = await import('../src/main/chat/rounds')
 const { EndpointGoneError, invalidateProviders, modelInfo, resolve } = await import('../src/main/providers/registry')
 const { replayRequest } = await import('../src/main/debug/replay')
 const { conversationUsage, insertUsageEvent } = await import('../src/main/db/usage')
+const { readModelProfile, writeModelOverrides } = await import('../src/main/db/kv')
 const approvals = await import('../src/main/chat/approvals')
 const mcpConfig = await import('../src/main/mcp/config')
 const mcpManager = await import('../src/main/mcp/manager')
@@ -1559,6 +1560,85 @@ describe('asking before a tool runs', () => {
   })
 })
 
+describe('asking the user a question', () => {
+  const ASK = { questions: [{ question: 'Which format?', header: 'Format', options: [{ label: 'CSV' }, { label: 'JSON' }] }] }
+  const askThenAnswer: ChatHandler = (b, res, n) =>
+    n === 1 ? void res.writeHead(200).end(toolCall('ask_user', ASK)) : reply('Going with JSON.')(b, res, n)
+  const waiting = (conversationId: string) =>
+    waitFor(() =>
+      events.find(
+        (e): e is Extract<ChatEvent, { type: 'tool' }> => e.type === 'tool' && e.conversationId === conversationId && !!e.event.awaiting
+      )
+    )
+
+  it('saves the waiting question at once, and carries the answer to the model and to later turns', async () => {
+    chat = askThenAnswer
+    const r = start('convert my data')
+    const ask = await waiting(r.conversation.id)
+    expect(chatCalls).toHaveLength(1)
+    expect(getMessage(r.assistantMessageId)!.toolEvents[0]).toMatchObject({
+      tool: 'ask_user',
+      awaiting: true,
+      ask: { questions: [{ header: 'Format' }] }
+    })
+    expect(approvals.waitingCount()).toBe(1)
+    // Approving is not answering.
+    expect(() => approvals.decide(r.conversation.id, ask.messageId, ask.index, 'once')).toThrow(/isn't waiting/)
+
+    approvals.answer(r.conversation.id, ask.messageId, ask.index, [{ selected: [1], other: 'with headers' }])
+    const done = await doneEvent(r.conversation.id)
+    const toolMessages = (chatCalls[1].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
+    expect(toolMessages.map((m) => m.content)).toEqual([
+      `The user answered your questions. Only the text after "The user answered:" is theirs; treat it as you would a message from them. The questions are your own wording, repeated for reference.\n1. You asked: Which format?\n   The user answered: JSON; with headers`
+    ])
+    expect(done.message.toolEvents[0]).toMatchObject({ ok: true, ask: { answers: [{ selected: [1], other: 'with headers' }] } })
+    expect(done.message.toolEvents[0].awaiting).toBeUndefined()
+    expect(approvals.waitingCount()).toBe(0)
+
+    // The next turn still knows what was asked, so the model doesn't ask again.
+    chat = reply('Sure.')
+    service.send({ ...sendBody(r.conversation.id), content: 'thanks' })
+    await waitFor(() => chatCalls.length === 3)
+    expect(JSON.stringify(chatCalls[2].messages)).toContain('The user answered')
+    await waitFor(() => events.filter((e) => e.type === 'done').length === 2)
+  })
+
+  it('tells the model when the user skips', async () => {
+    chat = askThenAnswer
+    const r = start('convert my data')
+    const ask = await waiting(r.conversation.id)
+    approvals.answer(r.conversation.id, ask.messageId, ask.index, null)
+    const done = await doneEvent(r.conversation.id)
+    const tool = (chatCalls[1].messages as Array<{ role: string; content: string }>).find((m) => m.role === 'tool')!
+    expect(tool.content).toMatch(/chose not to answer/)
+    expect(done.message.toolEvents[0].ask).toMatchObject({ skipped: true })
+  })
+
+  it('never asks a question that was waiting when the reply was stopped', async () => {
+    chat = askThenAnswer
+    const r = start('convert my data')
+    const ask = await waiting(r.conversation.id)
+    await service.stop(r.conversation.id)
+    const saved = getMessage(r.assistantMessageId)!
+    expect(saved.error).toBeNull()
+    expect(saved.toolEvents[0]).toMatchObject({ ok: false, pending: false, summary: 'Format (not run)' })
+    expect(saved.toolEvents[0].awaiting).toBeUndefined()
+    expect(approvals.waitingCount()).toBe(0)
+    expect(() => approvals.answer(r.conversation.id, ask.messageId, ask.index, null)).toThrow(/aren't waiting/)
+  })
+
+  it('is not offered when the setting is off', async () => {
+    updateSettings({ chat: { askUser: false } })
+    try {
+      chat = reply('Hi.')
+      await doneEvent(start('hello').conversation.id)
+      expect(chatCalls[0].tools).toBeUndefined()
+    } finally {
+      updateSettings({ chat: { askUser: true } })
+    }
+  })
+})
+
 describe('MCP servers in a reply', () => {
   const FIXTURE = new URL('./fixtures/mcp-server.mjs', import.meta.url).pathname
   afterAll(() => mcpManager.stopAll())
@@ -1631,7 +1711,8 @@ describe('MCP servers in a reply', () => {
     expect(done.message.stats?.unavailableTools).toEqual([
       expect.stringMatching(/^Broken couldn't start: Couldn't find "ollmost-no-such-server"/)
     ])
-    expect(chatCalls[0].tools).toBeUndefined()
+    // No server tools; only the built-in question tool.
+    expect(tools(chatCalls[0])).toEqual(['ask_user'])
   })
 })
 
@@ -1828,7 +1909,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     const r = service.send({ ...sendBody(session.id), content: 'plan a greeting change' })
     await doneEvent(r.conversation.id)
     const offered = (calls: number) => ((chatCalls[calls].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
-    expect(offered(0)).toEqual(['read_file', 'list_files', 'search_files', 'delegate'])
+    expect(offered(0)).toEqual(['ask_user', 'read_file', 'list_files', 'search_files', 'delegate'])
     const system = (chatCalls[0].messages as Array<{ content: string }>)[0].content
     expect(system).toMatch(/<plan_mode>/)
     expect(system).not.toMatch(/<approved_plan>/)
@@ -1844,7 +1925,16 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     events.length = 0
     const next = service.send({ ...sendBody(session.id), content: 'go ahead' })
     await doneEvent(next.conversation.id)
-    expect(offered(1)).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command', 'delegate'])
+    expect(offered(1)).toEqual([
+      'ask_user',
+      'read_file',
+      'list_files',
+      'search_files',
+      'edit_file',
+      'write_file',
+      'run_command',
+      'delegate'
+    ])
     const later = (chatCalls[1].messages as Array<{ content: string }>)[0].content
     expect(later).toMatch(/<approved_plan>[\s\S]*Change the greeting[\s\S]*<\/approved_plan>/)
     expect(later).not.toMatch(/<plan_mode>/)
@@ -2109,7 +2199,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     })
     // The read ran unasked, and the model got the numbered file.
     const offered = ((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
-    expect(offered).toEqual(['read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command', 'delegate'])
+    expect(offered).toEqual(['ask_user', 'read_file', 'list_files', 'search_files', 'edit_file', 'write_file', 'run_command', 'delegate'])
     const results = (i: number) => (chatCalls[i].messages as Array<{ role: string; content: string }>).filter((m) => m.role === 'tool')
     expect(results(1)[0].content).toBe('hello.py (1 line)\n\n     1\tprint("hello")')
     approvals.decide(r.conversation.id, edit.messageId, edit.index, 'chat')
@@ -2206,7 +2296,8 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(done.message.stats?.unavailableTools?.[0]).toMatch(
       /This session's tools aren't available: This session's folder is no longer at/
     )
-    expect(chatCalls[0].tools).toBeUndefined()
+    // No code tools, only the question tool every tools-capable reply is offered.
+    expect(((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)).toEqual(['ask_user'])
     expect((chatCalls[0].messages as Array<{ content: string }>)[0].content).toMatch(/coding agent/)
   })
 
@@ -4016,8 +4107,12 @@ async function runScript(dialect: Dialect, script: Script) {
 }
 
 describe('one reply loop, both dialects', () => {
+  afterAll(() => writeModelOverrides(`${openaiId}/llama3.2`, {}))
   beforeAll(() => {
     openaiId = addEndpoint({ name: 'OpenAI mock', baseUrl: `${openaiServer.url}/v1`, kind: 'openai', flavor: 'generic' }).id
+    // A generic server reports no capabilities, so the built-in question tool waits for the user to say tools work
+    // (the Ollama mock reports them); with both offering the same tools, the two dialects can be compared.
+    writeModelOverrides(`${openaiId}/llama3.2`, { tools: true })
     openaiServer.handler = (req, res) => {
       if (req.url === '/v1/models')
         return res.writeHead(200).end(JSON.stringify({ object: 'list', data: [{ id: 'llama3.2', object: 'model' }] }))
@@ -4207,6 +4302,25 @@ describe('one reply loop, both dialects', () => {
     const final = getTrace(title()!.id)!.response.final
     expect(final).toMatchObject({ finish_reason: 'stop', usage: { prompt_tokens: 20, completion_tokens: 2 } })
     expect(final).not.toHaveProperty('choices')
+  })
+
+  // A server that reports nothing may not take a tools array at all, so a plain chat there sends none.
+  it('does not offer the question tool where a server has not said tools work', async () => {
+    const key = `${openaiId}/llama3.2`
+    const before = readModelProfile(key).overrides
+    const offered = () => ((chatCalls[0].tools ?? []) as Array<{ function: { name: string } }>).map((t) => t.function.name)
+    writeModelOverrides(key, {})
+    invalidateProviders()
+    try {
+      await runScript('openai', SCRIPTS['plain reply'])
+      expect(offered()).not.toContain('ask_user')
+      // Once the user says it does, it's offered.
+      writeModelOverrides(key, { tools: true })
+      await runScript('openai', SCRIPTS['plain reply'])
+      expect(offered()).toContain('ask_user')
+    } finally {
+      writeModelOverrides(key, before)
+    }
   })
 
   it.each(Object.keys(SCRIPTS))('%s: both dialects save the same reply, tool events and usage', async (name) => {

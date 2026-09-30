@@ -1,4 +1,4 @@
-// Browser storage for per-viewer conveniences (the explorer's open nodes, a chat's closed thinking). Reads and writes
+// Browser storage for per-viewer conveniences (expanded projects, closed folders, a chat's closed thinking). Reads and writes
 // never throw: storage may be unavailable, and every caller works without it.
 
 export function readJson(key: string): unknown {

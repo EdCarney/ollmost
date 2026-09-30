@@ -195,7 +195,7 @@ function handle(e: ChatEvent): void {
         const title = listed(e.conversationId)?.title
         // A chat's first reply runs before it has a title.
         const which = title && title !== 'New chat' ? `"${title}"` : 'A new chat'
-        useApp.getState().toast(`${which} is waiting for your approval to use a tool.`)
+        useApp.getState().toast(e.event.ask ? `${which} has a question for you.` : `${which} is waiting for your approval to use a tool.`)
       }
       break
     case 'done': {

@@ -69,6 +69,17 @@ describe('tool registry', () => {
     expect(names(ctx({ skills: true, web: true }))).toEqual(['load_skill', 'read_skill_file', 'web_search', 'web_fetch'])
   })
 
+  it('offers ask_user only when the request allows it, and never to a sub-agent', () => {
+    expect(names(ctx({ ask: true }))).toEqual(['ask_user'])
+    expect(names(ctx({ ask: true, child: true }))).toEqual([])
+    // Under another name, a model's call still reaches it.
+    expect(resolveCall(call('AskUserQuestion'), ctx({ ask: true }))).toMatchObject({ name: 'ask_user', via: 'AskUserQuestion' })
+    expect(resolveCall(call('AskUserQuestion'), ctx())).toBeNull()
+    // The question is the wait: no approval card on top of it, and one at a time.
+    expect(approvalFor(call('ask_user'), ctx({ ask: true }))).toBe('auto')
+    expect(runsInParallel(call('ask_user'), ctx({ ask: true }))).toBe(false)
+  })
+
   it('adds and removes registered providers', () => {
     const undo = registerToolProvider(fake('mcp', ['notes__search']))
     expect(names(ctx())).toEqual(['notes__search'])

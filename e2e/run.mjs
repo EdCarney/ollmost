@@ -244,6 +244,9 @@ async function expectedQuota(win) {
 
 const { app, win } = await launch()
 try {
+  // Questions are on by default for models that can call tools; a card nothing answers would stall the steps below
+  // that expect a plain reply. (The question card has its own coverage in tests/.)
+  await win.evaluate(() => window.ollmost.settings.update({ chat: { askUser: false } }))
   // 1. Plain chat + auto title
   await pickModel(win, CHAT_MODEL)
   const reply = await send(win, 'Reply with the single word: pong')
@@ -447,29 +450,40 @@ try {
   await stubOpenDialog(app, [join(fixtures, 'brief.txt')])
   await win.click('button[aria-label="Add files"]')
   await win.waitForSelector('text=brief.txt')
-  // 6b. The sidebar's explorer: the open project as a tree of its files in folders, and its chats.
-  const explorer = win.locator('[data-testid="explorer-project"]').first()
-  check('the open project shows in the sidebar', (await explorer.count()) === 1)
-  await explorer.locator('[data-testid="explorer-root"] button[aria-label="Expand Heron launch"]').click()
-  await win.waitForSelector('[data-testid="explorer-file"]')
-  check('expanding it lists its files', (await explorer.locator('[data-testid="explorer-file"]').innerText()).includes('brief.txt'))
-  await explorer.locator('[data-testid="explorer-root"] button[aria-label="Heron launch menu"]').click()
+  // 6b. The project page's Knowledge section: the project's files as a tree of folders.
+  const knowledge = win.locator('[data-testid="knowledge"]')
+  const knowledgeFiles = () => win.evaluate(() => document.querySelectorAll('[data-testid="knowledge-file"]').length)
+  check(
+    'the Knowledge section lists its files',
+    (await knowledge.locator('[data-testid="knowledge-file"]').innerText()).includes('brief.txt')
+  )
+  await knowledge.locator('button[aria-label="New folder"]').click()
+  await win.fill('[data-testid="knowledge-new-folder"]', 'docs')
+  await win.keyboard.press('Enter')
+  await win.waitForSelector('[data-testid="knowledge-folder"]')
+  check('a new folder appears in the tree', (await knowledge.locator('[data-testid="knowledge-folder"]').innerText()).includes('docs'))
+  await knowledge.locator('[data-testid="knowledge-folder"] button[aria-label="docs menu"]').click()
   await win.getByRole('menuitem', { name: 'New folder…' }).click()
   // Radix hands focus back to the "…" button a tick after its menu closes; the box has to still have focus after that.
-  await win.waitForSelector('[data-testid="explorer-new-folder"]', { timeout: 5000 }).catch(() => {})
+  await win.waitForSelector('[data-testid="knowledge-new-folder"]', { timeout: 5000 }).catch(() => {})
   await win.waitForTimeout(300)
   check(
     'the new folder box keeps focus after its menu closes',
-    await win.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'explorer-new-folder')
+    await win.evaluate(() => document.activeElement?.getAttribute('data-testid') === 'knowledge-new-folder')
   )
-  await win.fill('[data-testid="explorer-new-folder"]', 'docs')
+  await win.fill('[data-testid="knowledge-new-folder"]', 'drafts')
   await win.keyboard.press('Enter')
-  await win.waitForSelector('[data-testid="explorer-folder"]')
-  check('a new folder appears in the tree', (await explorer.locator('[data-testid="explorer-folder"]').innerText()).includes('docs'))
+  await win
+    .waitForFunction(() => document.querySelectorAll('[data-testid="knowledge-folder"]').length === 2, null, { timeout: 5000 })
+    .catch(() => {})
+  check(
+    "a folder's New folder… makes one inside it",
+    (await knowledge.locator('[data-testid="knowledge-folder"]').nth(1).innerText()).includes('drafts')
+  )
   await stubOpenDialog(app, [join(fixtures, 'brief.txt')])
-  await explorer.locator('[data-testid="explorer-folder"] button[aria-label="docs menu"]').click()
+  await knowledge.locator('[data-testid="knowledge-folder"] button[aria-label="docs menu"]').click()
   await win.getByRole('menuitem', { name: 'Add files here…' }).click()
-  await win.waitForFunction(() => document.querySelectorAll('[data-testid="explorer-file"]').length === 2, null, { timeout: 10000 })
+  await win.waitForFunction(() => document.querySelectorAll('[data-testid="knowledge-file"]').length === 2, null, { timeout: 10000 })
   const inFolders = await win.evaluate(async () => {
     const [project] = await window.ollmost.projects.list()
     return (await window.ollmost.projects.files(project.id)).map((f) => `${f.folder}|${f.name}`).sort()
@@ -479,23 +493,161 @@ try {
     JSON.stringify(inFolders) === JSON.stringify(['docs|brief.txt', '|brief.txt']),
     JSON.stringify(inFolders)
   )
-  check('the project page lists it by folder', await win.getByText('docs/').first().isVisible())
-  await explorer.locator('[data-testid="explorer-file"]').nth(1).locator('button[aria-label="brief.txt menu"]').click()
+  await knowledge.locator('button[aria-label="Collapse docs"]').click()
+  const whileClosed = await knowledgeFiles()
+  await knowledge.locator('button[aria-label="Expand docs"]').click()
+  check('closing a folder hides its files, and opening it shows them again', whileClosed === 1 && (await knowledgeFiles()) === 2)
+  await knowledge.locator('[data-testid="knowledge-file"]').nth(1).locator('button[aria-label="brief.txt menu"]').click()
   await win.getByRole('menuitem', { name: 'Remove from project' }).click()
-  await win.waitForFunction(() => document.querySelectorAll('[data-testid="explorer-file"]').length === 1, null, { timeout: 10000 })
+  await win.waitForFunction(() => document.querySelectorAll('[data-testid="knowledge-file"]').length === 1, null, { timeout: 10000 })
   check(
     'removing it from the tree removes it from the project',
     (await win.evaluate(async () => (await window.ollmost.projects.files((await window.ollmost.projects.list())[0].id)).length)) === 1
   )
-  await win.screenshot({ path: join(SHOTS, 'project-explorer.png') })
+  await win.screenshot({ path: join(SHOTS, 'project-knowledge.png') })
   await pickModel(win, CHAT_MODEL)
   const codename = await send(win, 'What is the internal codename of this project? Answer in a few words.')
   // gpt-oss often writes U+202F (narrow no-break space) between words; \s matches it.
   check('project knowledge reaches the model', /blue\s+heron/i.test(codename), codename.slice(0, 60))
+
+  // 6c. The sidebar's Projects section (#128): the projects in use, each expanding to its chats and artifacts.
+  const sideProjects = win.locator('[data-testid="sidebar-project"]')
+  const sideNames = () => sideProjects.evaluateAll((rows) => rows.map((r) => r.querySelector('span.truncate')?.textContent ?? ''))
+  const heron = sideProjects.filter({ hasText: 'Heron launch' })
+  check('the project stays in the sidebar while one of its chats is open', (await heron.count()) === 1)
+  await heron.locator('button[aria-label="Expand Heron launch"]').click()
+  const heronChats = heron.locator('[data-testid="sidebar-project-items"] [role="button"]')
+  await heronChats
+    .first()
+    .waitFor({ timeout: 5000 })
+    .catch(() => {})
+  check('expanding a project lists its chats', (await heronChats.count()) === 1)
+  // An artifact in that chat, made through the call "Save as artifact" makes. That leaves the open chat's own list as
+  // it was (the button also adds it there), and opening the same chat again keeps that list, so the panel would find
+  // nothing: a reload starts the window afresh, with the project still expanded, and lists the artifact under its chat.
+  const heronArtifact = await win.evaluate(async () => {
+    const [project] = await window.ollmost.projects.list()
+    const [chat] = await window.ollmost.conversations.list({ projectId: project.id })
+    const detail = await window.ollmost.conversations.get(chat.id)
+    const a = await window.ollmost.artifacts.createFromBlock({
+      conversationId: chat.id,
+      messageId: detail.messages.at(-1).id,
+      title: 'Heron launch plan',
+      type: 'markdown',
+      language: null,
+      content: '# Launch plan\n\nMarch.'
+    })
+    return a.title
+  })
+  await win.reload()
+  await win.waitForSelector('textarea')
+  const heronChat = heron.locator('[data-testid="sidebar-chat"]')
+  const sideArtifacts = heron.locator('[data-testid="sidebar-artifact"]')
+  await heronChat
+    .locator('button[aria-label^="Expand "]')
+    .waitFor({ timeout: 15000 })
+    .catch(() => {})
+  const hiddenAtFirst = await sideArtifacts.count()
+  await heronChat.locator('button[aria-label^="Expand "]').click()
+  await sideArtifacts
+    .first()
+    .waitFor({ timeout: 5000 })
+    .catch(() => {})
   check(
-    'the project stays in the sidebar while one of its chats is open',
-    (await win.locator('[data-testid="explorer-project"]').count()) === 1
+    "a project's chat expands to the artifacts made in it",
+    hiddenAtFirst === 0 && (await sideArtifacts.innerText().catch(() => '')) === heronArtifact
   )
+  await sideArtifacts.click()
+  const planHeading = win.locator('main').getByRole('heading', { name: 'Launch plan', exact: true })
+  await planHeading.waitFor({ timeout: 5000 }).catch(() => {})
+  check('choosing an artifact there opens it in its panel', (await planHeading.count()) === 1)
+  await heronChat.locator('button[aria-label^="Collapse "]').click()
+  check(
+    "collapsing the chat hides its artifacts, and leaves the chat's row",
+    (await sideArtifacts.count()) === 0 && (await heronChats.count()) === 1
+  )
+  // Eight more projects, the last made with the section's +: the section lists the 8 most recent, so not Heron launch.
+  await win.evaluate(async () => {
+    for (let i = 1; i <= 8; i++) await window.ollmost.projects.create({ name: `Side project ${i}` })
+  })
+  await win.locator('[data-testid="sidebar-projects"] button[aria-label="Create a project"]').click()
+  await win.fill('input[placeholder="Name your project"]', 'Side project 9')
+  await win.getByRole('button', { name: 'Create project' }).click()
+  await win
+    .locator('h1', { hasText: 'Side project 9' })
+    .waitFor({ timeout: 5000 })
+    .catch(() => {})
+  const listed = await sideNames()
+  check(
+    "the section's + makes a project and opens it",
+    (await win.locator('h1', { hasText: 'Side project 9' }).count()) === 1 && listed[0] === 'Side project 9',
+    listed.join(', ')
+  )
+  check('the section lists the 8 most recent projects', listed.length === 8 && !listed.includes('Heron launch'), listed.join(', '))
+  await win.locator('[data-testid="sidebar-projects"] button[aria-label="Projects page"]').click()
+  await win.waitForSelector('input[placeholder="Search projects…"]', { timeout: 5000 }).catch(() => {})
+  // Within the page: a chat's title in the sidebar may well say "Heron launch" too.
+  const heronCard = win.locator('main').getByText('Heron launch', { exact: true })
+  check('↗ opens the projects page with the rest', (await heronCard.count()) === 1)
+  await heronCard.click()
+  await win
+    .locator('h1', { hasText: 'Heron launch' })
+    .waitFor({ timeout: 5000 })
+    .catch(() => {})
+  const withViewed = await sideNames()
+  check(
+    'a project in view shows even outside the 8, after them',
+    withViewed.length === 9 && withViewed[8] === 'Heron launch',
+    withViewed.join(', ')
+  )
+  await win.locator('button[aria-label="Hide projects"]').click()
+  const collapsed = await sideProjects.count()
+  await win.locator('button[aria-label="Show projects"]').click()
+  check('the section collapses to its header and opens again', collapsed === 0 && (await sideProjects.count()) === 9)
+  const nine = sideProjects.filter({ hasText: 'Side project 9' })
+  await nine.hover()
+  await nine.locator('button[aria-label="Side project 9 options"]').click()
+  await win.getByRole('menuitem', { name: 'Rename' }).click()
+  await win.locator('[role="dialog"] input').fill('Renamed side project')
+  await win.keyboard.press('Enter')
+  await win.waitForFunction(() => document.body.innerText.includes('Renamed side project'), null, { timeout: 5000 }).catch(() => {})
+  check("a project's row menu renames it", (await sideNames()).includes('Renamed side project'))
+  // The rest go without the menu; the last one through it, which asks first.
+  await win.evaluate(async () => {
+    for (const p of await window.ollmost.projects.list()) if (/^Side project \d$/.test(p.name)) await window.ollmost.projects.delete(p.id)
+  })
+  const renamed = sideProjects.filter({ hasText: 'Renamed side project' })
+  await renamed.hover()
+  await renamed.locator('button[aria-label="Renamed side project options"]').click()
+  await win.getByRole('menuitem', { name: 'Delete' }).click()
+  const asked = await win.getByRole('heading', { name: 'Delete project?' }).count()
+  await win.getByRole('button', { name: 'Delete project' }).click()
+  await win.waitForFunction(() => !document.body.innerText.includes('Renamed side project'), null, { timeout: 5000 }).catch(() => {})
+  check(
+    "deleting from a project's row menu asks first",
+    asked === 1 && (await win.evaluate(async () => (await window.ollmost.projects.list()).map((p) => p.name).join())) === 'Heron launch'
+  )
+  await win.screenshot({ path: join(SHOTS, 'sidebar-projects.png') })
+  // The sidebar's width: dragged at its right edge, kept after a reload, and back to the default on a double-click.
+  const sidebarWidth = async () => (await win.locator('aside').first().boundingBox())?.width ?? 0
+  const edge = win.locator('[role="separator"][aria-label="Resize sidebar"]')
+  const edgeBox = await edge.boundingBox()
+  const narrowest = await sidebarWidth()
+  await win.mouse.move(edgeBox.x + edgeBox.width / 2, edgeBox.y + edgeBox.height / 2)
+  await win.mouse.down()
+  await win.mouse.move(edgeBox.x + edgeBox.width / 2 + 100, edgeBox.y + edgeBox.height / 2, { steps: 5 })
+  await win.mouse.up()
+  const dragged = await sidebarWidth()
+  await win.reload()
+  await win.waitForSelector('textarea')
+  const reloaded = await sidebarWidth()
+  check(
+    "dragging the sidebar's edge widens it, and it keeps that width",
+    narrowest === 272 && Math.abs(dragged - 372) <= 2 && reloaded === dragged,
+    `${narrowest} → ${dragged} → ${reloaded} after a reload`
+  )
+  await edge.dblclick()
+  check('double-clicking the edge puts the default width back', (await sidebarWidth()) === 272, String(await sidebarWidth()))
 
   // 7. Chat cost in the title bar
   await win.locator('aside [role="button"]').first().click()
