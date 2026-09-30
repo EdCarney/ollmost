@@ -229,6 +229,14 @@ function handle(e: ChatEvent): void {
       if (current?.id === e.conversationId) useChat.setState({ conversation: { ...current, title: e.title } })
       break
     }
+    case 'references':
+      // A session's message had its @ references read as the reply started: its chips show now (#129).
+      useChat.setState((s) =>
+        s.conversation?.id === e.conversationId
+          ? { messages: s.messages.map((m) => (m.id === e.messageId ? { ...m, references: e.references } : m)) }
+          : {}
+      )
+      break
   }
 }
 
