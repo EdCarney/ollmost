@@ -14,6 +14,7 @@ import { answer, decide } from './chat/approvals'
 import { compact, edit, isReplyingIn, regenerate, send, setStage, stop, stopAll } from './chat/service'
 import { changes, diff, stopPanelRuns } from './code/changes'
 import { readBranch } from './code/git'
+import { dropSessionPaths, sessionPaths } from './code/pathList'
 import { addArtifactVersion, getArtifact, listAllArtifacts, listArtifacts } from './db/artifacts'
 import {
   createConversation,
@@ -453,6 +454,8 @@ const impl: Impl = {
     create: async ({ root, model, think }) => {
       // Checked again: the renderer may send any path.
       const real = await validateRoot(root)
+      // A list kept from an earlier session on this folder may be long out of date: a new session lists it afresh (#129).
+      dropSessionPaths(real)
       return createConversation({
         projectId: null,
         model,
@@ -478,9 +481,13 @@ const impl: Impl = {
       if (picked === null) return null
       const real = await validateRoot(picked)
       // The session may have been deleted, or a reply started in it, while the dialog was open.
-      sessionRoot(id)
+      const before = sessionRoot(id)
       assertNotReplying(id)
-      return setConversationRoot(id, real)
+      const moved = setConversationRoot(id, real)
+      // Neither folder's kept list is to be trusted: the old one moved, the new one may be out of date (#129).
+      dropSessionPaths(before)
+      dropSessionPaths(real)
+      return moved
     },
     status: async (id) => {
       const root = sessionRoot(id)
@@ -498,12 +505,18 @@ const impl: Impl = {
     changes: async (id) => {
       const root = sessionRoot(id)
       assertNoReplyOn(root)
+      // A refresh is when the user expects the @ menu to see what changed too (#129).
+      dropSessionPaths(root)
       return changes(workspaceFor(id), { replying: () => replyingOn(root) })
     },
     diff: async (id, path) => {
       const root = sessionRoot(id)
       assertNoReplyOn(root)
       return diff(workspaceFor(id), path, { replying: () => replyingOn(root) })
+    },
+    paths: async (id) => {
+      sessionRoot(id)
+      return sessionPaths(workspaceFor(id))
     }
   },
 

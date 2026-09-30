@@ -1,8 +1,9 @@
 import { ArrowUp, FileText, Paperclip, Plus, Sparkles, Square, SquareTerminal, Terminal, TriangleAlert, Wrench, X } from 'lucide-react'
 import { type KeyboardEvent, useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { atFooter, atQueryAt, atRows, insertAtPath, markedTokens, touchedPaths } from '@shared/atRefs'
 import { type Command, COMMANDS, parseCommand } from '@shared/commands'
 import { normalizeThinkSetting } from '@shared/thinking'
-import type { Conversation, FileSource, McpServer, McpStatus, Skill, ThinkSetting } from '@shared/types'
+import type { Conversation, FileSource, McpServer, McpStatus, Message, SessionPaths, Skill, ThinkSetting } from '@shared/types'
 import { modelAvailability, unavailableText } from '@shared/availability'
 import { modelLabel } from '@shared/modelLabel'
 import { api } from '@/lib/api'
@@ -13,6 +14,7 @@ import { useChat } from '@/stores/chat'
 import { EMPTY_DRAFT, type PendingFile, useDrafts } from '@/stores/drafts'
 import { ModelPicker } from './ModelPicker'
 import { ThinkingControl } from './ThinkingControl'
+import { AtMenu, MarkedText } from './AtReferences'
 import { Menu, MenuCheckItem, MenuContent, MenuItem, MenuLabel, MenuSub, MenuTrigger, Spinner, Tooltip } from './ui'
 
 export interface ComposerSubmit {
@@ -98,6 +100,26 @@ const SLASH_RE = /(^|\s)\/([a-z0-9-]*)$/i
 /** One row of the "/" picker. */
 type SlashMatch = { kind: 'command'; command: Command } | { kind: 'skill'; skill: Skill }
 
+const NO_MESSAGES: Message[] = []
+const NO_PATHS: ReadonlySet<string> = new Set()
+/** A command running in the folder: ask for its files again this many times, a second further apart each time. */
+const BUSY_TRIES = 5
+
+/**
+ * A code session's files as the composer last had them (#129): the last list that came back, which an answer while a
+ * command runs never replaces, and why the latest ask gave none.
+ */
+interface Listed {
+  id: string
+  list: SessionPaths | null
+  set: ReadonlySet<string>
+  trouble: 'busy' | 'failed' | null
+}
+
+/** Whether two answers list the same files, so the first's array, which atRows keeps its work for, can stay. */
+const sameList = (a: SessionPaths, b: SessionPaths): boolean =>
+  a.cut === b.cut && a.paths.length === b.paths.length && a.paths.every((p, i) => p === b.paths[i])
+
 interface Props {
   conversation: Conversation | null
   /**
@@ -144,6 +166,7 @@ export function Composer({
   const runnerOn = !!appSettings && appSettings.runner.mode !== 'off'
   const chatMode = mode === 'chat'
   const settings = useComposerSettings(conversation)
+  const sessionId = !chatMode && conversation ? conversation.id : null
   // Each chat keeps its own unsent text and files, so switching chats never carries them along.
   const key = draftKey ?? conversation?.id ?? 'new'
   const { text, pending } = useDrafts((s) => s.drafts[key]) ?? EMPTY_DRAFT
@@ -155,6 +178,16 @@ export function Composer({
   )
   const [dragging, setDragging] = useState(false)
   const [slash, setSlash] = useState<{ query: string; index: number; atStart: boolean } | null>(null)
+  // The @ being typed in a code session (#129), and its folder's files, for the menu and for marking typed references.
+  const [atState, setAt] = useState<{ start: number; query: string; index: number } | null>(null)
+  const [listed, setListed] = useState<Listed | null>(null)
+  const asking = useRef<string | null>(null)
+  const askAgain = useRef(false)
+  const busyTries = useRef(0)
+  // An IME's text being composed: the textarea draws it, so the IME's underline (in the text's colour) shows.
+  const [composing, setComposing] = useState(false)
+  const overlayRef = useRef<HTMLDivElement>(null)
+  const wasStreaming = useRef(streaming)
   const [submitting, setSubmitting] = useState(false)
   const textRef = useRef<HTMLTextAreaElement>(null)
 
@@ -168,6 +201,96 @@ export function Composer({
   const codeOn = runnerOn && settings.toolSources.includes(CODE)
   const toggleSource = (source: string, on: boolean) =>
     settings.setToolSources(on ? [...settings.toolSources, source] : settings.toolSources.filter((s) => s !== source))
+
+  // ---- @ references (#129) ----
+  // The menu goes with its @: once the text no longer has it (sent, or cleared), it's closed.
+  const at = atState && text.startsWith(`@${atState.query}`, atState.start) ? atState : null
+  const loadPaths = useCallback(() => {
+    const ask = (id: string) => {
+      // One ask at a time. One made meanwhile (a reply ended, say) may need a newer answer than the one on its way, so
+      // that answer is followed by one more ask, however many were made meanwhile.
+      if (asking.current === id) {
+        askAgain.current = true
+        return
+      }
+      asking.current = id
+      askAgain.current = false
+      void api.code
+        .paths(id)
+        .then(
+          (got) => {
+            if (!got.busy) busyTries.current = 0
+            setListed((prev) => {
+              const kept = prev?.id === id ? prev : null
+              // A command is running there: keep what was listed before, so its marks stay, and ask again soon.
+              if (got.busy) return { id, list: kept?.list ?? null, set: kept?.set ?? NO_PATHS, trouble: 'busy' }
+              if (kept?.list && sameList(kept.list, got)) return kept.trouble ? { ...kept, trouble: null } : kept
+              return { id, list: got, set: new Set(got.paths), trouble: null }
+            })
+          },
+          // The error can name the folder, so the menu only says that it couldn't list it.
+          () => setListed({ id, list: null, set: NO_PATHS, trouble: 'failed' })
+        )
+        .finally(() => {
+          if (asking.current !== id) return
+          asking.current = null
+          if (askAgain.current) ask(id)
+        })
+    }
+    if (sessionId) ask(sessionId)
+  }, [sessionId])
+  const mine = sessionId && listed?.id === sessionId ? listed : null
+  const asked = !!mine
+  const pathList = mine?.list ?? null
+  const pathSet = mine?.set ?? NO_PATHS
+  const trouble = mine?.trouble ?? null
+  // The list is made on the first @ of a session, and again after a reply, whose commands may have changed the folder.
+  const needsPaths = !!sessionId && text.includes('@')
+  useEffect(() => {
+    if (needsPaths && !asked) loadPaths()
+  }, [needsPaths, asked, loadPaths])
+  useEffect(() => {
+    // A reply's end is news: the tries a command used up while it ran start again.
+    if (wasStreaming.current && !streaming && asked) {
+      busyTries.current = 0
+      loadPaths()
+    }
+    wasStreaming.current = streaming
+  }, [streaming, asked, loadPaths])
+  // A command was running: ask again a few times (each busy answer is a new `mine`), then leave it to the next @.
+  useEffect(() => {
+    if (!needsPaths || mine?.trouble !== 'busy' || busyTries.current >= BUSY_TRIES) return
+    const timer = setTimeout(
+      () => {
+        busyTries.current++
+        loadPaths()
+      },
+      1000 * (busyTries.current + 1)
+    )
+    return () => clearTimeout(timer)
+  }, [needsPaths, mine, loadPaths])
+
+  const sessionMessages = useChat((s) => (sessionId && s.conversation?.id === sessionId ? s.messages : NO_MESSAGES))
+  const touched = useMemo(() => touchedPaths(sessionMessages), [sessionMessages])
+  const atQuery = at?.query ?? null
+  const atResult = useMemo(
+    () => (atQuery !== null && pathList ? atRows(pathList.paths, atQuery, touched) : null),
+    [atQuery, pathList, touched]
+  )
+  // Why the list is partial or empty: a cut list counts its files, so this is kept between keystrokes.
+  const atNote = useMemo(
+    () =>
+      pathList
+        ? atFooter(pathList)
+        : trouble === 'failed'
+          ? "Couldn't list this folder's files."
+          : trouble === 'busy'
+            ? atFooter({ paths: [], cut: false, busy: true })
+            : 'Listing files…',
+    [pathList, trouble]
+  )
+  const atOpen = !!at && (!!atResult?.rows.length || !!atNote)
+  const marks = useMemo(() => (pathList ? markedTokens(text, pathSet) : []), [text, pathList, pathSet])
 
   // Start the servers this chat uses now, so they're ready by the time a message is sent.
   const serverIds = activeServers.map((s) => s.id).join(',')
@@ -268,12 +391,34 @@ export function Composer({
   }, [addFileObjects, chatMode])
 
   // ---- textarea ----
+  /**
+   * A code session's marks are drawn by a layer under the textarea, which must wrap where the textarea does: it leaves
+   * room for the textarea's scrollbar, when it has one, and scrolls with it.
+   */
+  const alignLayer = useCallback(() => {
+    const el = textRef.current
+    const layer = overlayRef.current
+    if (!el || !layer) return
+    layer.style.paddingRight = `${16 + el.offsetWidth - el.clientWidth}px`
+    layer.scrollTop = el.scrollTop
+  }, [])
+
   useEffect(() => {
     const el = textRef.current
     if (!el) return
     el.style.height = 'auto'
     el.style.height = `${Math.min(el.scrollHeight, window.innerHeight * 0.4)}px`
-  }, [text])
+    alignLayer()
+  }, [text, alignLayer])
+
+  // A narrower window can wrap the text past the textarea's height, and a scrollbar then takes some of its width.
+  useEffect(() => {
+    const el = textRef.current
+    if (chatMode || !el) return
+    const observer = new ResizeObserver(alignLayer)
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [chatMode, alignLayer])
 
   useEffect(() => {
     if (autoFocus) textRef.current?.focus()
@@ -297,6 +442,34 @@ export function Composer({
   const updateSlash = (value: string, caret: number) => {
     const m = SLASH_RE.exec(value.slice(0, caret))
     setSlash(m ? { query: m[2], index: 0, atStart: m.index === 0 && m[1] === '' } : null)
+  }
+
+  /** Open, follow or close the @ menu for the @ at the caret, after typing or when the caret moves. */
+  const updateAt = (value: string, caret: number) => {
+    if (!sessionId) return
+    const found = atQueryAt(value, caret)
+    // Each time the menu opens it asks again: main keeps the list, so this is cheap, and it sees a refresh's changes.
+    if (found && !at) {
+      busyTries.current = 0
+      loadPaths()
+    }
+    // A select event follows each change too: the same @ and query keep the row that's highlighted.
+    setAt((prev) => (!found ? null : prev && prev.start === found.start && prev.query === found.query ? prev : { ...found, index: 0 }))
+  }
+
+  /** Put "@path " in place of the @ being typed; the reference is read when the message is sent. */
+  const chooseAt = (path: string) => {
+    const el = textRef.current!
+    setAt(null)
+    // Where the @ is now, in case the caret has moved since the menu opened.
+    const found = atQueryAt(text, el.selectionStart)
+    if (!found) return
+    const next = insertAtPath(text, el.selectionStart, found, path)
+    setText(next.text)
+    requestAnimationFrame(() => {
+      el.focus()
+      el.setSelectionRange(next.caret, next.caret)
+    })
   }
 
   const choose = (match: SlashMatch) => (match.kind === 'skill' ? chooseSkill(match.skill) : chooseCommand(match.command))
@@ -366,6 +539,30 @@ export function Composer({
   }
 
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
+    const rows = atResult?.rows ?? []
+    // An IME's keys (Enter to accept a word) are its own, not the @ menu's.
+    if (at && atOpen && rows.length && !e.nativeEvent.isComposing) {
+      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault()
+        const dir = e.key === 'ArrowDown' ? 1 : -1
+        setAt({ ...at, index: (Math.min(at.index, rows.length - 1) + dir + rows.length) % rows.length })
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        chooseAt(rows[Math.min(at.index, rows.length - 1)].path)
+        return
+      }
+    }
+    // Until the first list arrives the menu says "Listing files…": Enter and Tab wait for it rather than send.
+    if (at && atOpen && !asked && (e.key === 'Enter' || e.key === 'Tab') && !e.nativeEvent.isComposing) {
+      e.preventDefault()
+      return
+    }
+    if (at && e.key === 'Escape' && !e.nativeEvent.isComposing) {
+      setAt(null)
+      return
+    }
     if (slash && slashMatches.length) {
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault()
@@ -423,6 +620,15 @@ export function Composer({
             </div>
           ))}
         </div>
+      )}
+      {at && atOpen && (
+        <AtMenu
+          heading={atResult?.heading ?? null}
+          rows={atResult?.rows ?? []}
+          index={Math.min(at.index, Math.max(0, (atResult?.rows.length ?? 1) - 1))}
+          footer={atNote}
+          onChoose={chooseAt}
+        />
       )}
 
       <div
@@ -486,30 +692,66 @@ export function Composer({
           </div>
         )}
 
-        <textarea
-          ref={textRef}
-          value={text}
-          rows={large ? 3 : 1}
-          placeholder={placeholder ?? (chatMode ? 'Reply…' : 'Ask for a change…')}
-          onChange={(e) => {
-            setText(e.target.value)
-            updateSlash(e.target.value, e.target.selectionStart)
-          }}
-          onKeyDown={onKeyDown}
-          onPaste={(e) => {
-            // A code session has no attachments: a pasted file is refused like a dropped one, and any text with it pastes.
-            if (!chatMode) return
-            const files = [...e.clipboardData.files]
-            if (files.length) {
-              e.preventDefault()
-              void addFileObjects(files)
-            }
-          }}
-          className={cn(
-            'block w-full resize-none bg-transparent px-4 text-[15px] leading-relaxed text-fg outline-none placeholder:text-subtle',
-            large ? 'min-h-[88px] pt-4' : 'min-h-[52px] pt-3.5'
+        <div className="relative">
+          {!chatMode && (
+            // The textarea's text, drawn with its marks: the same font, size, padding and wrapping, so each character
+            // lies under its own. It changes only colours, never a width.
+            <div
+              ref={overlayRef}
+              aria-hidden
+              data-testid="at-layer"
+              className={cn(
+                'pointer-events-none absolute inset-0 overflow-hidden whitespace-pre-wrap break-words px-4 text-[15px] leading-relaxed text-fg',
+                large ? 'pt-4' : 'pt-3.5',
+                composing && 'invisible'
+              )}
+            >
+              <MarkedText text={text} marks={marks} />
+              {/* A last empty line has no height of its own, as the textarea's does. */}
+              {text.endsWith('\n') && '\u200b'}
+            </div>
           )}
-        />
+          <textarea
+            ref={textRef}
+            value={text}
+            rows={large ? 3 : 1}
+            placeholder={placeholder ?? (chatMode ? 'Reply…' : 'Ask for a change…')}
+            onChange={(e) => {
+              setText(e.target.value)
+              updateSlash(e.target.value, e.target.selectionStart)
+              updateAt(e.target.value, e.target.selectionStart)
+            }}
+            onKeyDown={onKeyDown}
+            onSelect={(e) => {
+              // The caret moved (the arrow keys, Home or End, a click): the @ menu follows it, and a selection closes it.
+              const el = e.currentTarget
+              if (el.selectionStart !== el.selectionEnd) setAt(null)
+              else updateAt(el.value, el.selectionStart)
+            }}
+            onCompositionStart={() => setComposing(true)}
+            onCompositionEnd={() => setComposing(false)}
+            onScroll={(e) => {
+              if (overlayRef.current) overlayRef.current.scrollTop = e.currentTarget.scrollTop
+            }}
+            onPaste={(e) => {
+              // A code session has no attachments: a pasted file is refused like a dropped one, and any text with it pastes.
+              if (!chatMode) return
+              const files = [...e.clipboardData.files]
+              if (files.length) {
+                e.preventDefault()
+                void addFileObjects(files)
+              }
+            }}
+            className={cn(
+              'relative block w-full resize-none bg-transparent px-4 text-[15px] leading-relaxed outline-none placeholder:text-subtle',
+              // In a session the layer beneath draws the text, with its marks; the textarea keeps the caret and selection,
+              // and draws selected text itself, since a theme's selection colour can hide what lies under it.
+              // While an IME composes, the textarea draws its own text and the layer hides, marks and all.
+              chatMode || composing ? 'text-fg' : 'text-transparent caret-fg selection:text-fg',
+              large ? 'min-h-[88px] pt-4' : 'min-h-[52px] pt-3.5'
+            )}
+          />
+        </div>
 
         <div className="flex items-center gap-1 px-2.5 pb-2.5">
           <Menu>

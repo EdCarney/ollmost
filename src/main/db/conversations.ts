@@ -5,6 +5,7 @@ import type {
   Compaction,
   Conversation,
   Message,
+  MessageReference,
   MessageStats,
   Role,
   SearchHit,
@@ -278,6 +279,7 @@ interface MessageRow {
   tool_events: string
   stats: string | null
   error: string | null
+  refs: string | null
   created_at: number
 }
 
@@ -291,6 +293,7 @@ const toMessage = (r: MessageRow, attachments: Attachment[]): Message => ({
   thinkingSegments: parseJson<ThinkingSegment[] | null>(r.thinking_segments, null),
   model: r.model,
   attachments,
+  references: parseJson<MessageReference[] | null>(r.refs, null),
   toolEvents: parseJson<ToolEvent[]>(r.tool_events, []),
   stats: parseJson<MessageStats | null>(r.stats, null),
   error: r.error,
@@ -370,6 +373,11 @@ export function updateMessage(
   )
   if (patch.content !== undefined) indexMessage(m.conversationId, id, patch.content)
   return getMessage(id)!
+}
+
+/** Keep what a message's @ references sent (#129), or forget it (null) so the next reply to it reads them again. */
+export function setMessageReferences(id: string, references: MessageReference[] | null): void {
+  run('UPDATE messages SET refs = ? WHERE id = ?', references ? JSON.stringify(references) : null, id)
 }
 
 /**

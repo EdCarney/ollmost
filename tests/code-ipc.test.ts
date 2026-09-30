@@ -226,3 +226,48 @@ describe('a session’s folder', () => {
     await expect(call('locate', c.id)).rejects.toThrow(/no longer exists/)
   })
 })
+
+describe('the @ menu’s paths (#129)', () => {
+  it('lists a session’s files relative to its folder, and refuses a chat', async () => {
+    const c = session(folder())
+    expect(await call('paths', c.id)).toEqual({ paths: ['README.md'], cut: false, busy: false })
+    await expect(call('paths', chat().id)).rejects.toThrow(/isn.t a code session/)
+    await expect(call('paths', 'no-such-id')).rejects.toThrow(/no longer exists/)
+  })
+
+  it('are listed again after the Changes panel refreshes', async () => {
+    const dir = folder()
+    const c = session(dir)
+    expect(await call('paths', c.id)).toMatchObject({ paths: ['README.md'] })
+    writeFileSync(join(dir, 'new.ts'), '')
+    expect(await call('paths', c.id)).toMatchObject({ paths: ['README.md'] })
+    // Whatever git makes of the folder, the refresh itself drops the list.
+    await call('changes', c.id)
+    expect(await call('paths', c.id)).toMatchObject({ paths: ['README.md', 'new.ts'] })
+  })
+
+  it('are listed afresh for a new session on a folder listed before', async () => {
+    const dir = folder()
+    const earlier = session(dir)
+    expect(await call('paths', earlier.id)).toMatchObject({ paths: ['README.md'] })
+    writeFileSync(join(dir, 'new.ts'), '')
+    expect(await call('paths', earlier.id)).toMatchObject({ paths: ['README.md'] })
+    const c = (await call('create', { root: dir, model: 'm', think: null })) as ReturnType<typeof session>
+    expect(await call('paths', c.id)).toMatchObject({ paths: ['README.md', 'new.ts'] })
+  })
+
+  it('are listed afresh for both folders when a session is chosen again elsewhere', async () => {
+    const [from, to] = [folder(), folder()]
+    const [stays, moves, there] = [session(from), session(from), session(to)]
+    expect(await call('paths', stays.id)).toMatchObject({ paths: ['README.md'] })
+    expect(await call('paths', there.id)).toMatchObject({ paths: ['README.md'] })
+    writeFileSync(join(from, 'old.ts'), '')
+    writeFileSync(join(to, 'new.ts'), '')
+    expect(await call('paths', stays.id)).toMatchObject({ paths: ['README.md'] })
+    expect(await call('paths', there.id)).toMatchObject({ paths: ['README.md'] })
+    fake.picks.push(to)
+    expect(await call('locate', moves.id)).toMatchObject({ root: to })
+    expect(await call('paths', moves.id)).toMatchObject({ paths: ['README.md', 'new.ts'] })
+    expect(await call('paths', stays.id)).toMatchObject({ paths: ['README.md', 'old.ts'] })
+  })
+})

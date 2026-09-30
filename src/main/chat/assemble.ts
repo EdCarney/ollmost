@@ -1,5 +1,5 @@
 import { parseMessage } from '@shared/artifactParser'
-import type { Skill } from '@shared/types'
+import type { MessageReference, Skill } from '@shared/types'
 import type { ChatImage, ChatMessage } from '../providers/types'
 import { estimateTokens } from '../util'
 import {
@@ -14,6 +14,7 @@ import {
   mcpPrompt,
   preferencesPrompt,
   projectPrompt,
+  referenceBlock,
   selectedSkillsPrompt,
   skillIndexPrompt,
   subAgentPrompt,
@@ -43,6 +44,8 @@ export interface HistoryTurn {
   images: ChatImage[]
   /** Names of images the current model can't see. */
   hiddenImages: string[]
+  /** A code session's @ references as they were sent (#129), placed before the user's text. */
+  references?: MessageReference[]
 }
 
 export type SkillText = { name: string; body: string; files: string[]; hasScripts: boolean }
@@ -112,6 +115,14 @@ export function promptBudget(contextLength: number | null): number {
   return context - Math.min(16_000, Math.floor(context / 4))
 }
 
+/**
+ * The tokens a request leaves its history: the prompt budget less the system prompt (`system`, built from `input` when
+ * not given) and the tool definitions.
+ */
+export function historyRoom(input: Omit<AssembleInput, 'history'>, system = buildSystemPrompt(input)): number {
+  return promptBudget(input.contextLength) - estimateTokens(system) - (input.toolTokens ?? 0)
+}
+
 /** The summary /compact made of the conversation's older turns, which the request no longer carries. */
 function compactionPrompt(c: { summary: string; messages: number }): string {
   return [
@@ -123,7 +134,7 @@ function compactionPrompt(c: { summary: string; messages: number }): string {
   ].join('\n')
 }
 
-export function buildSystemPrompt(input: AssembleInput): string {
+export function buildSystemPrompt(input: Omit<AssembleInput, 'history'>): string {
   const identity = { userName: input.userName, model: input.model, date: input.date, web: input.web, grants: input.grants }
   const parts = [input.codeSession ? codeSessionPrompt({ ...input.codeSession, ...identity }) : basePrompt(identity)]
   if (input.child) parts.push(subAgentPrompt(input.child.task, input.child.replyChars))
@@ -177,9 +188,10 @@ function turnToMessages(turn: HistoryTurn, index: number): ChatMessage[] {
       : []
     return [...calls, { role: 'assistant', content: turn.content }]
   }
+  const refs = (turn.references ?? []).map(referenceBlock)
   const docs = turn.documents.map((d) => documentBlock(d.name, d.text, 'attachment'))
   const hidden = turn.hiddenImages.map((n) => `[The user attached an image, “${n}”, but the current model can't see images.]`)
-  const content = [...docs, ...hidden, turn.content].filter(Boolean).join('\n\n')
+  const content = [...refs, ...docs, ...hidden, turn.content].filter(Boolean).join('\n\n')
   return [turn.images.length ? { role: 'user', content, images: turn.images } : { role: 'user', content }]
 }
 
@@ -188,6 +200,7 @@ function turnTokens(turn: HistoryTurn): number {
     estimateTokens(turn.content) +
     (turn.tools ?? []).reduce((n, t) => n + estimateTokens(t.record) + estimateTokens(t.note ?? '') + 10, 0) +
     turn.documents.reduce((n, d) => n + estimateTokens(d.text), 0) +
+    (turn.references ?? []).reduce((n, r) => n + estimateTokens(r.text) + 50, 0) +
     turn.images.length * IMAGE_TOKENS
   )
 }
@@ -235,7 +248,7 @@ export function collapseSupersededArtifacts(history: HistoryTurn[]): HistoryTurn
 export function assemble(input: AssembleInput): Assembled {
   const system = buildSystemPrompt(input)
   const history = collapseSupersededArtifacts(input.history).map((t) => (input.pastTools || !t.tools ? t : { ...t, tools: undefined }))
-  const budget = promptBudget(input.contextLength) - estimateTokens(system) - (input.toolTokens ?? 0)
+  const budget = historyRoom(input, system)
 
   // Walk backwards so the newest turns always survive; always keep the final user turn.
   const kept: HistoryTurn[] = []

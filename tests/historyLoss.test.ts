@@ -13,6 +13,7 @@ function msg(role: 'user' | 'assistant', createdAt: number, extra: Partial<Messa
     thinkingSegments: null,
     model: role === 'assistant' ? 'llama3' : null,
     attachments: [],
+    references: null,
     toolEvents: [],
     stats: null,
     error: null,

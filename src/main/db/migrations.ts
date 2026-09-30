@@ -236,7 +236,12 @@ export const MIGRATIONS: string[] = [
   -- these prefixes, nothing more.
   ALTER TABLE project_files ADD COLUMN folder TEXT NOT NULL DEFAULT '';
   `,
-  MODEL_KEYS
+  MODEL_KEYS,
+  /* sql */ `
+  -- A code session's @ references as sent (MessageReference[] as JSON, #129): read when the reply to the message starts
+  -- and replayed from here after, so a Retry or a later turn sends what that reply did. Null until then, and in a chat.
+  ALTER TABLE messages ADD COLUMN refs TEXT;
+  `
 ]
 
 /** The model-key entry's place: the database is backed up before it runs. */

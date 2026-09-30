@@ -6,6 +6,7 @@ import {
   Download,
   Eye,
   FileText,
+  Folder,
   FolderOpen,
   Globe,
   Hand,
@@ -19,9 +20,10 @@ import {
   TriangleAlert,
   Wrench
 } from 'lucide-react'
-import { memo, useEffect, useMemo, useRef, useState } from 'react'
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { parseMessage, parseMessageRanges, typeForCodeLanguage } from '@shared/artifactParser'
 import { ASK_OTHER_CHARS } from '@shared/ask'
+import { referenceMarks, referenceNote } from '@shared/atRefs'
 import { diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
 import type {
@@ -31,6 +33,7 @@ import type {
   Compaction,
   Endpoint,
   Message,
+  MessageReference,
   MessageStats,
   ThinkingSegment,
   ToolDecision,
@@ -46,6 +49,7 @@ import { useArtifactPanel } from '@/stores/artifactPanel'
 import type { ContinueReason } from '@/lib/chatActions'
 import { type StreamState, useChat } from '@/stores/chat'
 import { ArtifactCard } from './ArtifactCard'
+import { MarkedText } from './AtReferences'
 import { CodeBlock, useCopy } from './CodeBlock'
 import { CommandCard, EditCard, FileEvent } from './CodeCards'
 import { DelegateCard } from './DelegateCard'
@@ -63,6 +67,44 @@ function plainText(content: string): string {
 
 // ---- User -----------------------------------------------------------------
 
+/**
+ * One @ reference a code session's message sent (#129): its path, and how much was sent or why none was. It opens what
+ * the model was given, not the file as it is now: a session has no file preview, and the stored text is what was sent.
+ */
+function ReferenceChip({
+  reference,
+  open,
+  controls,
+  onToggle
+}: {
+  reference: MessageReference
+  open: boolean
+  /** The id of the panel it opens, while it's open. */
+  controls: string | undefined
+  onToggle: () => void
+}) {
+  const note = referenceNote(reference)
+  const Icon = reference.kind === 'folder' ? Folder : FileText
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-controls={controls}
+      // The whole path, which the chip may cut short.
+      title={`${reference.path} · ${open ? 'Hide' : 'Show'} what was sent`}
+      data-testid="reference-chip"
+      data-path={reference.path}
+      className={cn(pill, 'border-line bg-panel text-muted hover:border-line-strong hover:text-fg')}
+    >
+      <Icon className="size-3.5 shrink-0" />
+      <span className="truncate font-mono text-fg">{reference.path}</span>
+      {note && <span className="shrink-0">· {note}</span>}
+      <ChevronRight className={cn('size-3 shrink-0 transition-transform', open && 'rotate-90')} />
+    </button>
+  )
+}
+
 export const UserMessage = memo(function UserMessage({
   message,
   onEdit,
@@ -77,6 +119,12 @@ export const UserMessage = memo(function UserMessage({
   const [draft, setDraft] = useState(message.content)
   const [saving, setSaving] = useState(false)
   const [copied, copy] = useCopy()
+  // What the message's @ tokens sent, as stored with it: chips and marks show that, never the folder as it is now.
+  const references = message.references ?? []
+  const marks = useMemo(() => referenceMarks(message.content, message.references ?? []), [message.content, message.references])
+  const [shown, setShown] = useState<string | null>(null)
+  const open = references.find((r) => r.path === shown) ?? null
+  const panel = useId()
 
   return (
     <div className="group flex flex-col items-end gap-2">
@@ -102,6 +150,32 @@ export const UserMessage = memo(function UserMessage({
           )}
         </div>
       )}
+      {references.length > 0 && (
+        <div className="flex max-w-[85%] flex-wrap justify-end gap-2">
+          {references.map((r) => (
+            <ReferenceChip
+              key={r.path}
+              reference={r}
+              open={shown === r.path}
+              controls={shown === r.path ? panel : undefined}
+              onToggle={() => setShown(shown === r.path ? null : r.path)}
+            />
+          ))}
+        </div>
+      )}
+      {open && (
+        <div
+          id={panel}
+          role="region"
+          aria-label={`What was sent for ${open.path}`}
+          className="w-full max-w-[85%] rounded-ollmost border border-line bg-panel p-2.5"
+        >
+          {/* Exactly what the model was given, as plain text: never markdown or HTML. */}
+          <pre data-testid="reference-text" className="selectable max-h-80 overflow-auto whitespace-pre font-mono text-xs text-fg">
+            {open.text}
+          </pre>
+        </div>
+      )}
       {editing ? (
         <div className="w-full max-w-[85%] space-y-2">
           <TextArea
@@ -124,7 +198,11 @@ export const UserMessage = memo(function UserMessage({
                 // disabled button while this is in flight rules out a double submit.
                 setSaving(true)
                 try {
-                  if (await onEdit(draft.trim())) setEditing(false)
+                  if (await onEdit(draft.trim())) {
+                    setEditing(false)
+                    // The edited message's references are read again, and a chip open before shouldn't open itself then.
+                    setShown(null)
+                  }
                 } finally {
                   setSaving(false)
                 }
@@ -137,7 +215,7 @@ export const UserMessage = memo(function UserMessage({
       ) : (
         message.content && (
           <div className="selectable max-w-[85%] whitespace-pre-wrap rounded-ollmost-lg bg-bubble px-4 py-2.5 text-[15px] leading-relaxed">
-            {message.content}
+            <MarkedText text={message.content} marks={marks} />
           </div>
         )
       )}
@@ -863,14 +941,22 @@ export const AssistantMessage = memo(function AssistantMessage({
             ))}
         </div>
       )}
-      {!streaming && message.stats?.unavailableTools?.length ? (
+      {!streaming && (message.stats?.unavailableTools?.length || message.stats?.unsentReferences) ? (
         <div className="mt-2 flex items-start gap-2 rounded-ollmost border border-line px-3 py-2 text-xs text-muted">
           <TriangleAlert className="mt-px size-3.5 shrink-0 text-warn" />
           <div className="selectable space-y-0.5">
-            <div>Some of this chat's tools weren't available for this reply:</div>
-            {message.stats.unavailableTools.map((line) => (
-              <div key={line}>{line}</div>
-            ))}
+            {/* The message's @ references weren't sent (#129): not a tool, so it says so on its own. */}
+            {message.stats.unsentReferences && <div>{message.stats.unsentReferences}</div>}
+            {message.stats.unavailableTools?.length ? (
+              <>
+                <div className={message.stats.unsentReferences ? 'pt-1' : undefined}>
+                  Some of this {scope}'s tools weren't available for this reply:
+                </div>
+                {message.stats.unavailableTools.map((line) => (
+                  <div key={line}>{line}</div>
+                ))}
+              </>
+            ) : null}
           </div>
         </div>
       ) : null}

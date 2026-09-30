@@ -119,6 +119,35 @@ export interface Attachment {
   textless: boolean
 }
 
+/**
+ * A file or folder the user pointed to with @ in a code session's message (#129), as it was sent: read once, when the
+ * reply to that message started, and kept with the message so later turns, Retry and /compact see exactly this.
+ */
+export interface MessageReference {
+  /** Each way the message spells it, without the "@" ("src/a.ts", "./src/a.ts"): what the transcript marks. */
+  tokens: string[]
+  /** Relative to the session's folder; a folder's ends in "/". */
+  path: string
+  kind: 'file' | 'folder'
+  /** A file's lines as sent, 1-based and inclusive; `to` < `total` when it was cut. Absent when refused. */
+  lines?: { from: number; to: number; total: number }
+  /** A folder's listing stopped at one of its limits. */
+  cut?: boolean
+  /** Why none of it was sent ("binary file", "too large", "over the limit"); `text` then tells the model. */
+  refused?: string
+  /** What the model was given: the numbered lines, the listing, or the refusal. */
+  text: string
+}
+
+/** The files the @ menu offers in a code session, and the folders holding them ("src/"), relative to its folder. */
+export interface SessionPaths {
+  paths: string[]
+  /** The walk stopped at one of its limits: only the first files it found are listed. */
+  cut: boolean
+  /** A command is running in the folder, so nothing could be listed this time. */
+  busy: boolean
+}
+
 export interface ToolEvent {
   tool: string
   args: Record<string, unknown>
@@ -196,6 +225,8 @@ export interface MessageStats {
   shortenedToolResults?: number
   /** Tool sources switched on for the chat that couldn't be used for this reply, and why. */
   unavailableTools?: string[]
+  /** Why this reply's message's @ references weren't sent (#129); a Retry sends them. */
+  unsentReferences?: string
 }
 
 /**
@@ -221,6 +252,8 @@ export interface Message {
   thinkingSegments: ThinkingSegment[] | null
   model: string | null
   attachments: Attachment[]
+  /** A code session's @ references as sent (#129); null until a reply to the message reads them, and in a chat. */
+  references: MessageReference[] | null
   toolEvents: ToolEvent[]
   stats: MessageStats | null
   error: string | null
@@ -800,5 +833,7 @@ export type ChatEvent =
   | { type: 'usage'; conversationId: ID; usage: ChatUsage }
   | { type: 'error'; conversationId: ID; messageId: ID; error: string }
   | { type: 'title'; conversationId: ID; title: string }
+  /** A code session's message had its @ references read as its reply started (#129): its chips can show. */
+  | { type: 'references'; conversationId: ID; messageId: ID; references: MessageReference[] }
 
 export type FileSource = { path: string } | { name: string; mime: string; data: ArrayBuffer }

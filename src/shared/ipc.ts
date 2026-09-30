@@ -33,6 +33,7 @@ import type {
   SearchHit,
   SendRequest,
   SendResult,
+  SessionPaths,
   Settings,
   Skill,
   SkillDetail,
@@ -265,6 +266,12 @@ export interface OllmostApi {
     changes(id: ID): Promise<CodeChanges>
     /** One changed file's diff (`path` relative to the folder), from git inside the sandbox. Refused while a reply runs. */
     diff(id: ID, path: string): Promise<CodeDiff>
+    /**
+     * The files the @ menu offers in a session (#129), and the folders holding them, relative to its folder (never its
+     * path). Built on the first @ and kept until the session writes a file, the Changes panel refreshes or a reply
+     * ends; `busy` while a command runs there.
+     */
+    paths(id: ID): Promise<SessionPaths>
   }
   mcp: {
     /** Configured servers (environment variable names only, never values). */
@@ -336,7 +343,7 @@ export const INVOKE_CHANNELS = {
   debug: ['open', 'list', 'get', 'clear', 'exportTraces', 'replay', 'inspectApp'],
   links: ['preview'],
   runner: ['status', 'packages', 'resetEnvironment', 'openFile', 'revealFile', 'saveFile'],
-  code: ['pickFolder', 'create', 'recentRoots', 'locate', 'status', 'reveal', 'changes', 'diff'],
+  code: ['pickFolder', 'create', 'recentRoots', 'locate', 'status', 'reveal', 'changes', 'diff', 'paths'],
   mcp: ['list', 'save', 'remove', 'status', 'connect', 'restart', 'log', 'setToolPolicy', 'importJson', 'importSources', 'importFrom']
 } as const satisfies { [G in Exclude<keyof OllmostApi, 'events' | 'files'>]: ReadonlyArray<keyof OllmostApi[G]> }
 

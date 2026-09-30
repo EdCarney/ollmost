@@ -28,6 +28,17 @@ vi.mock('electron', () => ({
   app: { getPath: () => '' },
   nativeImage: {}
 }))
+// The @ references' reader (#129), as it is unless a test stands in for it: to hold a read, fail one, or count them.
+type ResolveReferences = typeof import('../src/main/code/references').resolveReferences
+const referenceReader = vi.hoisted(() => ({ real: null as unknown as ResolveReferences, stand: null as ResolveReferences | null }))
+vi.mock('../src/main/code/references', async (importOriginal) => {
+  const real = await importOriginal<typeof import('../src/main/code/references')>()
+  referenceReader.real = real.resolveReferences
+  return {
+    ...real,
+    resolveReferences: (...args: Parameters<ResolveReferences>) => (referenceReader.stand ?? real.resolveReferences)(...args)
+  }
+})
 
 // web.ts reads its base URL at import, so the mock must be listening before the service loads.
 const ollama: MockOllama = await startMockOllama()
@@ -1296,6 +1307,28 @@ describe('/compact', () => {
     }
   })
 
+  // #129: a code session's message names what its @ references sent, as it names its attachments.
+  it('names a message’s @ references in the transcript, and which weren’t sent', async () => {
+    chat = reply('ok')
+    const r = start('What do @src/a.ts and @x.png do?')
+    await doneEvent(r.conversation.id)
+    const { setMessageReferences } = await import('../src/main/db/conversations')
+    setMessageReferences(r.userMessage!.id, [
+      { tokens: ['src/a.ts'], path: 'src/a.ts', kind: 'file', lines: { from: 1, to: 1, total: 1 }, text: '     1\tone' },
+      { tokens: ['x.png'], path: 'x.png', kind: 'file', refused: 'binary file', text: 'x.png is a binary file.' }
+    ])
+    const calls: Array<Record<string, unknown>> = []
+    const restore = summarizer(['Summary.'], calls)
+    try {
+      await service.compact(r.conversation.id, { focus: '', model: 'ollama/llama3.2' })
+      expect(transcripts(calls)).toContain(
+        'User: What do @src/a.ts and @x.png do? [referenced: src/a.ts] [referenced: x.png (not sent: binary file)]'
+      )
+    } finally {
+      restore()
+    }
+  })
+
   it('cuts the middle of a single reply too big for the whole piece, keeping its first and last tool calls', async () => {
     chat = reply('a short reply')
     const r = start('research many pages')
@@ -2267,6 +2300,347 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)).toEqual(['ask_user'])
     expect((chatCalls[0].messages as Array<{ content: string }>)[0].content).toMatch(/coding agent/)
   })
+
+  // #129: what a message's @ tokens name is read as the reply starts, sent before the message, and kept with it.
+  it('sends the files an @ names, keeps what was sent for a Retry, and reads them again after an edit', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { mkdirSync, realpathSync, writeFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const dir = tempDir('ollmost-service-refs-')
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(tempDir('ollmost-user-refs-'))
+    mkdirSync(join(folder, 'src'))
+    writeFileSync(join(folder, 'src', 'a.ts'), 'one\ntwo\n')
+    writeFileSync(join(folder, 'src', 'b.ts'), 'three\n')
+    const session = createConversation({
+      projectId: null,
+      model: 'ollama/llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'refs'
+    })
+    chat = reply('Read it.')
+    const settled = (id: string) =>
+      waitFor(() => events.find((e): e is Extract<ChatEvent, { type: 'done' }> => e.type === 'done' && e.conversationId === id), 60_000)
+    const userText = () =>
+      (chatCalls[chatCalls.length - 1].messages as Array<{ role: string; content: string }>).findLast((m) => m.role === 'user')!.content
+
+    const r = service.send({ ...sendBody(session.id), content: 'What does @src/a.ts do? Mail me@example.com, not @nowhere.ts.' })
+    await settled(r.conversation.id)
+    expect(userText()).toBe(
+      '<referenced_file path="src/a.ts" lines="1-2 of 2">\n     1\tone\n     2\ttwo\n</referenced_file>\n\nWhat does @src/a.ts do? Mail me@example.com, not @nowhere.ts.'
+    )
+    expect((chatCalls[0].messages as Array<{ content: string }>)[0].content).toMatch(/points to with @/)
+    expect(events.find((e) => e.type === 'references')).toMatchObject({
+      conversationId: session.id,
+      messageId: r.userMessage!.id,
+      references: [{ tokens: ['src/a.ts'], path: 'src/a.ts' }]
+    })
+
+    // The file changes; a Retry sends what the first reply was sent.
+    writeFileSync(join(folder, 'src', 'a.ts'), 'changed\n')
+    events.length = 0
+    const again = await service.regenerate(session.id, { model: 'ollama/llama3.2', think: null })
+    await settled(again.conversation.id)
+    expect(userText()).toContain('     1\tone\n     2\ttwo')
+    expect(getMessage(r.userMessage!.id)!.references![0].text).toBe('     1\tone\n     2\ttwo')
+
+    // An edit is a new message: its references are read again.
+    events.length = 0
+    const edited = await service.edit(r.userMessage!.id, 'And @src/b.ts?', { model: 'ollama/llama3.2', think: null })
+    await settled(edited.conversation.id)
+    expect(userText()).toBe('<referenced_file path="src/b.ts" lines="1-1 of 1">\n     1\tthree\n</referenced_file>\n\nAnd @src/b.ts?')
+  }, 120_000)
+
+  it('leaves references unread while a command runs on the folder, for a Retry to read', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { realpathSync, writeFileSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const lock = await import('../src/main/runner/lock')
+    const { workspaceFor } = await import('../src/main/runner/workspace')
+    const dir = tempDir('ollmost-service-refs-busy-')
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(tempDir('ollmost-user-refs-busy-'))
+    writeFileSync(join(folder, 'a.ts'), 'x\n')
+    const session = createConversation({
+      projectId: null,
+      model: 'ollama/llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'busy'
+    })
+    chat = reply('Later.')
+    const userText = () =>
+      (chatCalls[chatCalls.length - 1].messages as Array<{ role: string; content: string }>).findLast((m) => m.role === 'user')!.content
+    const ws = workspaceFor(session.id)
+    await lock.codeStarting(ws)
+    let asked: string
+    try {
+      const r = service.send({ ...sendBody(session.id), content: 'Look at @a.ts' })
+      asked = r.userMessage!.id
+      await waitFor(() => events.find((e) => e.type === 'done' && e.conversationId === session.id), 60_000)
+      expect(userText()).toBe('Look at @a.ts')
+      expect(getMessage(asked)!.references).toBeNull()
+      expect(events.some((e) => e.type === 'references')).toBe(false)
+    } finally {
+      await lock.codeEnded(ws)
+    }
+
+    // The command has ended: a Retry reads them.
+    events.length = 0
+    await service.regenerate(session.id, { model: 'ollama/llama3.2', think: null })
+    await waitFor(() => events.find((e) => e.type === 'done' && e.conversationId === session.id), 60_000)
+    expect(userText()).toBe('<referenced_file path="a.ts" lines="1-1 of 1">\n     1\tx\n</referenced_file>\n\nLook at @a.ts')
+    expect(getMessage(asked)!.references).toMatchObject([{ path: 'a.ts', text: '     1\tx' }])
+  }, 120_000)
+
+  /** A code session on a new folder of the user's holding `files`, its scratch in a new folder of Ollmost's. */
+  const sessionOn = (files: Record<string, string>) => {
+    const dir = tempDir('ollmost-service-refs-')
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(tempDir('ollmost-user-refs-'))
+    for (const [rel, text] of Object.entries(files)) writeFileSync(join(folder, rel), text)
+    const session = createConversation({
+      projectId: null,
+      model: 'ollama/llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'refs'
+    })
+    return { folder, session }
+  }
+  /** The user's message in the last request the model got. */
+  const lastUserText = () =>
+    (chatCalls[chatCalls.length - 1].messages as Array<{ role: string; content: string }>).findLast((m) => m.role === 'user')!.content
+  const replied = (id: string) =>
+    waitFor(() => events.find((e): e is Extract<ChatEvent, { type: 'done' }> => e.type === 'done' && e.conversationId === id), 60_000)
+  const retry = (id: string) => service.regenerate(id, { model: 'ollama/llama3.2', think: null })
+
+  it('stores and sends nothing when the reply is stopped while its references are read, so a Retry reads them afresh', async () => {
+    const { folder, session } = sessionOn({ 'a.ts': 'old\n' })
+    // A server that can't start: the note it leaves is gathered before the references are read.
+    const absent = mcpConfig.saveServer({
+      name: 'Absent',
+      command: 'ollmost-no-such-server',
+      args: [],
+      cwd: null,
+      env: {},
+      defaultOn: false
+    })
+    chat = reply('Read it.')
+    let release!: () => void
+    const held = new Promise<void>((r) => (release = r))
+    let reading = false
+    // A read that ends only after the Stop, as a slow one would, and doesn't look at the signal itself.
+    referenceReader.stand = async (ws, text) => {
+      reading = true
+      await held
+      return referenceReader.real(ws, text)
+    }
+    let asked: string
+    try {
+      const r = service.send({ ...sendBody(session.id), content: 'Look at @a.ts', toolSources: [`mcp:${absent.id}`] })
+      asked = r.userMessage!.id
+      await waitFor(() => reading, 60_000)
+      const stopped = service.stop(session.id)
+      release()
+      await stopped
+      const done = await replied(session.id)
+      expect(done.message.error).toBeNull()
+      expect(done.message.stats?.unavailableTools).toEqual([expect.stringMatching(/^Absent couldn't start/)])
+      expect(chatCalls).toHaveLength(0)
+      expect(getMessage(asked)!.references).toBeNull()
+      expect(events.some((e) => e.type === 'references')).toBe(false)
+      expect(listTraces(session.id).filter((t) => t.kind === 'chat')).toEqual([])
+    } finally {
+      referenceReader.stand = null
+    }
+
+    writeFileSync(join(folder, 'a.ts'), 'new\n')
+    events.length = 0
+    await retry(session.id)
+    await replied(session.id)
+    expect(lastUserText()).toBe('<referenced_file path="a.ts" lines="1-1 of 1">\n     1\tnew\n</referenced_file>\n\nLook at @a.ts')
+    expect(getMessage(asked)!.references).toMatchObject([{ path: 'a.ts', text: '     1\tnew' }])
+  }, 120_000)
+
+  it('says under the reply why a message’s references weren’t sent, and leaves them for a Retry', async () => {
+    const { CodeRunningError } = await import('../src/main/runner/lock')
+    const { RootMissingError } = await import('../src/main/runner/workspace')
+    const { folder, session } = sessionOn({ 'a.ts': 'x\n' })
+    chat = reply('Later.')
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let asked: string
+    try {
+      // The session was readied, then a command started in the folder before its references were read.
+      referenceReader.stand = () => Promise.reject(new CodeRunningError("this session's folder"))
+      const r = service.send({ ...sendBody(session.id), content: 'Look at @a.ts' })
+      asked = r.userMessage!.id
+      let done = await replied(session.id)
+      expect(lastUserText()).toBe('Look at @a.ts')
+      expect(getMessage(asked)!.references).toBeNull()
+      expect(done.message.error).toBeNull()
+      expect(done.message.stats?.unsentReferences).toBe(
+        "Your message's @ references weren't sent: a command was running in the session's folder. Retry sends them."
+      )
+      expect(done.message.stats?.unavailableTools).toBeUndefined()
+      expect(warn).toHaveBeenCalledTimes(1)
+
+      referenceReader.stand = () => Promise.reject(new RootMissingError(folder))
+      events.length = 0
+      await retry(session.id)
+      done = await replied(session.id)
+      expect(done.message.stats?.unsentReferences).toBe(
+        `Your message's @ references weren't sent. This session's folder is no longer at ${folder} (moved, renamed or deleted). Choose it again to carry on.`
+      )
+      expect(done.message.stats?.unavailableTools).toBeUndefined()
+      expect(warn).toHaveBeenCalledTimes(2)
+
+      referenceReader.stand = () => Promise.reject(new Error('disk on fire'))
+      events.length = 0
+      await retry(session.id)
+      done = await replied(session.id)
+      expect(done.message.stats?.unsentReferences).toBe(
+        "Your message's @ references weren't sent: they couldn't be read. Retry sends them."
+      )
+      expect(done.message.stats?.unavailableTools).toBeUndefined()
+      expect(error).toHaveBeenCalledWith(expect.stringContaining('@ references'), expect.objectContaining({ message: 'disk on fire' }))
+      expect(getMessage(asked)!.references).toBeNull()
+    } finally {
+      referenceReader.stand = null
+      warn.mockRestore()
+      error.mockRestore()
+    }
+
+    events.length = 0
+    await retry(session.id)
+    const done = await replied(session.id)
+    expect(lastUserText()).toBe('<referenced_file path="a.ts" lines="1-1 of 1">\n     1\tx\n</referenced_file>\n\nLook at @a.ts')
+    expect(done.message.stats?.unavailableTools).toBeUndefined()
+    expect(done.message.stats?.unsentReferences).toBeUndefined()
+  }, 120_000)
+
+  it('gives a message’s references half the room the model’s window has left, so the turn’s tool rounds fit too', async () => {
+    const { promptBudget } = await import('../src/main/chat/assemble')
+    const line = `${'x'.repeat(40)}\n`
+    // About 24,000 characters each: two of them are twice what an 8,192-token window has room for.
+    const { session } = sessionOn({ 'a.txt': line.repeat(600), 'b.txt': line.repeat(600) })
+    // Two earlier exchanges with some substance, as a real session has: they fill what the references leave.
+    chat = reply(`Noted. ${'It keeps its sources under src and its tests under tests. '.repeat(10)}`)
+    for (const q of ['What is this project?', 'And how is it tested?']) {
+      events.length = 0
+      service.send({ ...sendBody(session.id), content: q })
+      await replied(session.id)
+      await waitFor(() => !service.isReplyingIn(session.id))
+    }
+    const earlier = chatCalls.length
+    // One round reads more of a file, then the model answers.
+    chat = (b, res, n) =>
+      n === earlier + 1 ? void res.writeHead(200).end(toolCall('read_file', { path: 'a.txt', offset: 300 })) : reply('Both big.')(b, res, n)
+    events.length = 0
+    const r = service.send({ ...sendBody(session.id), content: 'Compare @a.txt with @b.txt' })
+    const done = await replied(session.id)
+    expect(done.message.toolEvents.map((e) => [e.tool, e.ok])).toEqual([['read_file', true]])
+    const refs = getMessage(r.userMessage!.id)!.references!
+    expect(refs.map((ref) => ref.refused ?? 'read')).toEqual(['read', 'over the limit'])
+    expect(refs[0].lines!.to).toBeLessThan(600)
+    const limit = Number(/reached their limit of ([\d,]+) characters, so b\.txt wasn't included/.exec(refs[1].text)![1].replace(/,/g, ''))
+    expect(refs[0].text.length).toBeLessThanOrEqual(limit)
+    // Each request of the turn, its references, the earlier turns and the round's result in it, fits what the window
+    // leaves for a prompt.
+    const tokens = (body: Record<string, unknown>) =>
+      (body.messages as Array<{ content: string }>).reduce((n, m) => n + Math.ceil(m.content.length / 4), 0) +
+      Math.ceil(JSON.stringify(body.tools ?? []).length / 4)
+    const turn = chatCalls.slice(earlier)
+    expect(turn).toHaveLength(2)
+    expect((turn[0].messages as Array<{ content: string }>).map((m) => m.content)).toContain('And how is it tested?')
+    for (const body of turn) expect(tokens(body)).toBeLessThanOrEqual(promptBudget(8192))
+    // The references took about half the room the first request had for its history, not all of it.
+    const system = Math.ceil((turn[0].messages as Array<{ content: string }>)[0].content.length / 4)
+    const room = promptBudget(8192) - system - Math.ceil(JSON.stringify(turn[0].tools ?? []).length / 4)
+    expect(limit).toBeLessThanOrEqual(room * 4 * 0.55)
+  }, 120_000)
+
+  it('reads a message that named nothing only once: a Retry sends it as it was', async () => {
+    const { session } = sessionOn({ 'a.ts': 'x\n' })
+    chat = reply('Fine.')
+    let reads = 0
+    referenceReader.stand = (...args) => {
+      reads++
+      return referenceReader.real(...args)
+    }
+    try {
+      const r = service.send({ ...sendBody(session.id), content: 'Nothing named here, write to me@example.com' })
+      await replied(session.id)
+      expect(getMessage(r.userMessage!.id)!.references).toEqual([])
+      events.length = 0
+      await retry(session.id)
+      await replied(session.id)
+      expect(reads).toBe(1)
+      expect(events.some((e) => e.type === 'references')).toBe(false)
+    } finally {
+      referenceReader.stand = null
+    }
+  }, 120_000)
+
+  it('drops the @ menu’s list when a reply ends, so a file made meanwhile shows', async () => {
+    const { sessionPaths } = await import('../src/main/code/pathList')
+    const { workspaceFor } = await import('../src/main/runner/workspace')
+    const { folder, session } = sessionOn({ 'a.ts': 'x\n' })
+    const ws = workspaceFor(session.id)
+    expect((await sessionPaths(ws)).paths).toContain('a.ts')
+    // As a command would: the kept list doesn't know of it yet.
+    writeFileSync(join(folder, 'b.ts'), 'y\n')
+    expect((await sessionPaths(ws)).paths).not.toContain('b.ts')
+    chat = reply('Done.')
+    service.send({ ...sendBody(session.id), content: 'hi' })
+    await replied(session.id)
+    await waitFor(() => !service.isReplyingIn(session.id))
+    expect((await sessionPaths(ws)).paths).toContain('b.ts')
+  }, 120_000)
+
+  it('leaves a chat’s @ text alone, even with the code runner on', async () => {
+    const dir = tempDir('ollmost-service-refs-chat-')
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    chat = reply('Plain.')
+    let reads = 0
+    referenceReader.stand = (...args) => {
+      reads++
+      return referenceReader.real(...args)
+    }
+    try {
+      const r = service.send({
+        conversationId: null,
+        projectId: null,
+        content: 'Look at @a.ts',
+        attachmentIds: [],
+        model: 'ollama/llama3.2',
+        think: null,
+        skills: [],
+        toolSources: ['code']
+      })
+      const done = await replied(r.conversation.id)
+      expect((chatCalls[0].messages as Array<{ content: string }>)[0].content).toMatch(/<code_runner>/)
+      expect(lastUserText()).toBe('Look at @a.ts')
+      expect(getMessage(r.userMessage!.id)!.references).toBeNull()
+      expect(events.some((e) => e.type === 'references')).toBe(false)
+      expect(done.message.stats?.unavailableTools).toBeUndefined()
+      expect(reads).toBe(0)
+    } finally {
+      referenceReader.stand = null
+    }
+  }, 120_000)
 })
 
 describe('markInterruptedReplies', () => {

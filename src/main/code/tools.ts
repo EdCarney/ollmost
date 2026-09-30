@@ -281,19 +281,7 @@ async function fileToolResult(name: string, c: Call, ws: Workspace, ctx: ToolCon
     case 'list_files': {
       const r = await files.listFiles(ws, { pattern: c.pattern, path: c.path })
       const n = r.files.length
-      const where = r.rel ? ` in ${r.rel}` : ''
-      const body = n
-        ? r.files.join('\n')
-        : `No files${c.pattern ? ` match ${c.pattern}` : ''}${where} (what .gitignore ignores, and .git, are left out; run_command with ls sees everything).`
-      const note =
-        r.stopped === 'limit'
-          ? `\n[… the list stops at ${files.LIST_LIMIT} files; narrow the pattern or the folder]`
-          : r.stopped === 'visits'
-            ? '\n[… the folder holds more entries than a listing looks at; narrow the folder]'
-            : r.stopped === 'time'
-              ? '\n[… the listing stopped at its time limit; narrow the folder]'
-              : ''
-      const content = `${body}${note}`
+      const content = files.listingText(r, c.pattern)
       return done(content, {
         summary: n === 0 ? 'no files' : r.cut ? `${n}+ files` : plural(n, 'file'),
         record: capText(content, RECORD_CHARS)

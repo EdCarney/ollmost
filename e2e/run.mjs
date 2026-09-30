@@ -1969,18 +1969,21 @@ const evilSvg = (port) =>
           .slice(lastUser)
           .filter((m) => m.role === 'tool')
           .map((m) => m.content)
-        sessionChats.push({ toolNames, system: body.messages[0].content, results })
+        const user = String(body.messages[lastUser]?.content ?? '')
+        sessionChats.push({ toolNames, system: body.messages[0].content, results, user })
         const call = (name, args) => ({ content: '', tool_calls: [{ function: { name, arguments: args } }] })
         // Only a session offers edit_file, so its presence is what tells this fake apart from the other mock chats.
         return !toolNames.includes('edit_file')
           ? { content: 'Plain answer.' }
-          : results.length === 0
-            ? call('read_file', { path: 'README.md' })
-            : results.length === 1
-              ? call('edit_file', { path: 'README.md', old_string: 'Hello', new_string: 'Bonjour' })
-              : results.length === 2
-                ? call('run_command', { command: 'echo done' })
-                : { content: 'Changed the greeting and checked it.' }
+          : user.includes('<referenced_file')
+            ? { content: 'It greets you.' }
+            : results.length === 0
+              ? call('read_file', { path: 'README.md' })
+              : results.length === 1
+                ? call('edit_file', { path: 'README.md', old_string: 'Hello', new_string: 'Bonjour' })
+                : results.length === 2
+                  ? call('run_command', { command: 'echo done' })
+                  : { content: 'Changed the greeting and checked it.' }
       }
     })
     const sessionData = tempDir('ollmost-e2e-sessions-')
@@ -2186,6 +2189,60 @@ const evilSvg = (port) =>
         summaryText.replace(/\n/g, ' ').slice(0, 100)
       )
       await divider.locator('button').click()
+
+      // 6d. @ references (#129): typing @ lists the session's files, typing on filters them, and Enter chooses one,
+      // which the composer marks. The request carries it, numbered, before the question, and the sent message shows it
+      // as a chip that opens exactly what was sent.
+      await win.fill('textarea', 'What does @')
+      await win.waitForSelector('[data-testid="at-menu"] button[data-path="README.md"]', { timeout: 15000 })
+      const atMenu = await win.locator('[data-testid="at-menu"]').innerText()
+      check(
+        'typing @ lists the files the session read or edited',
+        /Recent in this session/.test(atMenu) && /README\.md[\s\S]*edited/.test(atMenu),
+        atMenu.replace(/\n/g, ' ').slice(0, 120)
+      )
+      await win.keyboard.type('REA')
+      await win.waitForTimeout(200)
+      const filtered = await win
+        .locator('[data-testid="at-menu"] button[data-path]')
+        .evaluateAll((rows) => rows.map((row) => row.getAttribute('data-path')))
+      check('typing on filters the list to the one file', filtered.join('|') === 'README.md', JSON.stringify(filtered))
+      await win.keyboard.press('Enter')
+      await win.waitForTimeout(200)
+      const chosen = await win.inputValue('textarea')
+      check('choosing it with Enter puts its path in the composer', chosen === 'What does @README.md ', JSON.stringify(chosen))
+      await win.keyboard.type('say?')
+      await win.waitForTimeout(200)
+      const marked = await win.locator('[data-testid="at-layer"] [data-testid="at-mark"]').allInnerTexts()
+      check('the reference is marked in the composer', marked.join('|') === '@README.md', JSON.stringify(marked))
+      const before = sessionChats.length
+      await win.click('button[aria-label="Send"]')
+      const referenceChip = win.locator('[data-testid="reference-chip"][data-path="README.md"]')
+      await referenceChip.waitFor({ timeout: 30000 })
+      await win.waitForFunction(() => !document.querySelector('button[aria-label="Stop"]'), null, { timeout: 120000 })
+      const referred = sessionChats[before]?.user ?? ''
+      check(
+        'the request carries the file, numbered, before the question',
+        /^<referenced_file path="README\.md" lines="1-1 of 1">\n {5}1\tBonjour from the fixture\n<\/referenced_file>\n\nWhat does @README\.md say\?$/.test(
+          referred
+        ),
+        JSON.stringify(referred.slice(0, 160))
+      )
+      const chipText = (await referenceChip.innerText()).trim()
+      const bubbleMarks = await win.locator('.bg-bubble').last().locator('[data-testid="at-mark"]').allInnerTexts()
+      check(
+        'the sent message shows a chip for it and marks it in its text',
+        chipText === 'README.md' && bubbleMarks.join('|') === '@README.md',
+        JSON.stringify({ chipText, bubbleMarks })
+      )
+      await referenceChip.click()
+      const shown = win.getByRole('region', { name: 'What was sent for README.md' }).locator('[data-testid="reference-text"]')
+      await shown.waitFor({ timeout: 5000 })
+      const shownText = await shown.textContent()
+      const sentBody = /<referenced_file path="README\.md"[^>]*>\n([\s\S]*?)\n<\/referenced_file>/.exec(referred)?.[1]
+      check('its chip opens exactly what was sent', !!sentBody && shownText === sentBody, JSON.stringify(shownText))
+      await win.screenshot({ path: join(SHOTS, 'code-at-reference.png') })
+      await referenceChip.click()
 
       // 7. Deleting the session leaves the folder exactly as it was. The panel stays open: the title's menu must be
       // reachable beside it.
@@ -2615,7 +2672,8 @@ const evilSvg = (port) =>
     // the schema is taken out first, or they'd fail on it. A new schema migration means updating this too.
     const KILN_DB_VERSION = 8
     const version = db.prepare('PRAGMA user_version').get().user_version
-    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 9, `database version ${version}`)
+    check('the Kiln stand-in undoes every migration since Kiln', version === KILN_DB_VERSION + 10, `database version ${version}`)
+    db.exec('ALTER TABLE messages DROP COLUMN refs')
     // The model-key migration (model endpoints): its two columns go, and model names lose the 'ollama/' it put in front,
     // or running it again would prefix them twice.
     db.exec('ALTER TABLE model_profiles DROP COLUMN detected; ALTER TABLE usage_events DROP COLUMN billing')
