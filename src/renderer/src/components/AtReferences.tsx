@@ -7,7 +7,7 @@ import { cn } from '@/lib/format'
  * An @ reference that names a real file or folder (#129): accent text on the soft accent ground, as a skill chip is.
  * Colour and background only (its padding is a shadow), so the composer's layer of marks wraps as its textarea does.
  */
-export const REF_MARK = 'rounded-[4px] bg-accent-soft text-accent shadow-[0_0_0_2px_var(--o-accentSoft)] [box-decoration-break:clone]'
+const REF_MARK = 'rounded-[4px] bg-accent-soft text-accent shadow-[0_0_0_2px_var(--o-accentSoft)] [box-decoration-break:clone]'
 
 /** `text` with its marked tokens drawn as references. */
 export function MarkedText({ text, marks }: { text: string; marks: readonly AtToken[] }) {

@@ -9,7 +9,7 @@ import { listFiles, listingText, pathKind, readFile, Refused } from './files'
 // Each read takes the session's lock on its own, one after another: a read inside another's lock would wait for itself.
 
 /** All of one message's references together, in characters: two read_file results' worth. */
-export const REFERENCES_TOTAL_CHARS = 2 * TOOL_RESULT_CHARS
+const REFERENCES_TOTAL_CHARS = 2 * TOOL_RESULT_CHARS
 /** What a reference's block adds around its text: the tag, its path and its line range. */
 const BLOCK_CHARS = 200
 /** Below this much room a file isn't read: a few lines of it would only mislead. */

@@ -404,7 +404,6 @@ async function generate(
         }
       }
     }
-    // Set now, so a reply that ends early (a Stop, a failure below) still saves these.
     if (unavailable.length) stats.unavailableTools = unavailable
 
     const project = conversation.projectId ? getProject(conversation.projectId) : null

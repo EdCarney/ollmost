@@ -115,7 +115,7 @@ function trimEnd(text: string): string {
 
 /**
  * Every @ token in `text`. A path with spaces isn't supported: the token stops at the space. A path that starts at "/"
- * or "~/", or has a ".." in it, isn't a token.
+ * or "~/", is just "~", or has a ".." in it, isn't a token.
  */
 export function findAtTokens(text: string): AtToken[] {
   const ranges = fences(text)
@@ -242,7 +242,7 @@ function matchEntry(e: Entry, q: string, worst = 4): { rank: number; hits: numbe
 
 /**
  * How `query` matches `path`, ignoring case: 1, the name starts with it; 2, the name contains it; 3, the path contains
- * it; 4, its letters in order across path segments. Null when it doesn't match.
+ * it; 4, its letters in order across path segments. Null when it doesn't match. Exported for tests.
  */
 export function atMatch(path: string, query: string): { rank: number; hits: number[] } | null {
   return matchEntry(entry(path), lower(query))

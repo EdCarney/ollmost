@@ -3,6 +3,7 @@ import { mkdirSync, realpathSync, renameSync, symlinkSync, truncateSync, writeFi
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { markedTokens } from '@shared/atRefs'
 import { tempDir, trackTempDir } from './tempDir'
 
 // What a code session's @ references send (#129): a file as read_file reads it, a folder as list_files lists it, or
@@ -27,6 +28,7 @@ const workspace = await import('../src/main/runner/workspace')
 const lock = await import('../src/main/runner/lock')
 const files = await import('../src/main/code/files')
 const { resolveReferences } = await import('../src/main/code/references')
+const { sessionPaths } = await import('../src/main/code/pathList')
 
 const data = tempDir('ollmost-code-refs-')
 beforeAll(() => {
@@ -237,5 +239,35 @@ describe('resolveReferences', () => {
     renameSync(dir, `${dir}-moved`)
     trackTempDir(`${dir}-moved`)
     await expect(resolveReferences(ws, '@a.ts')).rejects.toBeInstanceOf(workspace.RootMissingError)
+  })
+})
+
+describe('the composer’s marks and what a reply sends', () => {
+  it('marks exactly the tokens a reply reads, from the same text and the folder’s list', async () => {
+    const { ws } = project({ 'a.ts': 'x\n', 'src/a.ts': 'y\n', 'logo.png': Buffer.from([0x89, 0x50, 0, 0x47]) })
+    const text = [
+      'See @src and @src/ and @./, not @a.ts/.',
+      'Then @./src/a.ts, @a.ts and @logo.png.',
+      'Mail me@example.com about @nowhere.ts',
+      '```',
+      '@a.ts',
+      '```'
+    ].join('\n')
+    const listed = new Set((await sessionPaths(ws)).paths)
+    const refs = await resolveReferences(ws, text)
+    const marked = markedTokens(text, listed).map((t) => t.path)
+    const expected = ['./', './src/a.ts', 'a.ts', 'logo.png', 'src', 'src/']
+    expect([...marked].sort()).toEqual(expected)
+    expect(refs.flatMap((r) => r.tokens).sort()).toEqual(expected)
+    // A binary file is sent, as its refusal, so it's marked too.
+    expect(refs.find((r) => r.path === 'logo.png')?.refused).toBe('binary file')
+  })
+
+  it('drops a mark when an edit breaks its path, as a reply would read nothing', async () => {
+    const { ws } = project({ 'src/a.ts': 'y\n' })
+    const listed = new Set((await sessionPaths(ws)).paths)
+    expect(markedTokens('@src/a.ts', listed).map((t) => t.path)).toEqual(['src/a.ts'])
+    expect(markedTokens('@src/a.t', listed)).toEqual([])
+    expect(await resolveReferences(ws, '@src/a.t')).toEqual([])
   })
 })

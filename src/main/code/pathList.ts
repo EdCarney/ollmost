@@ -9,12 +9,12 @@ import { walkFiles } from './walk'
 // until something may have changed what it would find: a file tool's write, a Changes panel refresh, a reply ending.
 
 /** The most files the list holds. */
-export const PATHS_LIMIT = 20_000
+const PATHS_LIMIT = 20_000
 
 /** Each folder's list, by its Workspace.key (the folder), built or being built. */
 const lists = new Map<string, Promise<SessionPaths>>()
 
-/** Each folder that holds one of `files`, once, ending in "/", ahead of the files themselves. */
+/** Each folder that holds one of `files`, once, ending in "/", ahead of the files themselves. Exported for tests. */
 export function withFolders(files: readonly string[]): string[] {
   const folders = new Set<string>()
   for (const f of files) for (let i = f.indexOf('/'); i >= 0; i = f.indexOf('/', i + 1)) folders.add(f.slice(0, i + 1))
