@@ -804,5 +804,7 @@ export type ChatEvent =
   | { type: 'usage'; conversationId: ID; usage: ChatUsage }
   | { type: 'error'; conversationId: ID; messageId: ID; error: string }
   | { type: 'title'; conversationId: ID; title: string }
+  /** A code session's message had its @ references read as its reply started (#129): its chips can show. */
+  | { type: 'references'; conversationId: ID; messageId: ID; references: MessageReference[] }
 
 export type FileSource = { path: string } | { name: string; mime: string; data: ArrayBuffer }

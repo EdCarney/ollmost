@@ -71,6 +71,36 @@ describe('assemble', () => {
     expect(messages[1].images).toBeUndefined()
   })
 
+  it('puts a code session’s @ references before the message, as they were sent', () => {
+    const ref = {
+      tokens: ['src/a.ts'],
+      path: 'src/a.ts',
+      kind: 'file' as const,
+      lines: { from: 1, to: 2, total: 5 },
+      text: '     1\tone\n     2\ttwo'
+    }
+    const { messages } = assemble({ ...base, history: [turn('user', 'What does @src/a.ts do?', { references: [ref] })] })
+    expect(messages[1].content).toBe(
+      '<referenced_file path="src/a.ts" lines="1-2 of 5">\n     1\tone\n     2\ttwo\n[… cut at line 2; read_file with offset=3 reads on]\n</referenced_file>\n\nWhat does @src/a.ts do?'
+    )
+  })
+
+  it('counts a message’s @ references toward the context budget', () => {
+    const ref = { tokens: ['big.ts'], path: 'big.ts', kind: 'file' as const, lines: { from: 1, to: 1, total: 1 }, text: 'x'.repeat(40_000) }
+    const plain = assemble({ ...base, history: [turn('user', 'Look at @big.ts')] }).estimatedTokens
+    const referred = assemble({ ...base, history: [turn('user', 'Look at @big.ts', { references: [ref] })] }).estimatedTokens
+    expect(referred - plain).toBeGreaterThanOrEqual(10_000)
+  })
+
+  it('names a folder’s block and a refusal', () => {
+    const folder = { tokens: ['src'], path: 'src/', kind: 'folder' as const, text: 'src/a.ts' }
+    const binary = { tokens: ['x.png'], path: 'x.png', kind: 'file' as const, refused: 'binary file', text: 'x.png is a binary file.' }
+    const { messages } = assemble({ ...base, history: [turn('user', 'Look', { references: [folder, binary] })] })
+    expect(messages[1].content).toBe(
+      '<referenced_folder path="src/">\nsrc/a.ts\n</referenced_folder>\n\n<referenced_file path="x.png" refused="binary file">\nx.png is a binary file.\n</referenced_file>\n\nLook'
+    )
+  })
+
   it('passes images through for vision models, with their type', () => {
     const image = { data: 'AAAA', mime: 'image/png' }
     const { messages } = assemble({ ...base, history: [turn('user', 'what is this', { images: [image] })] })

@@ -30,6 +30,7 @@ import {
   linkAttachments,
   listMessages,
   setCompaction,
+  setMessageReferences,
   unfinishedReplyIds,
   updateConversation,
   updateMessage
@@ -45,6 +46,8 @@ import { getSettings } from '../settings'
 import { getSkill, listSkills } from '../skills/library'
 import { ensure as ensureServers, readyTools } from '../mcp/manager'
 import { MCP_SOURCE } from '../mcp/provider'
+import { dropSessionPaths } from '../code/pathList'
+import { resolveReferences } from '../code/references'
 import { type CodeSession, prepareCodeSession } from '../code/session'
 import { CODE_SOURCE } from '../runner/provider'
 import { runnerStatus } from '../runner/status'
@@ -165,6 +168,8 @@ export async function edit(
     messages.findIndex((m) => m.id === messageId)
   )
   uncompactFrom(original.conversationId, original)
+  // New text names its own files: its references are read again when the reply starts (#129).
+  setMessageReferences(messageId, null)
   const user = updateMessage(messageId, { content })
   const conversation = updateConversation(original.conversationId, { model: opts.model, think: opts.think, touch: true })
   return startAssistant(conversation, user, opts.model, opts.think, reply)
@@ -250,6 +255,8 @@ function startAssistant(
     .finally(() => {
       // Only remove our own entry: a reply that overlapped this one must stay stoppable.
       if (active.get(conversation.id)?.controller === controller) active.delete(conversation.id)
+      // A reply's commands can add or remove files the @ menu lists (#129).
+      if (conversation.mode === 'code' && conversation.root) dropSessionPaths(conversation.root)
     })
   active.set(conversation.id, { controller, flags, settled })
   return { conversation, userMessage: parent, assistantMessageId: assistant.id }
@@ -261,6 +268,7 @@ async function toTurn(message: Message, vision: boolean): Promise<HistoryTurn> {
     turn.tools = replayCalls(message.toolEvents)
     return turn
   }
+  if (message.references?.length) turn.references = message.references
   for (const a of attachmentRowsForMessage(message.id)) {
     if (a.kind === 'image') {
       if (vision) turn.images.push(await imageForModel(a.path, a.mime))
@@ -380,6 +388,26 @@ async function generate(
       }
     }
     if (unavailable.length) stats.unavailableTools = unavailable
+
+    // The files and folders the user's @ tokens name (#129): read once, as the first reply to the message starts, and
+    // kept with it, so a Retry, a later turn or a /compact sees what this reply was sent. An edit forgets them, to be
+    // read again. When the folder isn't ready, or a command runs there, they're left unread: the tokens go as plain
+    // text this time, and a Retry reads them. No lock is held here (prepareCodeSession's has ended), and each read
+    // takes its own.
+    if (policy.mode === 'code' && workspace) {
+      const parentId = getMessage(messageId)?.parentId
+      const asked = parentId ? getMessage(parentId) : null
+      if (asked?.role === 'user' && asked.references === null) {
+        const references = await resolveReferences(workspace, asked.content).catch((err: unknown) => {
+          console.warn('Ollmost: a message’s @ references were left unread:', errorMessage(err))
+          return null
+        })
+        if (references) {
+          setMessageReferences(asked.id, references)
+          if (references.length) emit({ type: 'references', conversationId, messageId: asked.id, references })
+        }
+      }
+    }
 
     const project = conversation.projectId ? getProject(conversation.projectId) : null
     const messages = listMessages(conversationId)
@@ -648,7 +676,8 @@ function cutToFit(line: string, maxChars: number): string {
  * calls). Prose and calls are cut apart, so a long reply keeps its calls and its conclusion, and a cut says so.
  */
 function transcriptLine(m: Message): string {
-  const said = [proseBrief(proseOf(m.content)), ...m.attachments.map((a) => `[attached: ${a.name}]`)].filter(Boolean).join(' ')
+  const referred = (m.references ?? []).map((r) => `[referenced: ${r.path}${r.refused ? ` (not sent: ${r.refused})` : ''}]`)
+  const said = [proseBrief(proseOf(m.content)), ...m.attachments.map((a) => `[attached: ${a.name}]`), ...referred].filter(Boolean).join(' ')
   const calls = m.toolEvents.map((e) => {
     const call = `[${e.tool}${argsBrief(e.args)}${e.summary ? ` → ${e.summary}` : ''}]`
     return call.length > TRANSCRIPT_CALL_CHARS ? `${call.slice(0, TRANSCRIPT_CALL_CHARS - 1)}…` : call
