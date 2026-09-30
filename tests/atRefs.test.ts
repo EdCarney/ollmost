@@ -9,6 +9,7 @@ import {
   hitRuns,
   insertAtPath,
   markedTokens,
+  normalizeAtPath,
   referenceMarks,
   referenceNote,
   splitMarked,
@@ -39,6 +40,41 @@ describe('findAtTokens', () => {
   it('stops a path at a space: a path with spaces isn’t supported', () => {
     expect(findAtTokens('@my file.txt')).toEqual([{ start: 0, end: 3, path: 'my' }])
   })
+
+  it('opens a fence only on a line of three or more backticks or tildes, and closes it only with as many of the same', () => {
+    expect(findAtTokens('```npm test``` fails, see @src/a.ts')).toEqual([{ start: 26, end: 35, path: 'src/a.ts' }])
+    expect(findAtTokens('~~~\n@a.ts\n~~~')).toEqual([])
+    expect(findAtTokens('````\n```\n@a.ts\n```\n````')).toEqual([])
+    expect(findAtTokens('````\n```\n@a.ts\n```\n````\n@b.ts').map((t) => t.path)).toEqual(['b.ts'])
+    expect(findAtTokens('````\n@a.ts\n```\n@b.ts')).toEqual([])
+    expect(findAtTokens('```\n@a.ts\n~~~\n@b.ts')).toEqual([])
+  })
+
+  it('keeps a closing bracket the path opened, and drops one it didn’t', () => {
+    expect(findAtTokens('@app/(auth) and @app/[id], (see @d.ts).').map((t) => t.path)).toEqual(['app/(auth)', 'app/[id]', 'd.ts'])
+    expect(findAtTokens('(see @app/(auth)). {or @b.ts},').map((t) => t.path)).toEqual(['app/(auth)', 'b.ts'])
+  })
+
+  it('reports a path as it’s spelled, and leaves one that starts outside the folder or climbs out of it as plain text', () => {
+    expect(findAtTokens('@src//a.ts @./src/./a.ts @./').map((t) => t.path)).toEqual(['src//a.ts', './src/./a.ts', './'])
+    expect(findAtTokens('@/etc/hosts @~/x @../x @src/../a.ts @src/.. @./..')).toEqual([])
+  })
+})
+
+describe('normalizeAtPath', () => {
+  it('spells a path one way: no "./" or doubled slashes, and "" for the folder itself', () => {
+    expect(normalizeAtPath('./src/./a.ts')).toBe('src/a.ts')
+    expect(normalizeAtPath('src//a.ts')).toBe('src/a.ts')
+    expect(normalizeAtPath('.//a.ts')).toBe('a.ts')
+    expect(normalizeAtPath('src/')).toBe('src/')
+    expect(normalizeAtPath('./')).toBe('')
+    expect(normalizeAtPath('.')).toBe('')
+  })
+
+  it('keeps what shows a path leaves the folder', () => {
+    expect(normalizeAtPath('/etc/hosts')).toBe('/etc/hosts')
+    expect(normalizeAtPath('src/../a.ts')).toBe('src/../a.ts')
+  })
 })
 
 describe('atQueryAt', () => {
@@ -48,6 +84,12 @@ describe('atQueryAt', () => {
     expect(atQueryAt('me@exa', 6)).toBeNull()
     expect(atQueryAt('@a b', 4)).toBeNull()
     expect(atQueryAt('```\n@a', 6)).toBeNull()
+    expect(atQueryAt('~~~\n@a', 6)).toBeNull()
+  })
+
+  it('reads only up to the caret', () => {
+    expect(atQueryAt('see @src/fi now', 11)).toEqual({ start: 4, query: 'src/fi' })
+    expect(atQueryAt('@ab cd', 2)).toEqual({ start: 0, query: 'a' })
   })
 })
 
@@ -67,6 +109,14 @@ describe('atMatch', () => {
     expect(atMatch('src/main/code/files.ts', 'mcf')).toEqual({ rank: 4, hits: [4, 9, 14] })
     expect(atMatch('src/main/files/', 'FIL')).toEqual({ rank: 1, hits: [9, 10, 11] })
     expect(atMatch('README.md', 'xyz')).toBeNull()
+  })
+
+  it('tries a shorter run in one segment when a later segment can take the rest', () => {
+    expect(atMatch('main/access.ts', 'mac')).toEqual({ rank: 4, hits: [0, 5, 6] })
+  })
+
+  it('keeps each hit on the character it matched when lower case would change a character’s length', () => {
+    expect(atMatch('İ/files.ts', 'fil')).toEqual({ rank: 1, hits: [2, 3, 4] })
   })
 })
 
@@ -108,9 +158,34 @@ describe('atRows', () => {
     expect(top.rows[0]).toMatchObject({ name: 'src/', dir: '', folder: true })
   })
 
+  it('puts the shorter path first when code-point order would put it second', () => {
+    expect(atRows(['a/long/files.ts', 'b/files.ts'], 'fil', []).rows.map((r) => r.path)).toEqual(['b/files.ts', 'a/long/files.ts'])
+  })
+
+  it('leaves out a path with a space in it, which a token can’t name', () => {
+    const spaced = ['My Notes.md', 'My Notes/', 'notes.md']
+    expect(atRows(spaced, 'not', []).rows.map((r) => r.path)).toEqual(['notes.md'])
+    expect(atRows(spaced, '', [{ path: 'My Notes.md', how: 'read' }])).toMatchObject({
+      heading: 'In this folder',
+      rows: [{ path: 'notes.md' }]
+    })
+  })
+
+  it('reads a query that starts "./" as the path after it', () => {
+    expect(atRows(paths, './fil', [])).toEqual(atRows(paths, 'fil', []))
+    expect(atRows(paths, './', []).heading).toBe('In this folder')
+  })
+
   it('shows at most AT_ROWS rows', () => {
     const many = Array.from({ length: 80 }, (_, i) => `f${i}.ts`)
     expect(atRows(many, 'f', []).rows).toHaveLength(AT_ROWS)
+  })
+
+  it('keeps the best AT_ROWS rows wherever they come in the list', () => {
+    const many = Array.from({ length: 80 }, (_, i) => `f${79 - i}.ts`)
+    const rows = atRows(many, 'f', []).rows.map((r) => r.path)
+    expect(rows.slice(0, 11)).toEqual([...Array.from({ length: 10 }, (_, i) => `f${i}.ts`), 'f10.ts'])
+    expect(rows[AT_ROWS - 1]).toBe('f49.ts')
   })
 })
 
@@ -146,6 +221,12 @@ describe('marks', () => {
     const listed = new Set(['src/', 'src/a.ts'])
     const text = 'Fix @src/a.ts, @./src/a.ts and @src but not @b.ts'
     expect(markedTokens(text, listed).map((t) => t.path)).toEqual(['src/a.ts', './src/a.ts', 'src'])
+  })
+
+  it('marks any spelling of a listed path and "./", the folder itself, but nothing outside the folder', () => {
+    const listed = new Set(['src/', 'src/a.ts'])
+    const text = '@src//a.ts @./src/./a.ts @./ @/etc/hosts @~/x @../x @src/../a.ts'
+    expect(markedTokens(text, listed).map((t) => t.path)).toEqual(['src//a.ts', './src/./a.ts', './'])
   })
 
   it('splits text into its marked and plain parts', () => {
