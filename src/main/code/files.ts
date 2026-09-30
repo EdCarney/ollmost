@@ -521,17 +521,21 @@ export interface WriteArgs {
 
 /** Replace one exact passage of a text file (every occurrence with `replaceAll`). */
 export async function editFile(ws: Workspace, args: EditArgs): Promise<Change> {
-  const change = await readyForSession(ws, async (root) => apply(await planEdit(root, args)))
-  // The @ menu's list may no longer be what's there (#129).
-  dropSessionPaths(ws.key)
-  return change
+  try {
+    return await readyForSession(ws, async (root) => apply(await planEdit(root, args)))
+  } finally {
+    // The @ menu's list may no longer be what's there (#129), even after a write that failed partway.
+    dropSessionPaths(ws.key)
+  }
 }
 
 /** Write a whole text file, creating it and its folders, or replacing it. */
 export async function writeFile(ws: Workspace, args: WriteArgs): Promise<Change> {
-  const change = await readyForSession(ws, async (root) => apply(await planWrite(root, args)))
-  dropSessionPaths(ws.key)
-  return change
+  try {
+    return await readyForSession(ws, async (root) => apply(await planWrite(root, args)))
+  } finally {
+    dropSessionPaths(ws.key)
+  }
 }
 
 /** The diff edit_file would make, for the approval that asks first. Throws what the edit would. */

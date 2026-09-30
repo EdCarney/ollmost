@@ -73,6 +73,14 @@ describe('sessionPaths', () => {
     expect((await sessionPaths(ws)).paths).toEqual(['a.ts', 'b.ts', 'c.ts', 'd.ts'])
   })
 
+  it('is listed again after edit_file changes a file', async () => {
+    const { dir, ws } = project({ 'a.ts': 'x\n' })
+    expect((await sessionPaths(ws)).paths).toEqual(['a.ts'])
+    writeFileSync(join(dir, 'b.ts'), '')
+    await files.editFile(ws, { path: 'a.ts', oldString: 'x', newString: 'y' })
+    expect((await sessionPaths(ws)).paths).toEqual(['a.ts', 'b.ts'])
+  })
+
   it('says a running command stopped it, and tries again the next time', async () => {
     const { ws } = project({ 'a.ts': '' })
     await lock.codeStarting(ws)

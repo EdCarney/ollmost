@@ -453,6 +453,8 @@ const impl: Impl = {
     create: async ({ root, model, think }) => {
       // Checked again: the renderer may send any path.
       const real = await validateRoot(root)
+      // A list kept from an earlier session on this folder may be long out of date: a new session lists it afresh (#129).
+      dropSessionPaths(real)
       return createConversation({
         projectId: null,
         model,
@@ -478,9 +480,13 @@ const impl: Impl = {
       if (picked === null) return null
       const real = await validateRoot(picked)
       // The session may have been deleted, or a reply started in it, while the dialog was open.
-      sessionRoot(id)
+      const before = sessionRoot(id)
       assertNotReplying(id)
-      return setConversationRoot(id, real)
+      const moved = setConversationRoot(id, real)
+      // Neither folder's kept list is to be trusted: the old one moved, the new one may be out of date (#129).
+      dropSessionPaths(before)
+      dropSessionPaths(real)
+      return moved
     },
     status: async (id) => {
       const root = sessionRoot(id)
