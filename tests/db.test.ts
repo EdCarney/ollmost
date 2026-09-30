@@ -15,6 +15,7 @@ import {
   search,
   setCompaction,
   setConversationRoot,
+  setMessageReferences,
   updateConversation
 } from '../src/main/db/conversations'
 import {
@@ -383,5 +384,22 @@ describe('a project’s files in folders', () => {
     expect(onDisk?.name).toBe('notes.md')
     expect(onDisk?.path.startsWith(paths.data)).toBe(true)
     expect(projectFileOnDisk('missing')).toBeNull()
+  })
+})
+
+describe('message references', () => {
+  it('are null until kept, come back with the message, and can be forgotten', () => {
+    const c = session('/w/refs')
+    const m = say(c.id, 'see @a.ts')
+    expect(m.references).toBeNull()
+    const refs = [{ tokens: ['a.ts'], path: 'a.ts', kind: 'file' as const, lines: { from: 1, to: 1, total: 1 }, text: '     1\tx' }]
+    setMessageReferences(m.id, refs)
+    expect(getMessage(m.id)!.references).toEqual(refs)
+    expect(listMessages(c.id)[0].references).toEqual(refs)
+    // An edit of the message's text keeps them; only setMessageReferences changes them.
+    updateMessage(m.id, { content: 'see @a.ts again' })
+    expect(getMessage(m.id)!.references).toEqual(refs)
+    setMessageReferences(m.id, null)
+    expect(getMessage(m.id)!.references).toBeNull()
   })
 })

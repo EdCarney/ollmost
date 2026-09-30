@@ -48,6 +48,7 @@ function placeholder(result: SendResult): Message {
     thinkingSegments: null,
     model: result.conversation.model,
     attachments: [],
+    references: null,
     toolEvents: [],
     stats: null,
     error: null,

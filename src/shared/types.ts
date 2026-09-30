@@ -232,6 +232,8 @@ export interface Message {
   thinkingSegments: ThinkingSegment[] | null
   model: string | null
   attachments: Attachment[]
+  /** A code session's @ references as sent (#129); null until a reply to the message reads them, and in a chat. */
+  references: MessageReference[] | null
   toolEvents: ToolEvent[]
   stats: MessageStats | null
   error: string | null
