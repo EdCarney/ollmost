@@ -6,9 +6,10 @@ import { childId } from '@shared/toolEvents'
 import type { MessageStats, Settings, ToolEvent } from '@shared/types'
 import { modelInfo, resolve } from '../providers/registry'
 import type { ChatRequest, ToolDef } from '../providers/types'
-import { DEFAULT_SUB_AGENT_REPLY_CHARS, DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
+import { DEFAULT_SUB_AGENT_REPLY_CHARS, DEFAULT_SUB_AGENT_ROUNDS, DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
 import { assemble, promptBudget } from './assemble'
 import { runRounds, toolsTokens } from './rounds'
+import { toolRounds } from './turn'
 import { type ResolvedCall, type RunContext, type ToolContext, toolGrants, type ToolProvider, type ToolResult, toolsFor } from './tools'
 
 /** The least and most of a child's reply the parent may get, whatever the setting says (about 250 to 8,000 words). */
@@ -48,6 +49,14 @@ function offered(ctx: ToolContext): boolean {
   if (ctx.child || !ctx.reply || !getSettings().delegate.enabled) return false
   // Asked as a child without skills, the providers leave out this tool and the skill tools, and only those.
   return !!toolsFor({ ...ctx, child: true, skills: false })?.length
+}
+
+/**
+ * Requests a sub-agent may make on one task: the setting as a whole number from 1 to MAX_TOOL_ROUNDS (settings aren't
+ * checked over IPC), or the default when there's no number (a settings file saved before the setting existed).
+ */
+export function subAgentRounds(settings: Settings['delegate']): number {
+  return toolRounds(settings.maxRounds, DEFAULT_SUB_AGENT_ROUNDS)
 }
 
 /**
@@ -187,7 +196,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
     provider,
     body,
     budget: promptBudget(numCtx),
-    maxRounds: Math.max(1, settings.delegate.maxRounds),
+    maxRounds: subAgentRounds(settings.delegate),
     // A child has no delegate of its own, so nothing of its runs beside anything else.
     parallel: 1,
     toolContext: childCtx,

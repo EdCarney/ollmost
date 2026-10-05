@@ -1,7 +1,7 @@
-import { chmodSync, existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { removeTempDirs, tempDir, trackTempDir } from './tempDir'
+import { removeTempDirs, removeTempDirsWith, tempDir, trackTempDir } from './tempDir'
 
 // The helper every test's temp folders go through: tests/setup.ts calls removeTempDirs after each test file.
 describe('removing the temp folders a test made', () => {
@@ -30,5 +30,33 @@ describe('removing the temp folders a test made', () => {
     chmodSync(join(dir, 'runner'), 0o500)
     removeTempDirs()
     expect(existsSync(dir)).toBe(false)
+  })
+
+  // Node 26's rmSync reports a locked folder as ENOTEMPTY, where Node 22's says EACCES or EPERM (#197). Neither
+  // is forced here, since what a given Node throws (and what root is let do) varies: rmSync is stood in for.
+  it('retries after ENOTEMPTY as after EACCES, and leaves a folder alone on any other error', () => {
+    const failing = (code: string) => {
+      const calls: string[] = []
+      const rm: typeof rmSync = (path, options) => {
+        calls.push(String(path))
+        if (calls.length === 1) throw Object.assign(new Error(code), { code })
+        rmSync(path, options)
+      }
+      return { rm, calls }
+    }
+    for (const code of ['ENOTEMPTY', 'EACCES']) {
+      const dir = tempDir('ollmost-tempdir-')
+      writeFileSync(join(dir, 'f.txt'), 'x')
+      const { rm, calls } = failing(code)
+      removeTempDirsWith(rm)
+      expect(calls, code).toEqual([dir, dir])
+      expect(existsSync(dir), code).toBe(false)
+    }
+    const dir = tempDir('ollmost-tempdir-')
+    const { rm, calls } = failing('EBUSY')
+    expect(() => removeTempDirsWith(rm)).not.toThrow()
+    expect(calls).toEqual([dir])
+    expect(existsSync(dir)).toBe(true)
+    rmSync(dir, { recursive: true, force: true })
   })
 })

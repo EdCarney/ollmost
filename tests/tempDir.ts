@@ -28,22 +28,30 @@ function makeWritable(path: string): void {
   for (const name of readdirSync(path)) makeWritable(join(path, name))
 }
 
-function remove(dir: string): void {
+/** What rmSync throws for a locked folder: EACCES or EPERM up to Node 24, ENOTEMPTY from Node 26 (#197). */
+const LOCKED = new Set(['EACCES', 'EPERM', 'ENOTEMPTY'])
+
+function remove(dir: string, rm: typeof rmSync): void {
   try {
-    rmSync(dir, { recursive: true, force: true })
+    rm(dir, { recursive: true, force: true })
   } catch (err) {
-    const code = (err as NodeJS.ErrnoException).code
-    if (code !== 'EACCES' && code !== 'EPERM') return
+    if (!LOCKED.has((err as NodeJS.ErrnoException).code ?? '')) return
     // Once more, with the folders writable. Otherwise it stays: a leftover folder isn't worth failing the run for.
     try {
       makeWritable(dir)
-      rmSync(dir, { recursive: true, force: true })
+      rm(dir, { recursive: true, force: true })
     } catch {
       // left in place
     }
   }
 }
 
+/** Takes no parameter, so it can be a vitest hook as it is (vitest reads a hook's parameters as fixtures). */
 export function removeTempDirs(): void {
-  for (const dir of made.splice(0)) remove(dir)
+  removeTempDirsWith(rmSync)
+}
+
+/** For this helper's own tests, which can't count on what a given Node throws for a locked folder: `rm` stands in for rmSync. */
+export function removeTempDirsWith(rm: typeof rmSync): void {
+  for (const dir of made.splice(0)) remove(dir, rm)
 }

@@ -6,6 +6,7 @@ import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib'
 import type { LinkPreview } from '@shared/ipc'
 import { isBlockedHostname, isPrivateAddress, parseHtmlPreview } from '@shared/links'
 import { getSettings } from '../settings'
+import { testOverride } from '../testOverrides'
 
 const PAGE_BYTES = 512 * 1024
 const IMAGE_BYTES = 400 * 1024
@@ -15,8 +16,8 @@ const MAX_REDIRECTS = 5
 const CACHE_TTL = 30 * 60 * 1000
 const USER_AGENT = 'Mozilla/5.0 (Macintosh) OllmostLinkPreview/1.0'
 
-// Tests serve pages from 127.0.0.1; never set in normal use.
-const allowPrivate = !!process.env.OLLMOST_ALLOW_PRIVATE_PREVIEWS
+// Tests serve pages from 127.0.0.1; the shipped app ignores it (#137).
+const allowPrivate = !!testOverride('OLLMOST_ALLOW_PRIVATE_PREVIEWS')
 
 type LookupCallback = (err: NodeJS.ErrnoException | null, address: string | LookupAddress[], family?: number) => void
 type Resolver = (
