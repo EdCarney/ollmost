@@ -1,6 +1,6 @@
 import type { ToolDef } from '../providers/types'
 import { findSkillByName, getSkill, readSkillFile } from '../skills/library'
-import type { ToolProvider } from './tools'
+import type { RunContext, ToolProvider } from './tools'
 
 export const SKILL_TOOLS: ToolDef[] = [
   {
@@ -33,6 +33,21 @@ export const SKILL_TOOLS: ToolDef[] = [
   }
 ]
 
+/**
+ * How a skill's scripts run from here, by what the reply can run: a code session has run_command (never run_code,
+ * which is the chat's code runner), not offered in plan mode; a chat has run_code when the code runner is on (#144).
+ */
+function scriptsHint(dir: string, ctx: RunContext): string {
+  const example = `python "${dir}/scripts/<script>" <arguments>`
+  if (ctx.mode === 'code')
+    return ctx.stage === 'plan'
+      ? `[This skill's files are in ${dir}. Its scripts run with run_command, which is not offered in plan mode: once the user starts working, run one with the script's full path, for example: ${example}. Until then, say what the script would do rather than claiming to have run it.]`
+      : `[This skill's files are in ${dir}. To run one of its scripts, call run_command with the script's full path, for example: ${example}. Write output files to the session's folder, not the skill's.]`
+  return ctx.grants.has('code')
+    ? `[This skill's files are in ${dir}. To run one of its scripts, call run_code with language "bash" and a command using the script's full path, for example: ${example}. Write output files to the current folder, not the skill's.]`
+    : '[This app cannot execute scripts. Where the skill says to run one, produce the result directly instead.]'
+}
+
 /** load_skill and read_skill_file, offered when there are skills the model may load itself. */
 export const skillTools: ToolProvider = {
   id: 'skills',
@@ -52,11 +67,7 @@ export const skillTools: ToolProvider = {
     }
     const detail = (await getSkill(skill.id))!
     const extra = skill.files.length ? `\n\nSupporting files: ${skill.files.slice(0, 40).join(', ')}` : ''
-    const scripts = !skill.hasScripts
-      ? ''
-      : ctx.grants.has('code')
-        ? `\n\n[This skill's files are in ${skill.dir}. To run one of its scripts, call run_code with language "bash" and a command using the script's full path, for example: python "${skill.dir}/scripts/<script>" <arguments>. Write output files to the current folder, not the skill's.]`
-        : '\n\n[This app cannot execute scripts. Where the skill says to run one, produce the result directly instead.]'
+    const scripts = !skill.hasScripts ? '' : `\n\n${scriptsHint(skill.dir, ctx)}`
     return {
       content: `${detail.body}${extra}${scripts}`,
       event: { tool: name, args, ok: true, summary: skill.name },

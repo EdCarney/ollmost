@@ -2042,6 +2042,41 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(getConversation(session.id)?.plan).toBeNull()
   })
 
+  it('drops the earlier plan as a revision starts, so a stopped revision never leaves it under Start working (#141)', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { realpathSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const dir = tempDir('ollmost-service-plan-')
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
+    const session = createConversation({
+      projectId: null,
+      model: 'ollama/llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    service.setStage(session.id, 'plan')
+    chat = reply('Plan A: rename it.')
+    const first = service.send({ ...sendBody(session.id), content: 'plan it' })
+    await doneEvent(first.conversation.id)
+    await waitFor(() => !service.isReplying())
+    expect(getConversation(session.id)?.plan).toBe('Plan A: rename it.')
+    chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'Plan B, half' }, done: false })]) // then hangs
+    const second = service.send({ ...sendBody(session.id), content: 'revise it' })
+    // Gone as the revision starts: what the renderer is handed offers no plan to approve.
+    expect(second.conversation.plan).toBeNull()
+    await waitFor(() => events.some((e) => e.type === 'delta' && e.conversationId === second.conversation.id))
+    await service.stop(second.conversation.id, { quiet: true })
+    expect(getMessage(second.assistantMessageId)?.content).toBe('Plan B, half')
+    expect(getConversation(session.id)?.plan).toBeNull()
+    // Starting work now carries no plan, so the model is never told to carry out plan A.
+    expect(service.setStage(session.id, 'work')).toMatchObject({ stage: 'work', plan: null })
+  })
+
   it('refuses an edit the model attempts in plan mode', async () => {
     const { paths } = await import('../src/main/paths')
     const { realpathSync, writeFileSync, readFileSync } = await import('node:fs')
@@ -2200,7 +2235,8 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(edit.event).toMatchObject({
       tool: 'edit_file',
       args: { path: 'hello.py', old_string: 'hello', new_string: 'bonjour' },
-      diff: '--- a/hello.py\n+++ b/hello.py\n@@ -1,1 +1,1 @@\n-print("hello")\n+print("bonjour")'
+      diff: '--- a/hello.py\n+++ b/hello.py\n@@ -1,1 +1,1 @@\n-print("hello")\n+print("bonjour")',
+      changed: { added: 1, removed: 1 }
     })
     // The read ran unasked, and the model got the numbered file.
     const offered = ((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
@@ -2222,7 +2258,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       ['edit_file', true, '+1 −1'],
       ['run_command', true, 'cat hello.py']
     ])
-    expect(done.message.toolEvents[1]).toMatchObject({ files: [{ path: 'hello.py', size: 17 }] })
+    expect(done.message.toolEvents[1]).toMatchObject({ files: [{ path: 'hello.py', size: 17 }], changed: { added: 1, removed: 1 } })
     expect(done.message.toolEvents[1].diff).toMatch(/^--- a\/hello\.py/)
     expect(readFileSync(join(folder, 'hello.py'), 'utf8')).toBe('print("bonjour")\n')
     // Allow for this session covered the edit; the command was allowed once.

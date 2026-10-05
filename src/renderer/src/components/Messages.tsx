@@ -24,7 +24,7 @@ import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { parseMessage, parseMessageRanges, typeForCodeLanguage } from '@shared/artifactParser'
 import { ASK_OTHER_CHARS } from '@shared/ask'
 import { referenceMarks, referenceNote } from '@shared/atRefs'
-import { diffCounts } from '@shared/diff'
+import { DIFF_CUT_MARK, diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
 import type {
   Artifact,
@@ -483,7 +483,9 @@ export function ApprovalCard({
   const lang = e.tool === 'run_command' ? 'bash' : runLanguage(e)
   const edits = EDIT_TOOL_NAMES.has(e.tool)
   const diff = edits && e.diff ? e.diff : null
-  const counts = diff !== null ? diffCounts(diff) : null
+  // The main process counts the whole change; an older event has only its diff, which may have been cut (#149).
+  const counts: { added: number; removed: number; partial?: boolean } | null =
+    e.changed ?? (diff !== null ? { ...diffCounts(diff), partial: diff.endsWith(DIFF_CUT_MARK) } : null)
   const answer = async (decision: ToolDecision) => {
     setAnswering(true)
     try {
@@ -516,6 +518,7 @@ export function ApprovalCard({
                 <span className="text-muted">
                   {' '}
                   +{counts.added} −{counts.removed}
+                  {counts.partial && ' at least'}
                 </span>
               )}
             </>

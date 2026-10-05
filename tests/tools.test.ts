@@ -185,6 +185,19 @@ describe('tool registry', () => {
     register(fake('runner', ['run_code'], { grants: ['code'] }))
     const withRunner = await runTool(call('load_skill', { name: 'pdf' }), ctx({ skills: true }))
     expect(withRunner.content).not.toContain('cannot execute scripts')
+    expect(withRunner.content).toContain('call run_code with language "bash"')
+  })
+
+  it("names run_command for a code session's skill scripts, and says they wait for work in plan mode (#144)", async () => {
+    // A session's tools grant code too, but it has run_command, never the chat's run_code.
+    register(fake('session', ['run_command'], { grants: ['code'] }))
+    const session = ctx({ skills: true, mode: 'code' })
+    const working = await runTool(call('load_skill', { name: 'pdf' }), session)
+    expect(working.content).toContain("call run_command with the script's full path")
+    expect(working.content).not.toMatch(/run_code|cannot execute scripts/)
+    const planning = await runTool(call('load_skill', { name: 'pdf' }), { ...session, stage: 'plan' })
+    expect(planning.content).toContain('run_command, which is not offered in plan mode')
+    expect(planning.content).not.toMatch(/run_code|cannot execute scripts/)
   })
 })
 

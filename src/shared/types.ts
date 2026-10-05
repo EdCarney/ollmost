@@ -180,6 +180,11 @@ export interface ToolEvent {
   files?: Array<{ path: string; size: number }>
   /** What edit_file or write_file changed, as a unified diff, for its card and for the approval that asks first. */
   diff?: string
+  /**
+   * Lines the edit adds and removes, counted on the whole change: `diff` is cut past 100 KB, so a count from it would
+   * understate the biggest edits (#149). Unset on older replies, whose card counts what it has of the diff.
+   */
+  changed?: { added: number; removed: number }
   /** A sub-agent's run (the delegate tool): its task, its own tool calls, and the reply it returned (or, when its
    *  request failed, why). */
   child?: { task: string; context?: string; events: ToolEvent[]; result: string; rounds: number; error?: string }

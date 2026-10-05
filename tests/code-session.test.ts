@@ -345,6 +345,18 @@ describe('what a session’s reply is told', () => {
     expect(sys.indexOf('<sandbox>')).toBeLessThan(sys.indexOf('<user_preferences>'))
   })
 
+  it('in plan mode says commands are not offered, in place of what they may do (#144)', () => {
+    const sys = assemble({
+      ...base,
+      codeSession: { root: '/Users/ed/repo', network: 'none', timeoutSec: 300, instructions: null, branch: null, stage: 'plan', plan: null }
+    }).messages[0].content
+    expect(sys).toMatch(
+      /<sandbox>\nCommands are not offered in plan mode\. Once the user starts working, they run in a macOS sandbox.*\n<\/sandbox>/
+    )
+    expect(sys).not.toMatch(/git can commit|stopped after 300 seconds|read-only/)
+    expect(sys).toMatch(/<plan_mode>/)
+  })
+
   it('says when there is no instructions file, no repository and no network', () => {
     const sys = assemble({
       ...base,

@@ -34,6 +34,9 @@ export function CommandPalette() {
   const toggleSidebar = useApp((s) => s.toggleSidebar)
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<SearchHit[]>([])
+  // The query the chat search has answered for: until then, and whenever the answer or a project holds the query,
+  // commands matched only by scattered letters stay out, so a fast Enter on a chat's name can't run one (#142).
+  const [searched, setSearched] = useState('')
   const [index, setIndex] = useState(0)
   const [choosing, setChoosing] = useState<PaletteCommand | null>(null)
   const input = useRef<HTMLInputElement>(null)
@@ -65,8 +68,16 @@ export function CommandPalette() {
     // typing, or the command list, starts at the top.
     const current = choosing && !query ? (choosing.choices?.findIndex((c) => c.value === choosing.current) ?? -1) : 0
     setIndex(current)
+    setSearched('')
     if (choosing || !query.trim()) return setHits([])
-    const t = setTimeout(() => api.conversations.search(query).then(setHits), 120)
+    const t = setTimeout(
+      () =>
+        api.conversations.search(query).then((found) => {
+          setHits(found)
+          setSearched(query)
+        }),
+      120
+    )
     return () => clearTimeout(t)
   }, [query, choosing])
 
@@ -84,7 +95,10 @@ export function CommandPalette() {
           current: choice.value === choosing.current
         }))
     }
-    const ranked = rankCommands(query, commands, recents).slice(0, q ? 8 : 6)
+    const projectHits = q ? projects.filter((p) => p.name.toLowerCase().includes(q)) : []
+    // Loose command matches only once the query is known to name no chat or project (see `searched`).
+    const loose = searched === query && !hits.length && !projectHits.length
+    const ranked = rankCommands(query, commands, recents, { loose }).slice(0, q ? 8 : 6)
     const commandRows: Row[] = ranked.map((command) => ({ kind: 'command', key: `cmd:${command.id}`, section: 'Commands', command }))
     if (!q)
       return [
@@ -99,16 +113,14 @@ export function CommandPalette() {
           route: { name: 'chat', id: c.id }
         }))
       ]
-    const projectRows = projects
-      .filter((p) => p.name.toLowerCase().includes(q))
-      .map((p): Row => ({
-        kind: 'route',
-        key: p.id,
-        section: 'Projects',
-        icon: <FolderClosed className="size-4" />,
-        label: p.name,
-        route: { name: 'project', id: p.id }
-      }))
+    const projectRows = projectHits.map((p): Row => ({
+      kind: 'route',
+      key: p.id,
+      section: 'Projects',
+      icon: <FolderClosed className="size-4" />,
+      label: p.name,
+      route: { name: 'project', id: p.id }
+    }))
     const chatRows = hits.map((h): Row => {
       const route = conversationRoute(h.conversationId, sessions, h.mode)
       return {
@@ -122,7 +134,7 @@ export function CommandPalette() {
       }
     })
     return [...commandRows, ...projectRows, ...chatRows]
-  }, [query, choosing, commands, recents, hits, conversations, sessions, projects])
+  }, [query, choosing, commands, recents, hits, searched, conversations, sessions, projects])
 
   // While choosing, the highlighted value is on screen before it's saved. Not once the palette is closing: the
   // rows rebuild then, and this must not put a preview back that the close just cleared.
