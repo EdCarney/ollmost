@@ -2838,7 +2838,8 @@ describe('runRounds', () => {
       contextWindow: null
     }
     const stats: MessageStats = { promptTokens: 0, completionTokens: 0 }
-    const seen: Array<[number, boolean]> = []
+    // Each event as it showed: its index, whether it was still pending, and (while it waited its turn) that it was queued.
+    const seen: Array<[number, boolean] | [number, boolean, true]> = []
     const usage: number[] = []
     const input: RoundsInput = {
       conversationId: conversation.id,
@@ -2856,7 +2857,7 @@ describe('runRounds', () => {
       usageKind: 'delegate',
       traceKind: 'delegate',
       onDelta: () => {},
-      onToolEvent: (index, event) => seen.push([index, !!event.pending]),
+      onToolEvent: (index, event) => seen.push(event.queued ? [index, !!event.pending, true] : [index, !!event.pending]),
       onUsage: () => usage.push(1),
       onLoadedSkill: () => {},
       checkpoint: () => {}
@@ -2973,7 +2974,8 @@ describe('runRounds', () => {
       // Each got its share of the room as it stood before any ran, and together they fit in it.
       expect(shares).toEqual([oneByOne[0], oneByOne[0], oneByOne[0]])
       expect(shares[0] * 3).toBeLessThanOrEqual(room)
-      // Every call showed, in order, before any ran; each result lands in call order, whichever finished first.
+      // Every call showed, in order, before any ran, none waiting its turn since all three run at once (#178); each
+      // result lands in call order, whichever finished first.
       expect(together.seen.slice(0, 3)).toEqual([
         [0, true],
         [1, true],
@@ -3457,6 +3459,50 @@ describe('sub-agents', () => {
     expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: 'Wipe the note. (stopped)' })
     expect(event.awaiting).toBeUndefined()
     expect(event.child!.events).toEqual([{ tool: 'notes__wipe', args: {}, ok: false, pending: false, summary: 'wiping (not run)' }])
+  })
+
+  it('settles a sub-agent still waiting its turn in a reply Ollmost closed on as not run (#178)', () => {
+    const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
+    const user = insertMessage({ conversationId: c.id, parentId: null, role: 'user', content: 'two things' })
+    const cut = insertMessage({ conversationId: c.id, parentId: user.id, role: 'assistant', content: '' })
+    // A checkpoint saved a batch of two: the first in its first request, the second waiting its turn. Then the app died.
+    // Both carry a child with no calls yet; only the mark tells them apart.
+    const child = (task: string) => ({ task, events: [], result: '', rounds: 0 })
+    updateMessage(cut.id, {
+      toolEvents: [
+        { tool: 'delegate', args: { task: 'the first' }, ok: true, pending: true, summary: 'the first', child: child('the first'), at: 0 },
+        {
+          tool: 'delegate',
+          args: { task: 'the second' },
+          ok: true,
+          pending: true,
+          queued: true,
+          summary: 'the second',
+          child: child('the second'),
+          at: 0
+        }
+      ]
+    })
+    service.markInterruptedReplies()
+    const [first, second] = getMessage(cut.id)!.toolEvents
+    expect(first).toEqual({
+      tool: 'delegate',
+      args: { task: 'the first' },
+      ok: false,
+      pending: false,
+      summary: 'the first (stopped)',
+      child: child('the first'),
+      at: 0
+    })
+    expect(second).toEqual({
+      tool: 'delegate',
+      args: { task: 'the second' },
+      ok: false,
+      pending: false,
+      summary: 'the second (not run)',
+      child: child('the second'),
+      at: 0
+    })
   })
 
   it('refuses to run a child that nothing could stop', async () => {
@@ -3961,12 +4007,17 @@ describe('sub-agents', () => {
       const r = start('three, then stop')
       const id = r.assistantMessageId
       await waitFor(() => chatCalls.filter(isChild).length === 2, 2000)
-      // The third shows, waiting its turn.
-      expect(lastEvent(r.conversation.id, 2)).toMatchObject({ tool: 'delegate', pending: true })
+      // The third shows, waiting its turn, and says so; the two that started no longer do (#178).
+      expect(lastEvent(r.conversation.id, 2)).toMatchObject({ tool: 'delegate', pending: true, queued: true })
+      expect([0, 1].map((i) => lastEvent(r.conversation.id, i))).toEqual([
+        expect.objectContaining({ tool: 'delegate', pending: true }),
+        expect.objectContaining({ tool: 'delegate', pending: true })
+      ])
+      expect([0, 1].some((i) => lastEvent(r.conversation.id, i)!.queued)).toBe(false)
       await service.stop(r.conversation.id)
       const saved = getMessage(id)!
       expect(saved.toolEvents.map((e) => e.summary)).toEqual(['the first (stopped)', 'the second (stopped)', 'the third (not run)'])
-      expect(saved.toolEvents.some((e) => e.pending || e.ok || e.awaiting)).toBe(false)
+      expect(saved.toolEvents.some((e) => e.pending || e.ok || e.awaiting || e.queued)).toBe(false)
       // It never ran: no request of its own, and no trace, of its call or of a child.
       expect(chatCalls.filter(isChild).some((b) => taskOf(b).includes('third'))).toBe(false)
       const traces = listTraces(r.conversation.id)
