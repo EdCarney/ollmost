@@ -2697,13 +2697,14 @@ describe('sub-agent settings and usage', () => {
     expect(atOnce('4')).toBe(3)
   })
 
-  it('lets a sub-agent make 1 to 100 requests, and 20 when the setting is missing or not a number', async () => {
+  it('lets a sub-agent make 1 to 40 requests, and 20 when the setting is missing or not a number', async () => {
     const { subAgentRounds } = await import('../src/main/chat/delegate')
     const rounds = (maxRounds: unknown) =>
       subAgentRounds({ enabled: true, maxRounds, parallel: 3, resultChars: 24_000 } as Settings['delegate'])
     expect(rounds(10)).toBe(10)
     expect(rounds(40)).toBe(40)
-    expect(rounds(1e9)).toBe(100)
+    expect(rounds(1e9)).toBe(40)
+    expect(rounds(41)).toBe(40)
     expect(rounds(0)).toBe(1)
     expect(rounds(-1)).toBe(1)
     expect(rounds(2.5)).toBe(2)

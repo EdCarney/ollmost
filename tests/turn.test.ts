@@ -37,6 +37,7 @@ describe('the policy for a reply', () => {
     expect(toolRounds('12', 20)).toBe(20)
     expect(toolRounds(Number.NaN, 20)).toBe(20)
     expect(toolRounds(Number.POSITIVE_INFINITY, 20)).toBe(20)
+    expect(toolRounds(1e9, 20, 40)).toBe(40)
     // Through the policy: "abc" would otherwise run zero rounds and 2.5 would never reach the tool-free last round.
     const bad = (rounds: unknown) => ({ chatRounds: rounds as number, codeRounds: rounds as number })
     expect(turnPolicy({ mode: 'chat', artifacts: true, ...bad('abc') }).maxRounds).toBe(CHAT_TOOL_ROUNDS)

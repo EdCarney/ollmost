@@ -149,7 +149,8 @@ export async function setStage(conversationId: string, stage: 'plan' | 'work'): 
 export async function approvePlan(conversationId: string): Promise<void> {
   // Checked before the stage switches: otherwise the session would be in Work with the plan approved and the model
   // never asked to carry it out (#147).
-  if (useChat.getState().conversation?.id === conversationId && !useChat.getState().conversation?.model) return noModel()
+  const before = useChat.getState().conversation
+  if (before?.id === conversationId && !before.model) return noModel()
   if (!(await setStage(conversationId, 'work'))) return
   const { conversation } = useChat.getState()
   if (!conversation?.model || conversation.id !== conversationId) return

@@ -12,12 +12,12 @@ export const CODE_TOOL_ROUNDS = 60
 export const MAX_TOOL_ROUNDS = 100
 
 /**
- * A round limit as a whole number from 1 to MAX_TOOL_ROUNDS, or `fallback` when it isn't a number at all. Settings
- * aren't checked over IPC, so a hand-edited value can be anything (#183): `"abc"` would run zero rounds and save an
- * empty reply, and `2.5` would never reach the tool-free last round.
+ * A round limit as a whole number from 1 to `max`, or `fallback` when it isn't a number at all. Settings aren't
+ * checked over IPC, so a hand-edited value can be anything (#183): `"abc"` would run zero rounds and save an empty
+ * reply, and `2.5` would never reach the tool-free last round.
  */
-export function toolRounds(n: unknown, fallback: number): number {
-  return typeof n === 'number' && Number.isFinite(n) ? Math.min(MAX_TOOL_ROUNDS, Math.max(1, Math.floor(n))) : fallback
+export function toolRounds(n: unknown, fallback: number, max = MAX_TOOL_ROUNDS): number {
+  return typeof n === 'number' && Number.isFinite(n) ? Math.min(max, Math.max(1, Math.floor(n))) : fallback
 }
 
 export interface TurnPolicy {

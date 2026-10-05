@@ -20,6 +20,8 @@ const RECORD_CHARS = 500
 const CUT_MARK = '\n\n[… the sub-agent’s reply was cut here]'
 /** The most sub-agents one reply may run at the same time, whatever the setting says. */
 const MAX_AT_ONCE = 5
+/** The most requests a sub-agent may make on one task, whatever the setting says: the largest choice Settings offers. */
+const MAX_SUB_AGENT_ROUNDS = 40
 
 const DELEGATE_TOOL: ToolDef = {
   type: 'function',
@@ -52,11 +54,11 @@ function offered(ctx: ToolContext): boolean {
 }
 
 /**
- * Requests a sub-agent may make on one task: the setting as a whole number from 1 to MAX_TOOL_ROUNDS (settings aren't
- * checked over IPC), or the default when there's no number (a settings file saved before the setting existed).
+ * Requests a sub-agent may make on one task: the setting as a whole number from 1 to 40 (settings aren't checked
+ * over IPC), or the default when there's no number (a settings file saved before the setting existed).
  */
 export function subAgentRounds(settings: Settings['delegate']): number {
-  return toolRounds(settings.maxRounds, DEFAULT_SUB_AGENT_ROUNDS)
+  return toolRounds(settings.maxRounds, DEFAULT_SUB_AGENT_ROUNDS, MAX_SUB_AGENT_ROUNDS)
 }
 
 /**

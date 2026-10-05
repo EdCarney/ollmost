@@ -28,7 +28,7 @@ function makeWritable(path: string): void {
   for (const name of readdirSync(path)) makeWritable(join(path, name))
 }
 
-/** What rmSync throws for a locked folder: EACCES or EPERM up to Node 24, ENOTEMPTY from Node 26 (#197). */
+/** What rmSync throws for a locked folder: EACCES or EPERM on Node 22, ENOTEMPTY on Node 26 (#197). */
 const LOCKED = new Set(['EACCES', 'EPERM', 'ENOTEMPTY'])
 
 function remove(dir: string, rm: typeof rmSync): void {
