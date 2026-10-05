@@ -1920,6 +1920,11 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     // every tool and the plan in front of it.
     await waitFor(() => !service.isReplying())
     expect(getConversation(session.id)?.plan).toBe(plan)
+    // Plan chosen again while already planning (a misclick on the checked item) keeps the plan (#139).
+    expect(service.setStage(session.id, 'plan')).toMatchObject({ stage: 'plan', plan })
+    expect(getConversation(session.id)).toMatchObject({ stage: 'plan', plan })
+    expect(service.setStage(session.id, 'work')).toMatchObject({ stage: 'work', plan })
+    // Work chosen again keeps it too.
     expect(service.setStage(session.id, 'work')).toMatchObject({ stage: 'work', plan })
     chat = reply('Doing it.')
     events.length = 0
@@ -2690,6 +2695,23 @@ describe('sub-agent settings and usage', () => {
     expect(atOnce(undefined)).toBe(3)
     expect(atOnce(Number.NaN)).toBe(3)
     expect(atOnce('4')).toBe(3)
+  })
+
+  it('lets a sub-agent make 1 to 40 requests, and 20 when the setting is missing or not a number', async () => {
+    const { subAgentRounds } = await import('../src/main/chat/delegate')
+    const rounds = (maxRounds: unknown) =>
+      subAgentRounds({ enabled: true, maxRounds, parallel: 3, resultChars: 24_000 } as Settings['delegate'])
+    expect(rounds(10)).toBe(10)
+    expect(rounds(40)).toBe(40)
+    expect(rounds(1e9)).toBe(40)
+    expect(rounds(41)).toBe(40)
+    expect(rounds(0)).toBe(1)
+    expect(rounds(-1)).toBe(1)
+    expect(rounds(2.5)).toBe(2)
+    expect(rounds(undefined)).toBe(20)
+    expect(rounds(null)).toBe(20)
+    expect(rounds('abc')).toBe(20)
+    expect(rounds(Number.NaN)).toBe(20)
   })
 
   it('gives back 1,500 to 48,000 characters of a sub-agent’s reply, and 24,000 when the setting is missing or not a number', async () => {

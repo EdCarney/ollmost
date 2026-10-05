@@ -1,9 +1,10 @@
 import { getApiKey } from '../settings'
 import { cloudUnreachableMessage } from '../providers/fetchFailure'
 import { errorDetail, messageOf, OLLAMA_CLOUD, OllamaError } from '../providers/ollama/wire'
+import { testOverride } from '../testOverrides'
 
-// Tests point this at a mock server.
-const WEB_BASE = process.env.OLLMOST_WEB_URL ?? OLLAMA_CLOUD
+// Tests point this at a mock server; never the shipped app, which sends the key here (#137).
+const WEB_BASE = testOverride('OLLMOST_WEB_URL') ?? OLLAMA_CLOUD
 
 export interface SearchResult {
   title: string
