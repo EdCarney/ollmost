@@ -2066,6 +2066,8 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     await waitFor(() => !service.isReplying())
     expect(getConversation(session.id)?.plan).toBe('Plan A: rename it.')
     chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'Plan B, half' }, done: false })]) // then hangs
+    // The first reply's deltas are in the list too: cleared, so the wait below is for the revision's own.
+    events.length = 0
     const second = service.send({ ...sendBody(session.id), content: 'revise it' })
     // Gone as the revision starts: what the renderer is handed offers no plan to approve.
     expect(second.conversation.plan).toBeNull()
