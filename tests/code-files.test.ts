@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, s
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { DIFF_CUT_MARK } from '@shared/diff'
 import type { Workspace } from '../src/main/runner/workspace'
 import { tempDir } from './tempDir'
 
@@ -372,7 +373,7 @@ describe('edit_file and write_file', () => {
   it('cuts a huge diff, and marks a missing final newline', async () => {
     const { ws } = project()
     const r = await files.writeFile(ws, { path: 'big.txt', content: `${'y'.repeat(60)}\n`.repeat(2500) })
-    expect(r.diff.endsWith('[… the diff was cut here]')).toBe(true)
+    expect(r.diff.endsWith(DIFF_CUT_MARK)).toBe(true)
     expect(r.diff.length).toBeLessThan(100_100)
     // The counts are of the whole change, not of what's left of the diff (#149).
     expect(r).toMatchObject({ added: 2500, removed: 0 })

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { matchScore, rankCommands, settingsTabCommands } from '../src/shared/palette'
+import { matchScore, rankCommands, SCATTERED, settingsTabCommands } from '../src/shared/palette'
 
 const cmds = [
   { id: 'theme', title: 'Change theme', keywords: ['appearance', 'colors'] },
@@ -22,6 +22,7 @@ describe('matching a palette query', () => {
     expect(wholeWord).toBeGreaterThan(wordStart)
     expect(wordStart).toBeGreaterThan(substring)
     expect(substring).toBeGreaterThan(scattered)
+    expect(scattered).toBe(SCATTERED)
     expect(scattered).toBeGreaterThan(0)
     expect(matchScore('xyz', 'Change theme')).toBe(0)
     expect(matchScore('', 'Change theme')).toBe(0)

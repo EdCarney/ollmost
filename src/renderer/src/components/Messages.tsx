@@ -517,8 +517,7 @@ export function ApprovalCard({
               {counts && (
                 <span className="text-muted">
                   {' '}
-                  +{counts.added} −{counts.removed}
-                  {counts.partial && ' at least'}
+                  {counts.partial && 'at least '}+{counts.added} −{counts.removed}
                 </span>
               )}
             </>
