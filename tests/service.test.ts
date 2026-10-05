@@ -292,13 +292,15 @@ describe('reply loop', () => {
     const r = start()
     await doneEvent(r.conversation.id)
     events.length = 0
-    // regenerate() awaits file cleanup before registering its reply; a send() landing in that gap
-    // registers its own reply first. The regenerated reply streams and then hangs.
-    chat = (_b, res, n) =>
-      n === 2
-        ? reply('sent reply')(_b, res, n)
-        : streamChunks(res, [line({ message: { role: 'assistant', content: 'regenerated' }, done: false })])
-    const regen = service.regenerate(r.conversation.id, { model: 'ollama/llama3.2', think: null })
+    // regenerate() awaits file cleanup before registering its reply, while send() registers at once: a send() made
+    // right after lands first, and the regenerated reply registers over it. The two requests carry the same history,
+    // and which reaches the mock server first is a race (#118), so the regenerated reply asks a model of its own: it
+    // streams and then hangs, and the sent one finishes.
+    chat = (b, res, n) =>
+      b.model === 'regen-model'
+        ? streamChunks(res, [line({ message: { role: 'assistant', content: 'regenerated' }, done: false })])
+        : reply('sent reply')(b, res, n)
+    const regen = service.regenerate(r.conversation.id, { model: 'ollama/regen-model', think: null })
     service.send({
       conversationId: r.conversation.id,
       projectId: null,
@@ -310,10 +312,11 @@ describe('reply loop', () => {
       toolSources: []
     })
     const second = await regen
-    await doneEvent(r.conversation.id) // the send's reply finished
+    const done = await doneEvent(r.conversation.id) // the send's reply finished
+    expect(done.message.content).toBe('sent reply')
     expect(service.isReplying()).toBe(true) // the regenerated reply is still tracked…
     await service.stop(r.conversation.id) // …so stop() waits for it and it gets saved
-    expect(getMessage(second.assistantMessageId)?.stats).not.toBeNull()
+    expect(getMessage(second.assistantMessageId)).toMatchObject({ content: 'regenerated', stats: expect.anything() })
     expect(service.isReplying()).toBe(false)
   })
 
@@ -343,6 +346,58 @@ describe('reply loop', () => {
     expect(chatCalls).toHaveLength(2)
     expect(chatCalls[1].tools).toBeUndefined()
     expect(done.message.toolEvents[0]).toMatchObject({ tool: 'python', ok: false, unknown: true })
+  })
+
+  it('explains a reply left empty after the model only tried tools Ollmost lacks (#172)', async () => {
+    // Round 1 calls a tool Ollmost doesn't have; round 2, its tools withdrawn, answers with nothing at all.
+    chat = (_b, res, n) =>
+      void res.writeHead(200).end(n === 1 ? toolCall('python', { code: '1+1' }) : line({ done: true, done_reason: 'stop' }))
+    const r = start('what is 1+1')
+    const done = await doneEvent(r.conversation.id)
+    expect(done.message.content).toBe('')
+    expect(done.message.error).toBe(
+      "The model tried to use tools Ollmost doesn't have (python) and gave no answer. Ollmost can't browse the web or run code."
+    )
+    expect(events.filter((e) => e.type === 'error').map((e) => e.error)).toEqual([done.message.error])
+  })
+
+  it('blames a stop, not the unknown tools, for a reply stopped after the model only tried tools Ollmost lacks (#172)', async () => {
+    chat = (_b, res, n) => (n === 1 ? void res.writeHead(200).end(toolCall('python', { code: '1+1' })) : streamChunks(res, []))
+    const r = start('what is 1+1')
+    await waitFor(() => chatCalls.length === 2) // the second round, without tools, hangs
+    await service.stop(r.conversation.id)
+    const saved = getMessage(r.assistantMessageId)!
+    expect(saved.content).toBe('')
+    expect(saved.error).toBeNull()
+    expect(saved.toolEvents).toEqual([expect.objectContaining({ tool: 'python', unknown: true })])
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+  })
+
+  it('keeps the partial reply when recording the stopped round fails (#171)', async () => {
+    chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'part' }, done: false })])
+    const r = start()
+    await waitFor(() => events.some((e) => e.type === 'delta' && e.content === 'part'))
+    // The usage row the stopped round writes fails, as a locked database or a full disk would make it fail.
+    run("CREATE TRIGGER usage_full BEFORE INSERT ON usage_events BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END")
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await service.stop(r.conversation.id, { quiet: true })
+      expect(logged).toHaveBeenCalledWith(
+        expect.stringContaining('usage couldn’t be recorded'),
+        expect.objectContaining({ message: expect.stringContaining('disk is full') })
+      )
+      expect(logged).toHaveBeenCalledTimes(1)
+    } finally {
+      run('DROP TRIGGER usage_full')
+      logged.mockRestore()
+    }
+    // What the model had written is saved with the stop, not replaced by an empty reply; the round's trace still ends.
+    const saved = getMessage(r.assistantMessageId)!
+    expect(saved.content).toBe('part')
+    expect(saved.error).toBeNull()
+    expect(saved.stats).toMatchObject({ promptTokens: 0, completionTokens: 0 })
+    expect(all('SELECT id FROM usage_events WHERE message_id = ?', r.assistantMessageId)).toEqual([])
+    expect(listTraces(r.conversation.id).map((t) => t.status)).toEqual(['aborted'])
   })
 
   it('records where in the reply each tool call happened, with a preview of its result', async () => {
@@ -2919,7 +2974,7 @@ describe('runRounds', () => {
     const controller = new AbortController()
     // Sends a first piece and then hangs, as a model still writing does; the first piece stops it.
     chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'part' }, done: false })])
-    const { conversation, input } = await setup()
+    const { conversation, message, stats, input } = await setup()
     const out = await runRounds({
       ...input,
       signal: controller.signal,
@@ -2930,7 +2985,18 @@ describe('runRounds', () => {
     expect(out.content).toBe('part')
     expect(out.error).toBeNull()
     expect(out.rounds).toBe(1)
-    expect(listTraces(conversation.id).find((t) => t.kind === 'delegate')?.status).toBe('aborted')
+    const trace = listTraces(conversation.id).find((t) => t.kind === 'delegate')
+    expect(trace?.status).toBe('aborted')
+    // The partial round still spent tokens: one estimated usage row, counted into the reply's stats and the trace (#172).
+    expect(
+      all(
+        'SELECT kind, prompt_tokens AS prompt, completion_tokens AS completion, estimated FROM usage_events WHERE message_id = ?',
+        message.id
+      )
+    ).toEqual([{ kind: 'delegate', prompt: expect.any(Number), completion: 1, estimated: 1 }])
+    expect(stats).toMatchObject({ promptTokens: expect.any(Number), completionTokens: 1, estimated: true })
+    expect(stats.promptTokens).toBeGreaterThan(0)
+    expect(trace).toMatchObject({ promptTokens: stats.promptTokens, completionTokens: 1 })
   })
 
   it('runs calls that may go together at once, each with an even share of the room, their results in call order', async () => {
