@@ -156,6 +156,11 @@ export interface ToolEvent {
   /** Still running (web requests take a few seconds); replaced by the final event at the same index. */
   pending?: boolean
   /**
+   * Shown with the other calls of its batch but still waiting its turn: it hasn't started. Dropped when it does, so a
+   * call saved this way never ran (#178). Only while pending.
+   */
+  queued?: boolean
+  /**
    * A short record of the result (search titles and links; a page's title, link and opening), replayed to
    * the model on later turns so follow-ups like "open the third result" still work.
    */

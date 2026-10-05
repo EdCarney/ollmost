@@ -26,6 +26,7 @@ import { ASK_OTHER_CHARS } from '@shared/ask'
 import { referenceMarks, referenceNote } from '@shared/atRefs'
 import { DIFF_CUT_MARK, diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
+import { pausedOnYou } from '@shared/toolEvents'
 import type {
   Artifact,
   AskAnswer,
@@ -872,8 +873,8 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   // Nothing has arrived yet: a "Thinking…" card stands in until the first text, thinking or call does.
   const awaitingFirst = streaming && !timeline.length
-  // Waiting on you, not the model: no caret while a tool call waits for approval.
-  const working = streaming && !toolEvents.some((e) => e?.awaiting)
+  // Waiting on you, not the model: no caret while a tool call waits for approval and nothing else still runs.
+  const working = streaming && !pausedOnYou(toolEvents)
 
   const occurrences = new Map<string, number>()
   const rendered = timeline.map((item, i) => {

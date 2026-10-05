@@ -11,3 +11,11 @@ export const childId = (messageId: string, index: number): string => `${messageI
 export function withChildEvents(events: ReadonlyArray<ToolEvent | undefined>): ToolEvent[] {
   return events.flatMap((e) => (e ? [e, ...withChildEvents(e.child?.events ?? [])] : []))
 }
+
+/**
+ * Whether a reply's calls have all come to a halt on you: one waits for your answer and none still runs. The reply is
+ * paused then, not working; while any call still runs (a sub-agent beside the one asking), it is still working (#177).
+ */
+export function pausedOnYou(events: ReadonlyArray<ToolEvent | undefined>): boolean {
+  return events.some((e) => e?.awaiting) && !events.some((e) => e?.pending && !e.awaiting)
+}

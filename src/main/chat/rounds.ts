@@ -306,7 +306,14 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
       let onlyWithheld = true
 
       // One call, once its card shows: ask first where it needs to, run it with its share of the room, show its result.
-      const runCall = async ({ call, index, pending }: ShownCall, maxResultChars: number): Promise<ToolResult> => {
+      const runCall = async ({ call, index, pending: shown }: ShownCall, maxResultChars: number): Promise<ToolResult> => {
+        // Its turn has come: the card stops waiting in line, and a reply saved from here on knows it started (#178).
+        const { queued, ...pending } = shown
+        if (queued) {
+          toolEvents[index] = pending
+          input.onToolEvent(index, pending)
+          checkpoint()
+        }
         // A tool that acts on this Mac or the user's accounts waits for their answer (unless allowed for this chat).
         // Stop, deleting the chat and quitting abort the wait, and the call never runs.
         let decision: ToolDecision | 'auto' = 'auto'
@@ -388,8 +395,8 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         const shown: ShownCall[] = []
         for (const call of batch) {
           const index = toolEvents.length
-          // `at` places the call in the reply's text, where the UI shows it.
-          const pending = { ...(await pendingEvent(call, toolContext)), at: content.length }
+          // `at` places the call in the reply's text, where the UI shows it. In a batch of several, each waits its turn.
+          const pending = { ...(await pendingEvent(call, toolContext)), at: content.length, ...(batch.length > 1 && { queued: true }) }
           toolEvents.push(pending)
           input.onToolEvent(index, pending)
           shown.push({ call, index, pending })

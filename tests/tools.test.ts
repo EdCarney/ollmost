@@ -331,6 +331,17 @@ describe('asking first', () => {
     })
   })
 
+  it('settles a call still waiting its turn in its batch as not run, sub-agent or not (#178)', () => {
+    const queued: ToolEvent = { tool: 'web_search', args: {}, ok: true, pending: true, queued: true, summary: 'cats' }
+    expect(settleToolEvent(queued)).toEqual({ tool: 'web_search', args: {}, ok: false, pending: false, summary: 'cats (not run)' })
+    const child = { task: 'Tidy.', events: [], result: '', rounds: 0 }
+    const parent: ToolEvent = { tool: 'delegate', args: {}, ok: true, pending: true, queued: true, summary: 'Tidy.', child }
+    expect(settleToolEvent(parent)).toEqual({ tool: 'delegate', args: {}, ok: false, pending: false, summary: 'Tidy. (not run)', child })
+    // One that started looks the same but for the mark, and it ran.
+    const started: ToolEvent = { tool: 'delegate', args: {}, ok: true, pending: true, summary: 'Tidy.', child }
+    expect(settleToolEvent(started)).toEqual({ tool: 'delegate', args: {}, ok: false, pending: false, summary: 'Tidy. (stopped)', child })
+  })
+
   it('lets a call run beside others only when its provider allows it and it never asks', () => {
     register(fake('together', ['gather'], { parallel: true, approval: () => 'auto' }))
     register(fake('together-asking', ['gather_asking'], { parallel: true }))

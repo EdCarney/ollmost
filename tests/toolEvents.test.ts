@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { childId, withChildEvents } from '../src/shared/toolEvents'
+import { childId, pausedOnYou, withChildEvents } from '../src/shared/toolEvents'
 import type { ToolEvent } from '../src/shared/types'
 
 const event = (tool: string, extra: Partial<ToolEvent> = {}): ToolEvent => ({ tool, args: {}, ok: true, summary: tool, ...extra })
@@ -29,5 +29,30 @@ describe('withChildEvents', () => {
 describe('childId', () => {
   it('keys a sub-agent by its parent’s message and the delegate call’s index there', () => {
     expect(childId('m1', 2)).toBe('m1#2')
+  })
+})
+
+describe('pausedOnYou', () => {
+  const asking = event('run_command', { pending: true, awaiting: true })
+  const running = event('delegate', { pending: true, child: { task: 'Look.', events: [], result: '', rounds: 1 } })
+  const done = event('web_search')
+
+  it('is paused once a call waits for an answer and nothing else still runs', () => {
+    expect(pausedOnYou([done, asking])).toBe(true)
+  })
+
+  it('is still working while another call runs beside the one asking (#177)', () => {
+    expect(pausedOnYou([asking, running])).toBe(false)
+  })
+
+  it('is working while nothing asks, running or not, and over the gaps a live reply’s events can have', () => {
+    expect(pausedOnYou([undefined!, running])).toBe(false)
+    expect(pausedOnYou([done])).toBe(false)
+    expect(pausedOnYou([])).toBe(false)
+  })
+
+  it('counts a sub-agent asking through its own call as waiting', () => {
+    const child = { task: 'Tidy.', events: [event('run_command', { pending: true, awaiting: true })], result: '', rounds: 1 }
+    expect(pausedOnYou([event('delegate', { pending: true, awaiting: true, child })])).toBe(true)
   })
 })
