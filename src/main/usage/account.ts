@@ -5,11 +5,13 @@ import { cloudUnreachableMessage } from '../providers/fetchFailure'
 import { OLLAMA_CLOUD } from '../providers/ollama/wire'
 import { whereOf } from '../providers/where'
 import { getApiKey, getSettings, updateSettings } from '../settings'
+import { testOverride } from '../testOverrides'
 
 const CACHE_MS = 30_000
 const USAGE_TIMEOUT_MS = 10_000
-// Tests point this at a mock server; the real endpoint is undocumented, so a mock is the only stable target.
-const USAGE_URL = process.env.OLLMOST_USAGE_URL ?? `${OLLAMA_CLOUD}/api/usage`
+// Tests point this at a mock server; the real endpoint is undocumented, so a mock is the only stable target. Never
+// the shipped app, which sends the key here (#137).
+const USAGE_URL = testOverride('OLLMOST_USAGE_URL') ?? `${OLLAMA_CLOUD}/api/usage`
 let cache: AccountUsage | null = null
 let inflight: Promise<AccountUsage> | null = null
 /** Bumped when settings change under a load: a load begun before that must not fill the cache or be joined. */

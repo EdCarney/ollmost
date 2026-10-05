@@ -187,10 +187,13 @@ const cutPlan = (plan: string): string => (plan.length > PLAN_CHARS ? `${plan.sl
  * work keeps it for the turns that follow, and going back to planning drops it, since a new plan will come.
  */
 export function setStage(conversationId: string, stage: 'plan' | 'work'): Conversation {
-  assertIdle(conversationId)
   const c = getConversation(conversationId)
   if (!c) throw new Error('Chat not found')
   if (c.mode !== 'code') throw new Error('Only a code session has a plan mode.')
+  // The stage it's in already: nothing to change, so nothing to wait for, and in particular no plan to drop. Plan
+  // chosen again from the chip is a misclick, not a request for a new plan (#139).
+  if (c.stage === stage) return c
+  assertIdle(conversationId)
   return updateConversation(conversationId, { stage, plan: stage === 'plan' ? null : c.plan })
 }
 

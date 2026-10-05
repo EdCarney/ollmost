@@ -2,6 +2,8 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { fetchFailed } from './fetchFailed'
 
 vi.mock('../src/main/settings', () => ({ getApiKey: () => 'a-secret-key' }))
+// The web module reads its test override through Electron's app (#137); the real electron package would fetch the binary.
+vi.mock('electron', () => ({ app: { isPackaged: false } }))
 
 const { webFetch, webSearch } = await import('../src/main/ollama/web')
 const { OllamaError } = await import('../src/main/providers/ollama/wire')

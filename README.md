@@ -191,6 +191,8 @@ The e2e run checks:
 - the code runner: sandboxed execution, reading uploads, the files a run writes, a skill's script, and refusing to open anything unsafe
 - a live model using the code runner for something it can't do reliably in its head
 - code sessions: reading, editing and running commands in a folder of the user's with approvals, the diff an edit's approval shows, the folder left untouched by a deleted session, the Changes panel's git status and diff, and typing `@` to reference a file: the menu, the mark in the composer, the request carrying the file, and the chip showing what was sent
+- plan mode in a code session: the stage chip, only the reading tools offered and the model told how to plan, the Start working card under the plan, and starting work offering every tool again with the approved plan in front of the model
+- `/compact`: the command in the `/` picker, the divider and its summary rendered as Markdown, text typed while it runs kept in the composer, the compacted messages staying in the transcript, and Retry and Edit asking first when they would lose the summary or later messages, with Cancel changing nothing
 - a live model asking to edit a file in a code session, and denying it
 - the command palette: a theme previewed live from its choice list, put back on Escape and on a click outside, kept on Enter, and a theme picked in Settings showing after one chosen in the palette
 - model endpoints: adding an OpenAI-compatible server in Settings (Check, then Add), its chip in the picker, the picker fitting a short window, a slow endpoint not holding up the list, a tool round in OpenAI's shape, the `local` label, switching a chat to the Ollama endpoint, and the quota chip going when there's no Ollama endpoint turned on and no key

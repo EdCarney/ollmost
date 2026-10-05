@@ -4,6 +4,8 @@ import { gzipSync } from 'node:zlib'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 
 vi.mock('../src/main/settings', () => ({ getSettings: () => ({ links: { previews: true } }) }))
+// The preview module reads its test override through Electron's app (#137); the real electron package would fetch the binary.
+vi.mock('electron', () => ({ app: { isPackaged: false } }))
 
 const PNG = Buffer.from(
   '89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c6360000002000154a24f5d0000000049454e44ae426082',

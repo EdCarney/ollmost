@@ -15,6 +15,12 @@ async function confirmHistoryLoss(kind: 'edit' | 'retry', loss: HistoryLoss): Pr
   return useConfirm.getState().ask({ title: notice.title, body: notice.lines, confirmLabel: notice.confirmLabel })
 }
 
+/** The composer's own Send disables itself with no model chosen; the other ways to ask for a reply (an edit, Retry,
+ *  Continue, Start working) have no such gate, so they say why nothing happened instead of silently doing nothing (#147). */
+function noModel(): void {
+  useApp.getState().toast('Pick a model first.')
+}
+
 export async function sendMessage(conversationId: string | null, projectId: string | null, input: ComposerSubmit): Promise<boolean> {
   try {
     const result = await api.chat.send({ conversationId, projectId, ...input })
@@ -39,7 +45,8 @@ export const CONTINUE_PROMPTS: Record<ContinueReason, string> = {
 /** Ask the model to pick up a reply that stopped short, as a normal follow-up in the chat. */
 export async function continueReply(conversationId: string, reason: ContinueReason = 'length'): Promise<void> {
   const { conversation } = useChat.getState()
-  if (!conversation?.model || conversation.id !== conversationId) return
+  if (conversation?.id !== conversationId) return
+  if (!conversation.model) return noModel()
   await sendMessage(conversationId, conversation.projectId, {
     content: CONTINUE_PROMPTS[reason],
     attachmentIds: [],
@@ -52,7 +59,8 @@ export async function continueReply(conversationId: string, reason: ContinueReas
 
 export async function retryLast(conversationId: string, messages: Message[]): Promise<void> {
   const { conversation, artifacts } = useChat.getState()
-  if (!conversation?.model) return
+  if (!conversation) return
+  if (!conversation.model) return noModel()
   const lastUser = messages.findLastIndex((m) => m.role === 'user')
   if (lastUser < 0) return
   if (!(await confirmHistoryLoss('retry', historyLoss(messages, lastUser, conversation.compaction, artifacts)))) return
@@ -73,9 +81,8 @@ export async function retryLast(conversationId: string, messages: Message[]): Pr
 export async function editMessage(message: Message, content: string, messages: Message[]): Promise<boolean> {
   const { conversation, artifacts } = useChat.getState()
   if (!conversation?.model) {
-    // The composer's own Send just disables itself with no model chosen; the edit box has no such gate, so it
-    // says why nothing happened instead of silently leaving the draft sitting there.
-    useApp.getState().toast('Pick a model first.')
+    // Said rather than silently leaving the draft sitting there.
+    noModel()
     return false
   }
   const idx = messages.findIndex((m) => m.id === message.id)
@@ -140,6 +147,10 @@ export async function setStage(conversationId: string, stage: 'plan' | 'work'): 
 
 /** Approve the plan: start work and ask the model to carry it out, as a normal follow-up in the session. */
 export async function approvePlan(conversationId: string): Promise<void> {
+  // Checked before the stage switches: otherwise the session would be in Work with the plan approved and the model
+  // never asked to carry it out (#147).
+  const before = useChat.getState().conversation
+  if (before?.id === conversationId && !before.model) return noModel()
   if (!(await setStage(conversationId, 'work'))) return
   const { conversation } = useChat.getState()
   if (!conversation?.model || conversation.id !== conversationId) return
