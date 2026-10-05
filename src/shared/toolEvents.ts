@@ -13,9 +13,10 @@ export function withChildEvents(events: ReadonlyArray<ToolEvent | undefined>): T
 }
 
 /**
- * Whether a reply's calls have all come to a halt on you: one waits for your answer and none still runs. The reply is
- * paused then, not working; while any call still runs (a sub-agent beside the one asking), it is still working (#177).
+ * Whether a reply's calls have all come to a halt on you: one waits for your answer and none still runs (one waiting
+ * its turn behind the ones asking isn't running). The reply is paused then, not working; while any call still runs (a
+ * sub-agent beside the one asking), it is still working (#177).
  */
 export function pausedOnYou(events: ReadonlyArray<ToolEvent | undefined>): boolean {
-  return events.some((e) => e?.awaiting) && !events.some((e) => e?.pending && !e.awaiting)
+  return events.some((e) => e?.awaiting) && !events.some((e) => e?.pending && !e.awaiting && !e.queued)
 }

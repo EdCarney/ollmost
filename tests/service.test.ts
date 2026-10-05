@@ -2974,19 +2974,14 @@ describe('runRounds', () => {
       // Each got its share of the room as it stood before any ran, and together they fit in it.
       expect(shares).toEqual([oneByOne[0], oneByOne[0], oneByOne[0]])
       expect(shares[0] * 3).toBeLessThanOrEqual(room)
-      // Every call showed, in order, waiting its turn, before any ran; each then started (#178); each result lands in
-      // call order, whichever finished first.
+      // Every call showed, in order, before any ran, none waiting its turn since all three run at once (#178); each
+      // result lands in call order, whichever finished first.
       expect(together.seen.slice(0, 3)).toEqual([
-        [0, true, true],
-        [1, true, true],
-        [2, true, true]
-      ])
-      expect(together.seen.slice(3, 6)).toEqual([
         [0, true],
         [1, true],
         [2, true]
       ])
-      expect(together.seen.slice(6)).toEqual([
+      expect(together.seen.slice(3)).toEqual([
         [2, false],
         [1, false],
         [0, false]

@@ -45,8 +45,13 @@ describe('pausedOnYou', () => {
     expect(pausedOnYou([asking, running])).toBe(false)
   })
 
+  it('is paused when the only other calls wait their turn behind the ones asking: nothing runs', () => {
+    const queued = event('delegate', { pending: true, queued: true, child: { task: 'Later.', events: [], result: '', rounds: 0 } })
+    expect(pausedOnYou([asking, asking, queued])).toBe(true)
+  })
+
   it('is working while nothing asks, running or not, and over the gaps a live reply’s events can have', () => {
-    expect(pausedOnYou([undefined!, running])).toBe(false)
+    expect(pausedOnYou([undefined, running])).toBe(false)
     expect(pausedOnYou([done])).toBe(false)
     expect(pausedOnYou([])).toBe(false)
   })
