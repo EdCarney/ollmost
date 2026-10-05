@@ -150,10 +150,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
       billing: input.model.billing,
       estimated
     })
-    stats.promptTokens! += promptTokens
-    stats.completionTokens! += completionTokens
-    stats.costUsd = stats.costUsd === null || costUsd === null ? null : (stats.costUsd ?? 0) + costUsd
-    if (estimated) stats.estimated = true
+    addUsage(stats, { promptTokens, completionTokens, costUsd, estimated })
     openRound = null
     return { promptTokens, completionTokens, costUsd, estimated }
   }
@@ -520,6 +517,22 @@ async function runTogether<T, R>(
 function debugLog(wire: WireRequest): void {
   if (!process.env.OLLMOST_DEBUG) return
   appendFileSync(join(paths.data, 'debug.log'), `${new Date().toISOString()} ${wire.endpoint} ${JSON.stringify(redactImages(wire.body))}\n`)
+}
+
+/** What a request, or a run of them, cost: the part of a reply's stats that adds up. */
+export type Usage = Pick<MessageStats, 'promptTokens' | 'completionTokens' | 'costUsd' | 'estimated'>
+
+/**
+ * Add `usage` to `stats`: tokens and cost (a cost unknown on either side is unknown in the sum), and whether any of it
+ * was estimated. Used for each of a reply's rounds, and for a sub-agent's whole run (#166).
+ */
+export function addUsage(stats: MessageStats, usage: Usage): void {
+  stats.promptTokens = (stats.promptTokens ?? 0) + (usage.promptTokens ?? 0)
+  stats.completionTokens = (stats.completionTokens ?? 0) + (usage.completionTokens ?? 0)
+  // Unset on either side means no priced request yet, so the other side's figure stands.
+  if (usage.costUsd !== undefined)
+    stats.costUsd = stats.costUsd === null || usage.costUsd === null ? null : (stats.costUsd ?? 0) + usage.costUsd
+  if (usage.estimated) stats.estimated = true
 }
 
 /** Roughly what the tool definitions add to a request: every round sends them all. */

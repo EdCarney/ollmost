@@ -1,4 +1,4 @@
-import type { ThinkSetting, ToolEvent } from '@shared/types'
+import type { MessageStats, ThinkSetting, ToolEvent } from '@shared/types'
 import type { ToolCall, ToolDef } from '../providers/types'
 import { errorMessage } from '../util'
 import type { AssembleInput, PastToolCall } from './assemble'
@@ -51,6 +51,8 @@ export interface ToolContext {
     prompt: Pick<AssembleInput, 'userName' | 'model' | 'contextLength' | 'web' | 'mcpServers' | 'codeRunner' | 'codeSession' | 'skillIndex'>
     /** Tell the chat its usage moved: called on a child's own requests too, not only the parent's rounds. */
     onUsage?: () => void
+    /** The reply's totals: a child adds its requests' tokens and cost, so the reply's stats cover its sub-agents. */
+    stats?: MessageStats
   }
   /** Set for a sub-agent's own rounds: it is offered no delegate of its own. */
   child?: boolean

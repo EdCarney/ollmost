@@ -8,7 +8,7 @@ import { modelInfo, resolve } from '../providers/registry'
 import type { ChatRequest, ToolDef } from '../providers/types'
 import { DEFAULT_SUB_AGENT_REPLY_CHARS, DEFAULT_SUB_AGENT_ROUNDS, DEFAULT_SUB_AGENTS_AT_ONCE, getSettings } from '../settings'
 import { assemble, promptBudget } from './assemble'
-import { runRounds, toolsTokens } from './rounds'
+import { addUsage, runRounds, toolsTokens } from './rounds'
 import { toolRounds } from './turn'
 import { type ResolvedCall, type RunContext, type ToolContext, toolGrants, type ToolProvider, type ToolResult, toolsFor } from './tools'
 
@@ -18,6 +18,13 @@ const MAX_REPLY_CHARS = 48_000
 const SUMMARY_CHARS = 60
 const RECORD_CHARS = 500
 const CUT_MARK = '\n\n[… the sub-agent’s reply was cut here]'
+/**
+ * The least of a child's reply to cut to, whatever room its call has: the loop keeps every call's share well above
+ * this (its MIN_RESULT_CHARS), but that is the loop's floor, not this one's, and a share under the mark's length would
+ * send cut() a negative count, which slices from the end (#170). A result over the call's room is capped again by
+ * runTool, as any tool's is.
+ */
+const MIN_CUT_CHARS = 200
 /** The most sub-agents one reply may run at the same time, whatever the setting says. */
 const MAX_AT_ONCE = 5
 /** The most requests a sub-agent may make on one task, whatever the setting says: the largest choice Settings offers. */
@@ -142,9 +149,11 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   const tools = toolsFor(childCtx)
   // Where the child's reply is cut: the setting, or less when this call's share of the parent's room is smaller (the
   // parent's value, not the child's cleared one), mark and all, so runTool doesn't cut it again and the card shows
-  // exactly what the parent got. The child is told, so it can fit its reply to it.
+  // exactly what the parent got (unless the share is under the floor, which the loop's never is). The child is told,
+  // so it can fit its reply to it.
   const setting = subAgentReplyChars(settings.delegate)
-  const replyChars = ctx.maxResultChars === undefined ? setting : Math.min(setting, ctx.maxResultChars - CUT_MARK.length)
+  const replyChars =
+    ctx.maxResultChars === undefined ? setting : Math.max(MIN_CUT_CHARS, Math.min(setting, ctx.maxResultChars - CUT_MARK.length))
   const content = context ? `<task>\n${task}\n</task>\n\n<context>\n${context}\n</context>` : `<task>\n${task}\n</task>`
   const assembled = assemble({
     ...reply.prompt,
@@ -178,13 +187,17 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   // Requests made so far: a round that calls tools reports its usage before its calls run.
   let rounds = 0
   const summary = summaryOf(task)
-  // Everything the parent's card shows while the child runs: its calls, and whether one waits for the user.
+  const withCalls = (calls: number) => `${summary} · ${calls} tool call${calls === 1 ? '' : 's'}`
+  // What the pill says of a run still going, or stopped or failed: the task, and its calls once it has made any (#169).
+  const soFar = (calls: number) => (calls ? withCalls(calls) : summary)
+  // Everything the parent's card shows while the child runs: its calls, counted on the pill as they come, and whether
+  // one waits for the user.
   const report = () =>
     ctx.progress?.({
       tool: 'delegate',
       args: call.args,
       ok: true,
-      summary,
+      summary: soFar(events.length),
       awaiting: events.some((e) => e.awaiting) || undefined,
       child: { task, context, events: [...events], result: '', rounds }
     })
@@ -218,11 +231,15 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
     onLoadedSkill: () => {},
     checkpoint: () => {}
   })
+  // The child's requests were the parent's reply's too: its tokens and cost join the reply's totals (the chat's usage
+  // rows already had them), whether it finished, failed or was stopped (#166). Its tok/s stays its own: the parent's
+  // is timed over the parent's rounds alone.
+  if (reply.stats) addUsage(reply.stats, stats)
   const child = { task, context, events: out.toolEvents, rounds: out.rounds }
   if (signal.aborted) {
     // Leave the whole child on the parent's event, no longer waiting, then unwind like any stopped tool (saving the
     // reply settles the child's calls with it).
-    ctx.progress?.({ tool: 'delegate', args: call.args, ok: false, summary, child: { ...child, result: '' } })
+    ctx.progress?.({ tool: 'delegate', args: call.args, ok: false, summary: soFar(child.events.length), child: { ...child, result: '' } })
     throw signal.reason instanceof Error ? signal.reason : new Error('Stopped by you')
   }
   if (out.error)
@@ -232,23 +249,28 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
         tool: 'delegate',
         args: call.args,
         ok: false,
-        summary: `${summary} · failed`,
+        summary: `${soFar(child.events.length)} · failed`,
         child: { ...child, result: '', error: out.error }
       }
     }
-  let text = out.content.trim()
-  if (stats.toolRoundLimit)
-    text = `${text}\n\n[The sub-agent stopped at its limit of ${stats.toolRoundLimit} requests; this is what it had so far.]`.trim()
-  if (!text) text = '[The sub-agent gave no answer.]'
-  const result = cut(text, replyChars)
-  const calls = out.toolEvents.length
+  // What the parent is told besides the reply: that the child ran out of requests, or that the model cut its reply at
+  // its own length limit (the parent's reply would show a warning for that), so it doesn't build on a result that
+  // stopped mid-thought as if it were whole (#170). The notes come after the cut, so a long reply can't push them out.
+  const notes = [
+    stats.toolRoundLimit && `[The sub-agent stopped at its limit of ${stats.toolRoundLimit} requests; this is what it had so far.]`,
+    stats.doneReason === 'length' && '[The sub-agent’s reply hit the model’s length limit and was cut off.]'
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  const text = out.content.trim() || (notes ? '' : '[The sub-agent gave no answer.]')
+  const result = [cut(text, Math.max(0, replyChars - (notes ? notes.length + 2 : 0))), notes].filter(Boolean).join('\n\n')
   return {
     content: result,
     event: {
       tool: 'delegate',
       args: call.args,
       ok: true,
-      summary: `${summary} · ${calls} tool call${calls === 1 ? '' : 's'}`,
+      summary: withCalls(out.toolEvents.length),
       record: result.slice(0, RECORD_CHARS),
       child: { ...child, result }
     }
