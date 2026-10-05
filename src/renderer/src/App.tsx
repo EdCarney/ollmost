@@ -25,6 +25,16 @@ import { ProjectView } from './views/ProjectView'
 import { SettingsView } from './views/SettingsView'
 import { SkillsView } from './views/SkillsView'
 
+/**
+ * ⌘K, from the menu or the keyboard. Not over a modal (the theme editor, a confirmation), which every Modal marks:
+ * the theme editor's preview would hide the palette's, and Enter would change a setting underneath it (#146). A
+ * popover is a dialog to Radix too, but not a modal, and doesn't stop it.
+ */
+function openPalette(): void {
+  if (document.querySelector('[data-modal][data-state="open"]')) return
+  useApp.getState().setSearchOpen(true)
+}
+
 function useBootstrap() {
   useEffect(() => {
     const app = useApp.getState()
@@ -52,7 +62,7 @@ function useBootstrap() {
         s.navigate({ name: 'code' })
         void openFolder()
       } else if (action === 'settings') s.navigate({ name: 'settings' })
-      else if (action === 'search') s.setSearchOpen(true)
+      else if (action === 'search') openPalette()
       else if (action === 'toggle-sidebar') s.toggleSidebar()
       else if (action === 'debugger') void api.debug.open(debugTargetFor(s.route))
     })
@@ -60,7 +70,7 @@ function useBootstrap() {
     const onKey = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
         e.preventDefault()
-        useApp.getState().setSearchOpen(true)
+        openPalette()
       }
     }
     window.addEventListener('keydown', onKey)

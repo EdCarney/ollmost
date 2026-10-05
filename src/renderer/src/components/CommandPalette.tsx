@@ -7,13 +7,23 @@ import { api } from '@/lib/api'
 import { cn, relativeTime } from '@/lib/format'
 import type { Choice } from '@shared/paletteChoices'
 import { type PaletteCommand, paletteCommands, recentCommands, rememberCommand } from '@/lib/paletteCommands'
-import { conversationRoute, type Route, useApp } from '@/stores/app'
+import { conversationRoute, reportError, type Route, useApp } from '@/stores/app'
 import { Snippet } from '@/views/ChatsView'
 
 type Row =
   | { kind: 'command'; key: string; section: string; command: PaletteCommand }
   | { kind: 'choice'; key: string; section: string; choice: Choice; current: boolean }
   | { kind: 'route'; key: string; section: string; icon: ReactNode; label: ReactNode; detail?: ReactNode; route: Route }
+
+/**
+ * Where the highlight starts: on the value in force when a choice list opens (nothing highlighted, and nothing
+ * previewed, if it isn't listed); at the top when typing, or in the command list. Set in the same update as the list
+ * or the query it's for, never in an effect after it: the preview reads the highlighted row, and a stale index for
+ * one render would put another choice on screen for a frame (#146).
+ */
+function startIndex(choosing: PaletteCommand | null, query: string): number {
+  return choosing && !query ? (choosing.choices?.findIndex((c) => c.value === choosing.current) ?? -1) : 0
+}
 
 const GROUP_ICON: Record<PaletteCommand['group'], ReactNode> = {
   Actions: <Zap className="size-4" />,
@@ -57,6 +67,7 @@ export function CommandPalette() {
       setQuery('')
       setHits([])
       setChoosing(null)
+      setIndex(0)
       setPreviewSettings(null)
     }
   }, [searchOpen, setPreviewSettings])
@@ -66,10 +77,6 @@ export function CommandPalette() {
   useEffect(() => () => setPreviewSettings(null), [setPreviewSettings])
 
   useEffect(() => {
-    // A choice list opens on the value in force (nothing highlighted, and nothing previewed, if it isn't listed);
-    // typing, or the command list, starts at the top.
-    const current = choosing && !query ? (choosing.choices?.findIndex((c) => c.value === choosing.current) ?? -1) : 0
-    setIndex(current)
     setSearched('')
     enterWaiting.current = false
     if (choosing || !query.trim()) return setHits([])
@@ -176,6 +183,7 @@ export function CommandPalette() {
     setPreviewSettings(null)
     setChoosing(null)
     setQuery('')
+    setIndex(startIndex(null, ''))
     input.current?.focus()
   }
 
@@ -188,9 +196,12 @@ export function CommandPalette() {
     }
     if (row.kind === 'choice') {
       if (choosing) rememberCommand(choosing.id)
-      // Saved first, then closed: what's on screen is then the saved value, with no flash of the old one.
+      // Saved first, then closed: what's on screen is then the saved value, with no flash of the old one. A save that
+      // fails says so (#146): closing puts the saved value back, and without a word that looks like nothing happened.
       try {
         await updateSettings(row.choice.patch)
+      } catch (err) {
+        reportError(err)
       } finally {
         setSearchOpen(false)
       }
@@ -200,6 +211,7 @@ export function CommandPalette() {
     if (command.choices) {
       setChoosing(command)
       setQuery('')
+      setIndex(startIndex(command, ''))
       input.current?.focus()
       return
     }
@@ -242,7 +254,10 @@ export function CommandPalette() {
               ref={input}
               autoFocus
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setIndex(startIndex(choosing, e.target.value))
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault()

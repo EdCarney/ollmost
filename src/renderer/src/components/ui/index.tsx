@@ -340,6 +340,8 @@ export function Modal({
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/30 backdrop-blur-[1px]" />
         <Dialog.Content
+          // Marks a modal open: ⌘K doesn't open the command palette over one (App's openPalette).
+          data-modal=""
           className={cn(
             'fixed left-1/2 top-1/2 z-50 flex max-h-[85vh] w-[calc(100vw-48px)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-ollmost-lg border border-line bg-panel text-fg shadow-2xl',
             wide ? 'max-w-3xl' : 'max-w-lg'
