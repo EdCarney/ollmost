@@ -1,6 +1,6 @@
 import { randomBytes } from 'node:crypto'
 import { constants, type Stats } from 'node:fs'
-import { lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { structuredPatch } from 'diff'
@@ -549,9 +549,11 @@ async function apply(plan: Planned): Promise<Change> {
 
 /**
  * Put `text` in the file at `real` (a real path) by writing a temporary file beside it and renaming that over the
- * file once it's written and synced: a crash, a forced quit or a power cut mid-write leaves the file as it was,
- * never emptied or half written (#140). The file's mode comes along; its inode doesn't, so a hard link to it keeps
- * the old text. A temporary file that couldn't be finished is removed.
+ * file once it's written and synced: a crash or a forced quit mid-write leaves the file as it was, never emptied or
+ * half written (#140). The temporary file starts as a copy of the file, so it carries what writing in place kept: on
+ * a Mac its extended attributes (a download's quarantine mark) and its ACL, and everywhere its permissions. Its owner
+ * is Ollmost's user, and its inode is new, so a hard link to the file keeps the old text. A temporary file that
+ * couldn't be finished is removed; one a crash left stays, hidden, beside the file.
  */
 async function replaceText(real: string, text: string): Promise<void> {
   // Opened for writing, though nothing is written to it: a file the user can't write (its mode, an ACL) is refused as
@@ -560,17 +562,20 @@ async function replaceText(real: string, text: string): Promise<void> {
   const original = await open(real, constants.O_WRONLY | constants.O_NONBLOCK | NO_LINKS)
   let mode: number
   try {
-    mode = (await original.stat()).mode & 0o7777
+    // Without setuid, setgid and sticky: a write in place by the file's user cleared the first two, and setting them
+    // or the sticky bit on a file can be refused.
+    mode = (await original.stat()).mode & 0o777
   } finally {
     await original.close()
   }
-  const temp = join(dirname(real), `.${basename(real)}.ollmost-${randomBytes(6).toString('hex')}.tmp`)
-  // A new name, with no link anywhere in its path (the folder is real; the name was just made up).
-  const handle = await open(temp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NO_LINKS, mode)
+  // Short whatever the file's name: a long one plus the suffix could pass the file system's limit on a name.
+  const temp = join(dirname(real), `.${basename(real).slice(0, 64)}.ollmost-${randomBytes(6).toString('hex')}.tmp`)
   try {
+    // A new name, never one already there (COPYFILE_EXCL); libuv copies with copyfile(3) on a Mac, attributes and all.
+    await copyFile(real, temp, constants.COPYFILE_EXCL)
+    const handle = await open(temp, constants.O_WRONLY | constants.O_TRUNC | NO_LINKS)
     try {
       await handle.writeFile(text, 'utf8')
-      // The umask took bits off the mode at creation.
       await handle.chmod(mode)
       await handle.sync()
     } finally {
@@ -578,9 +583,16 @@ async function replaceText(real: string, text: string): Promise<void> {
     }
     await rename(temp, real)
   } catch (err) {
-    await rm(temp, { force: true }).catch(() => undefined)
+    // Not one that was there already (a name made up just now, so all but impossible): that one isn't ours to remove.
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') await rm(temp, { force: true }).catch(() => undefined)
     throw err
   }
+  // The rename is on disk once the folder is synced. Some file systems refuse a folder's sync; the edit stands anyway.
+  const folder = await open(dirname(real), constants.O_RDONLY).catch(() => null)
+  await folder
+    ?.sync()
+    .catch(() => undefined)
+    .finally(() => folder.close())
 }
 
 export interface EditArgs {

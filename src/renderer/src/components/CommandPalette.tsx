@@ -5,7 +5,7 @@ import { rankCommands } from '@shared/palette'
 import type { SearchHit } from '@shared/types'
 import { api } from '@/lib/api'
 import { cn, relativeTime } from '@/lib/format'
-import type { Choice } from '@shared/paletteChoices'
+import { type Choice, startIndex } from '@shared/paletteChoices'
 import { type PaletteCommand, paletteCommands, recentCommands, rememberCommand } from '@/lib/paletteCommands'
 import { conversationRoute, reportError, type Route, useApp } from '@/stores/app'
 import { Snippet } from '@/views/ChatsView'
@@ -14,16 +14,6 @@ type Row =
   | { kind: 'command'; key: string; section: string; command: PaletteCommand }
   | { kind: 'choice'; key: string; section: string; choice: Choice; current: boolean }
   | { kind: 'route'; key: string; section: string; icon: ReactNode; label: ReactNode; detail?: ReactNode; route: Route }
-
-/**
- * Where the highlight starts: on the value in force when a choice list opens (nothing highlighted, and nothing
- * previewed, if it isn't listed); at the top when typing, or in the command list. Set in the same update as the list
- * or the query it's for, never in an effect after it: the preview reads the highlighted row, and a stale index for
- * one render would put another choice on screen for a frame (#146).
- */
-function startIndex(choosing: PaletteCommand | null, query: string): number {
-  return choosing && !query ? (choosing.choices?.findIndex((c) => c.value === choosing.current) ?? -1) : 0
-}
 
 const GROUP_ICON: Record<PaletteCommand['group'], ReactNode> = {
   Actions: <Zap className="size-4" />,

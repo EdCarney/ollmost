@@ -238,6 +238,9 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
             roundThinking += ev.text
             openRound.thinking += ev.text
             roundThinkStart ??= Date.now()
+            // Thinking that resumes after text runs on until the next text: the round's time is from its first thinking
+            // to the end of its last, as the live card measures it (#151).
+            roundThinkEnd = null
             input.onDelta({ thinking: ev.text, round: roundAt })
             break
           case 'content':

@@ -11,6 +11,7 @@ import {
   symlinkSync,
   writeFileSync
 } from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -310,6 +311,29 @@ describe('edit_file and write_file', () => {
     expect(text(dir, 'a.link')).toBe('x = 1\n')
     // The temporary file each write went through is gone.
     expect(readdirSync(dir).sort()).toEqual(['a.link', 'a.ts'])
+  })
+
+  it('edits a file whose name is as long as a name can be, clearing setuid and setgid as a write in place did (#140)', async () => {
+    const long = `${'n'.repeat(250)}.sh`
+    const { dir, ws } = project({ [long]: 'echo 1\n' })
+    chmodSync(join(dir, long), 0o6755)
+    await files.editFile(ws, { path: long, oldString: '1', newString: '2' })
+    expect(text(dir, long)).toBe('echo 2\n')
+    expect(statSync(join(dir, long)).mode & 0o7777).toBe(0o755)
+    expect(readdirSync(dir)).toEqual([long])
+  })
+
+  it.runIf(process.platform === 'darwin')('keeps a downloaded file’s quarantine mark through an edit (#140)', async () => {
+    const { dir, ws } = project({ 'run.sh': 'echo 1\n' })
+    const mark = '0081;5f5e1000;Safari;'
+    execFileSync('/usr/bin/xattr', ['-w', 'com.apple.quarantine', mark, join(dir, 'run.sh')])
+    await files.editFile(ws, { path: 'run.sh', oldString: '1', newString: '2' })
+    expect(text(dir, 'run.sh')).toBe('echo 2\n')
+    expect(
+      execFileSync('/usr/bin/xattr', ['-p', 'com.apple.quarantine', join(dir, 'run.sh')])
+        .toString()
+        .trim()
+    ).toBe(mark)
   })
 
   // Root writes anything, so this can only be seen as another user.

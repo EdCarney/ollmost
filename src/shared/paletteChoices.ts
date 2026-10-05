@@ -19,6 +19,16 @@ export interface SettingsCommand extends Rankable {
   current: string
 }
 
+/**
+ * Where a list's highlight starts: on the value in force when a choice list opens (nothing highlighted, and nothing
+ * previewed, if it isn't listed); at the top when typing, or in the command list. The palette sets it in the same
+ * update as the list or the query it's for, never in an effect after it: the preview reads the highlighted row, and
+ * a stale index for one render would put another choice on screen for a frame (#146).
+ */
+export function startIndex(choosing: { choices?: Choice[]; current?: string } | null, query: string): number {
+  return choosing && !query ? (choosing.choices?.findIndex((c) => c.value === choosing.current) ?? -1) : 0
+}
+
 const range = (from: number, to: number, step: number) =>
   Array.from({ length: Math.floor((to - from) / step) + 1 }, (_, i) => from + i * step)
 

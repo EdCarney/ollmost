@@ -874,11 +874,11 @@ export const AssistantMessage = memo(function AssistantMessage({
   const awaitingFirst = streaming && !timeline.length
   // Waiting on you, not the model: no caret while a tool call waits for approval.
   const working = streaming && !toolEvents.some((e) => e?.awaiting)
-  // The caret follows the text. A later round's live "Thinking…" card sits last, after that text: the caret goes
-  // before the card, not under it (#151).
+  // The caret goes after what the reply has shown so far, but never under a live "Thinking…" card: a later round's
+  // card sits last, and the caret goes before it (#151). Text of nothing but whitespace isn't shown, so draws none.
   const last = timeline[timeline.length - 1]
   const liveCardLast = last?.kind === 'thinking' && last.thinking.ms === null
-  const caret = working && content ? <span key="caret" className="stream-caret" /> : null
+  const caret = working && content.trim() ? <span key="caret" className="stream-caret" /> : null
 
   const occurrences = new Map<string, number>()
   const rendered = timeline.map((item, i) => {

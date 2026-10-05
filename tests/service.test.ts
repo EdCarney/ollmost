@@ -378,7 +378,10 @@ describe('reply loop', () => {
     const r = start()
     await waitFor(() => events.some((e) => e.type === 'delta' && e.content === 'part'))
     // The usage row the stopped round writes fails, as a locked database or a full disk would make it fail.
-    run("CREATE TRIGGER usage_full BEFORE INSERT ON usage_events BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END")
+    run(
+      `CREATE TRIGGER usage_full BEFORE INSERT ON usage_events WHEN NEW.message_id = '${r.assistantMessageId}'
+       BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`
+    )
     const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     try {
       await service.stop(r.conversation.id, { quiet: true })
@@ -386,7 +389,7 @@ describe('reply loop', () => {
         expect.stringContaining('usage couldn’t be recorded'),
         expect.objectContaining({ message: expect.stringContaining('disk is full') })
       )
-      expect(logged).toHaveBeenCalledTimes(1)
+      expect(logged.mock.calls.filter(([m]) => String(m).includes('round’s'))).toHaveLength(1)
     } finally {
       run('DROP TRIGGER usage_full')
       logged.mockRestore()
@@ -2968,6 +2971,29 @@ describe('runRounds', () => {
     } finally {
       off()
     }
+  })
+
+  it('times a round’s thinking to the end of its last stretch when it resumes after text (#151)', async () => {
+    // Thinking, text, thinking again, text: a pause after each, so the stretches can be told apart.
+    const piece = (m: Record<string, unknown>) => line({ message: { role: 'assistant', content: '', ...m }, done: false })
+    chat = (_b, res) =>
+      streamChunks(
+        res,
+        [
+          piece({ thinking: 'first' }),
+          piece({ content: 'Some text. ' }),
+          piece({ thinking: 'second' }),
+          piece({ content: 'More.' }),
+          line({ done: true, done_reason: 'stop', prompt_eval_count: 10, eval_count: 3 })
+        ],
+        100
+      ).then(() => res.end())
+    const { input } = await setup()
+    const out = await runRounds(input)
+    expect(out.content).toBe('Some text. More.')
+    expect(out.thinkingSegments).toEqual([{ text: 'firstsecond', at: 0, index: 0, ms: expect.any(Number) }])
+    // From the first thinking to the text after the second (about 300 ms), not to the first text (about 100 ms).
+    expect(out.thinkingSegments[0].ms).toBeGreaterThanOrEqual(200)
   })
 
   it('ends quietly when stopped mid-stream, with the round traced as aborted', async () => {
