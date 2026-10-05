@@ -1,5 +1,6 @@
+import { randomBytes } from 'node:crypto'
 import { constants, type Stats } from 'node:fs'
-import { lstat, mkdir, open, realpath, stat } from 'node:fs/promises'
+import { lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { structuredPatch } from 'diff'
@@ -529,20 +530,57 @@ async function planWrite(root: string, args: WriteArgs): Promise<Planned> {
   return { located, before, after: args.content }
 }
 
-/** Write the planned text: in place when the file exists (its mode kept), as a new file (with its folders) otherwise. */
+/** Write the planned text: over the file when it exists (its mode kept), as a new file (with its folders) otherwise. */
 async function apply(plan: Planned): Promise<Change> {
   const { located, before, after } = plan
   const change = unifiedDiff(located.rel, before, after)
-  if (before === null) await mkdir(dirname(located.real), { recursive: true })
-  // By the real path, with no link anywhere in it; a new file must not have appeared meanwhile.
-  const flags = (before === null ? constants.O_CREAT | constants.O_EXCL : constants.O_TRUNC) | constants.O_WRONLY | NO_LINKS
-  const handle = await open(located.real, flags, 0o644)
-  try {
-    await handle.writeFile(after, 'utf8')
-  } finally {
-    await handle.close()
-  }
+  if (before === null) {
+    await mkdir(dirname(located.real), { recursive: true })
+    // By the real path, with no link anywhere in it; a new file must not have appeared meanwhile.
+    const handle = await open(located.real, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NO_LINKS, 0o644)
+    try {
+      await handle.writeFile(after, 'utf8')
+    } finally {
+      await handle.close()
+    }
+  } else await replaceText(located.real, after)
   return { rel: located.rel, ...change, size: Buffer.byteLength(after), created: before === null }
+}
+
+/**
+ * Put `text` in the file at `real` (a real path) by writing a temporary file beside it and renaming that over the
+ * file once it's written and synced: a crash, a forced quit or a power cut mid-write leaves the file as it was,
+ * never emptied or half written (#140). The file's mode comes along; its inode doesn't, so a hard link to it keeps
+ * the old text. A temporary file that couldn't be finished is removed.
+ */
+async function replaceText(real: string, text: string): Promise<void> {
+  // Opened for writing, though nothing is written to it: a file the user can't write (its mode, an ACL) is refused as
+  // it was when edits were written in place, rather than replaced, which its folder alone would allow. Not a link,
+  // and not waiting on a named pipe.
+  const original = await open(real, constants.O_WRONLY | constants.O_NONBLOCK | NO_LINKS)
+  let mode: number
+  try {
+    mode = (await original.stat()).mode & 0o7777
+  } finally {
+    await original.close()
+  }
+  const temp = join(dirname(real), `.${basename(real)}.ollmost-${randomBytes(6).toString('hex')}.tmp`)
+  // A new name, with no link anywhere in its path (the folder is real; the name was just made up).
+  const handle = await open(temp, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NO_LINKS, mode)
+  try {
+    try {
+      await handle.writeFile(text, 'utf8')
+      // The umask took bits off the mode at creation.
+      await handle.chmod(mode)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, real)
+  } catch (err) {
+    await rm(temp, { force: true }).catch(() => undefined)
+    throw err
+  }
 }
 
 export interface EditArgs {
