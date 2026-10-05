@@ -1,3 +1,6 @@
+/** What ends a diff that was cut to its size limit (src/main/code/files.ts cuts it; the approval card reads it). */
+export const DIFF_CUT_MARK = '[… the diff was cut here]'
+
 /** Lines a unified diff adds and removes. */
 export function diffCounts(diff: string): { added: number; removed: number } {
   let added = 0

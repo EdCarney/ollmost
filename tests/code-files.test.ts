@@ -2,6 +2,7 @@ import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, s
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { DIFF_CUT_MARK } from '@shared/diff'
 import type { Workspace } from '../src/main/runner/workspace'
 import { tempDir } from './tempDir'
 
@@ -352,11 +353,17 @@ describe('edit_file and write_file', () => {
 
   it('gives the diff an edit or a write would make, or throws what the edit would, writing nothing', async () => {
     const { dir, ws } = project({ 'a.ts': THREE })
-    expect(await files.editDiff(ws, { path: 'a.ts', oldString: 'two', newString: '2' })).toBe(
-      '--- a/a.ts\n+++ b/a.ts\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three'
-    )
+    expect(await files.editDiff(ws, { path: 'a.ts', oldString: 'two', newString: '2' })).toEqual({
+      diff: '--- a/a.ts\n+++ b/a.ts\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three',
+      added: 1,
+      removed: 1
+    })
     await expect(files.editDiff(ws, { path: 'a.ts', oldString: 'nope', newString: '2' })).rejects.toThrow(/not found/)
-    expect(await files.writeDiff(ws, { path: 'b.ts', content: 'b\n' })).toBe('--- /dev/null\n+++ b/b.ts\n@@ -0,0 +1,1 @@\n+b')
+    expect(await files.writeDiff(ws, { path: 'b.ts', content: 'b\n' })).toEqual({
+      diff: '--- /dev/null\n+++ b/b.ts\n@@ -0,0 +1,1 @@\n+b',
+      added: 1,
+      removed: 0
+    })
     await expect(files.writeDiff(ws, { path: '.git/config', content: 'b\n' })).rejects.toThrow(files.Refused)
     // Nothing was written.
     expect(text(dir, 'a.ts')).toBe(THREE)
@@ -366,8 +373,10 @@ describe('edit_file and write_file', () => {
   it('cuts a huge diff, and marks a missing final newline', async () => {
     const { ws } = project()
     const r = await files.writeFile(ws, { path: 'big.txt', content: `${'y'.repeat(60)}\n`.repeat(2500) })
-    expect(r.diff.endsWith('[… the diff was cut here]')).toBe(true)
+    expect(r.diff.endsWith(DIFF_CUT_MARK)).toBe(true)
     expect(r.diff.length).toBeLessThan(100_100)
+    // The counts are of the whole change, not of what's left of the diff (#149).
+    expect(r).toMatchObject({ added: 2500, removed: 0 })
     // Past the diff's time or edit limits, the whole file is shown replaced.
     expect(files.unifiedDiff('x', 'a\nb\nc\n', 'x\nb\ny', { maxEditLength: 0 })).toEqual({
       diff: '--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n-a\n-b\n-c\n+x\n+b\n+y\n\\ No newline at end of file',
@@ -518,7 +527,8 @@ describe('the file tools among a session’s tools', () => {
       ok: true,
       pending: true,
       summary: 'a.ts',
-      diff: '--- a/a.ts\n+++ b/a.ts\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three'
+      diff: '--- a/a.ts\n+++ b/a.ts\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three',
+      changed: { added: 1, removed: 1 }
     })
     const long = await tools.pendingEvent(call('write_file', { path: 'b.ts', content: 'z'.repeat(5000) }), ctx)
     expect(long.diff).toMatch(/^--- \/dev\/null\n\+\+\+ b\/b\.ts\n/)

@@ -156,15 +156,22 @@ The user approved this plan, written in plan mode, and started work. The convers
 ${opts.plan.trim()}
 </approved_plan>`
         : ''
+  // In plan mode there is no run_command, so what commands may do would only invite calls that can't be made (#144).
+  const sandbox =
+    opts.stage === 'plan'
+      ? `<sandbox>
+Commands are not offered in plan mode. Once the user starts working, they run in a macOS sandbox in this folder, with network access: ${NETWORK_WORDS[opts.network]}.
+</sandbox>`
+      : `<sandbox>
+Your commands run in a macOS sandbox, in this folder. They can read the folder, the system and the user's toolchains (nvm, cargo, pyenv and the like), but not the rest of the user's home folder or other private places. They can write only this folder and a scratch folder of their own, where HOME and TMPDIR point. Network access: ${NETWORK_WORDS[opts.network]}. Each command is stopped after ${opts.timeoutSec} seconds unless it asks for longer with timeout_sec (at most 30 minutes), and anything it left running (a server, a watcher) is stopped when it ends, so start such things only to test them within one command.
+There is no SSH, no keychain and no credential helper: git can commit locally with the user's name and email, but cannot push, fetch private remotes or sign commits; the user pushes. .git/config, .git/hooks, .gitmodules, .gitconfig, shell startup files and editor settings (.vscode, .idea) are read-only, so git remote add, git config, submodules and editor settings cannot be changed: say so rather than retrying.
+</sandbox>`
   return `You are a coding agent running inside Ollmost, a desktop app on the user's Mac, working in the folder ${opts.root}. ${who}
 The current date is ${opts.date.toDateString()}. You are the model "${opts.model}".
 
 ${tools}
 
-<sandbox>
-Your commands run in a macOS sandbox, in this folder. They can read the folder, the system and the user's toolchains (nvm, cargo, pyenv and the like), but not the rest of the user's home folder or other private places. They can write only this folder and a scratch folder of their own, where HOME and TMPDIR point. Network access: ${NETWORK_WORDS[opts.network]}. Each command is stopped after ${opts.timeoutSec} seconds unless it asks for longer with timeout_sec (at most 30 minutes), and anything it left running (a server, a watcher) is stopped when it ends, so start such things only to test them within one command.
-There is no SSH, no keychain and no credential helper: git can commit locally with the user's name and email, but cannot push, fetch private remotes or sign commits; the user pushes. .git/config, .git/hooks, .gitmodules, .gitconfig, shell startup files and editor settings (.vscode, .idea) are read-only, so git remote add, git config, submodules and editor settings cannot be changed: say so rather than retrying.
-</sandbox>
+${sandbox}
 
 <how_to_work>
 ${howToWork}

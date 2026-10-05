@@ -309,7 +309,13 @@ async function fileToolResult(name: string, c: Call, ws: Workspace, ctx: ToolCon
       const record = `${verb} ${r.rel} (${summary}).`
       // The model gets the diff back for an edit, to see its change in place; what it wrote whole it knows.
       const content = name === 'edit_file' ? `${record}\n\n${r.diff}` : record
-      return done(content, { summary, diff: r.diff, files: [{ path: r.rel, size: r.size }], record })
+      return done(content, {
+        summary,
+        diff: r.diff,
+        changed: { added: r.added, removed: r.removed },
+        files: [{ path: r.rel, size: r.size }],
+        record
+      })
     }
   }
 }
@@ -383,8 +389,8 @@ export const codeTools: ToolProvider = {
         previewFailures.set(ws, failures)
         failures.delete(key)
         try {
-          const diff = name === 'edit_file' ? await files.editDiff(ws, c.edit!) : await files.writeDiff(ws, c.write!)
-          return { ...base, summary: short(c.path), diff }
+          const d = name === 'edit_file' ? await files.editDiff(ws, c.edit!) : await files.writeDiff(ws, c.write!)
+          return { ...base, summary: short(c.path), diff: d.diff, changed: { added: d.added, removed: d.removed } }
         } catch (err) {
           if (ctx.signal?.aborted) throw err
           // A folder that's busy or missing may not be by the time the call runs: it asks as usual and tries then.

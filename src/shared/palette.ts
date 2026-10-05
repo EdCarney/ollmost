@@ -6,20 +6,26 @@ export interface Rankable {
   keywords?: string[]
 }
 
+/** The score of letters in order with gaps: the loosest match, and the one a chat's name can collide with (#142). */
+export const SCATTERED = 1
+
 /**
- * How well one word of a query matches `text`: 0 for no match; otherwise 4 for a match at the start, 3 at a word's
- * start, 2 anywhere, 1 as letters in order with gaps.
+ * How well one word of a query matches `text`: 0 for no match; otherwise 6 for the whole text, 5 for a match at the
+ * start, 4 for a whole word, 3 at a word's start, 2 anywhere, SCATTERED (1) as letters in order with gaps.
  */
 export function matchScore(query: string, text: string): number {
   const q = query.trim().toLowerCase()
   const t = text.toLowerCase()
   if (!q) return 0
-  if (t.startsWith(q)) return 4
-  if (t.split(/[\s/›-]+/).some((w) => w.startsWith(q))) return 3
+  if (t === q) return 6
+  if (t.startsWith(q)) return 5
+  const words = t.split(/[\s/›-]+/)
+  if (words.includes(q)) return 4
+  if (words.some((w) => w.startsWith(q))) return 3
   if (t.includes(q)) return 2
   let i = 0
   for (const ch of t) if (ch === q[i]) i++
-  return i === q.length ? 1 : 0
+  return i === q.length ? SCATTERED : 0
 }
 
 /** Words a query may carry that name no command: "set default model", "open settings", "go to chats". */
@@ -38,36 +44,42 @@ function words(query: string): string[] {
 
 /**
  * A command's score for a query: every word must match its title or a keyword, a match in the title counting more
- * than the same match in a keyword; 0 when a word matches nothing.
+ * than the same match in a keyword; 0 when a word matches nothing. Letters scattered through a keyword never count:
+ * "rust" is in "requests", which no one typing it means (#142). `loose` is whether any word matched its title only
+ * that way.
  */
-function commandScore(query: string, c: Rankable): number {
+function commandScore(query: string, c: Rankable): { score: number; loose: boolean } {
   let total = 0
+  let loose = false
   for (const w of words(query)) {
     const inTitle = matchScore(w, c.title)
     const inKeyword = Math.max(0, ...(c.keywords ?? []).map((k) => matchScore(w, k)))
-    // A whole match in the title beats any keyword; letters scattered through the title beat only the same in a keyword.
-    const best = Math.max(inTitle >= 2 ? inTitle * 10 : inTitle, inKeyword)
-    if (!best) return 0
+    // A whole match in the title beats any keyword; letters scattered through the title beat only a keyword's miss.
+    const best = Math.max(inTitle > SCATTERED ? inTitle * 10 : inTitle, inKeyword > SCATTERED ? inKeyword : 0)
+    if (!best) return { score: 0, loose }
+    if (best === SCATTERED) loose = true
     total += best
   }
-  return total
+  return { score: total, loose }
 }
 
 const NEVER = Number.MAX_SAFE_INTEGER
 
 /**
  * Commands for a query, best first; among equal matches the recents (ids, most recent first) come first, then the
- * given order. With nothing typed: the recents in their order, then the rest as given.
+ * given order. With nothing typed: the recents in their order, then the rest as given. `loose: false` leaves out the
+ * commands a word of the query matched only as letters scattered through the title: the palette lists those only
+ * once it knows the query names no chat or project, so Enter on a chat's name never runs one (#142).
  */
-export function rankCommands<T extends Rankable>(query: string, commands: T[], recent: string[]): T[] {
+export function rankCommands<T extends Rankable>(query: string, commands: T[], recent: string[], { loose = true } = {}): T[] {
   const recency = (c: T) => {
     const i = recent.indexOf(c.id)
     return i === -1 ? NEVER : i
   }
   if (!query.trim()) return [...commands].sort((a, b) => recency(a) - recency(b))
   return commands
-    .map((c, order) => ({ c, order, score: commandScore(query, c) }))
-    .filter((x) => x.score > 0)
+    .map((c, order) => ({ c, order, ...commandScore(query, c) }))
+    .filter((x) => x.score > 0 && (loose || !x.loose))
     .sort((a, b) => b.score - a.score || recency(a.c) - recency(b.c) || a.order - b.order)
     .map((x) => x.c)
 }

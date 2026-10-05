@@ -3,6 +3,7 @@ import { lstat, mkdir, open, realpath, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
 import { Worker } from 'node:worker_threads'
 import { structuredPatch } from 'diff'
+import { DIFF_CUT_MARK } from '@shared/diff'
 import { NO_LINKS, openNoLinks, readyForSession, type Workspace } from '../runner/workspace'
 import { dropSessionPaths } from './pathList'
 import searchWorker from './search.worker.js?raw'
@@ -458,7 +459,7 @@ export function unifiedDiff(
     }
   }
   const diff = out.join('\n')
-  return { diff: diff.length > DIFF_MAX_CHARS ? `${diff.slice(0, DIFF_MAX_CHARS)}\n[… the diff was cut here]` : diff, added, removed }
+  return { diff: diff.length > DIFF_MAX_CHARS ? `${diff.slice(0, DIFF_MAX_CHARS)}\n${DIFF_CUT_MARK}` : diff, added, removed }
 }
 
 /** One hunk that removes every old line and adds every new one, marking a missing final newline as a diff does. */
@@ -574,16 +575,19 @@ export async function writeFile(ws: Workspace, args: WriteArgs): Promise<Change>
   }
 }
 
+/** What a change is to the user deciding on it: its diff, and its line counts, exact even when the diff was cut (#149). */
+export type ChangePreview = Pick<Change, 'diff' | 'added' | 'removed'>
+
 /** The diff edit_file would make, for the approval that asks first. Throws what the edit would. */
-export const editDiff = (ws: Workspace, args: EditArgs): Promise<string> =>
+export const editDiff = (ws: Workspace, args: EditArgs): Promise<ChangePreview> =>
   readyForSession(ws, async (root) => {
     const plan = await planEdit(root, args)
-    return unifiedDiff(plan.located.rel, plan.before, plan.after).diff
+    return unifiedDiff(plan.located.rel, plan.before, plan.after)
   })
 
 /** The diff write_file would make, as editDiff. */
-export const writeDiff = (ws: Workspace, args: WriteArgs): Promise<string> =>
+export const writeDiff = (ws: Workspace, args: WriteArgs): Promise<ChangePreview> =>
   readyForSession(ws, async (root) => {
     const plan = await planWrite(root, args)
-    return unifiedDiff(plan.located.rel, plan.before, plan.after).diff
+    return unifiedDiff(plan.located.rel, plan.before, plan.after)
   })

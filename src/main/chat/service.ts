@@ -254,6 +254,11 @@ function startAssistant(
   reply: ReplyOptions
 ): SendResult {
   const assistant = insertMessage({ conversationId: conversation.id, parentId: parent.id, role: 'assistant', content: '', model })
+  // A plan-stage reply is the next plan, so the earlier one goes as the reply starts: a revision the user stops, or
+  // that fails, must not leave the Start working card offering a plan that isn't the one on screen (#141). What this
+  // reply writes is kept as it finishes (generate), as before.
+  if (conversation.mode === 'code' && conversation.stage === 'plan' && conversation.plan !== null)
+    conversation = updateConversation(conversation.id, { plan: null })
   const controller = new AbortController()
   const flags = { quiet: false }
   const settled = generate(conversation.id, assistant.id, model, think, controller, flags, reply)
