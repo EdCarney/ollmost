@@ -1,7 +1,9 @@
+import { execFile } from 'node:child_process'
 import { randomBytes } from 'node:crypto'
 import { constants, type Stats } from 'node:fs'
 import { copyFile, lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { promisify } from 'node:util'
 import { Worker } from 'node:worker_threads'
 import { structuredPatch } from 'diff'
 import { DIFF_CUT_MARK } from '@shared/diff'
@@ -571,8 +573,7 @@ async function replaceText(real: string, text: string): Promise<void> {
   // Short whatever the file's name: a long one plus the suffix could pass the file system's limit on a name.
   const temp = join(dirname(real), `.${basename(real).slice(0, 64)}.ollmost-${randomBytes(6).toString('hex')}.tmp`)
   try {
-    // A new name, never one already there (COPYFILE_EXCL); libuv copies with copyfile(3) on a Mac, attributes and all.
-    await copyFile(real, temp, constants.COPYFILE_EXCL)
+    await copyWithAttributes(real, temp)
     const handle = await open(temp, constants.O_WRONLY | constants.O_TRUNC | NO_LINKS)
     try {
       await handle.writeFile(text, 'utf8')
@@ -593,6 +594,20 @@ async function replaceText(real: string, text: string): Promise<void> {
     ?.sync()
     .catch(() => undefined)
     .finally(() => folder.close())
+}
+
+const run = promisify(execFile)
+
+/**
+ * Copy `from` to the new name `to`. On a Mac by cp, which keeps the extended attributes (a download's quarantine mark)
+ * and, with -p, the ACL: Node's copyFile copies neither there. The name is taken first, exclusively and with no link in
+ * its path, so cp only ever writes over a file made here just now. Elsewhere copyFile, which keeps the permissions,
+ * what a write in place kept.
+ */
+async function copyWithAttributes(from: string, to: string): Promise<void> {
+  if (process.platform !== 'darwin') return copyFile(from, to, constants.COPYFILE_EXCL)
+  await (await open(to, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NO_LINKS, 0o600)).close()
+  await run('/bin/cp', ['-p', from, to])
 }
 
 export interface EditArgs {
