@@ -19,10 +19,11 @@ const RECORD_CHARS = 500
 const CUT_MARK = '\n\n[… the sub-agent’s reply was cut here]'
 /**
  * The least of a child's reply to cut to, whatever room its call has: the loop keeps every call's share well above
- * this, but that is the loop's floor, not this one's, and a share under the mark's length would send cut() a negative
- * count, which slices from the end (#170). A result over the call's room is capped again by runTool, as any tool's is.
+ * this (its MIN_RESULT_CHARS), but that is the loop's floor, not this one's, and a share under the mark's length would
+ * send cut() a negative count, which slices from the end (#170). A result over the call's room is capped again by
+ * runTool, as any tool's is.
  */
-const MIN_RESULT_CHARS = 200
+const MIN_CUT_CHARS = 200
 /** The most sub-agents one reply may run at the same time, whatever the setting says. */
 const MAX_AT_ONCE = 5
 
@@ -137,10 +138,11 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   const tools = toolsFor(childCtx)
   // Where the child's reply is cut: the setting, or less when this call's share of the parent's room is smaller (the
   // parent's value, not the child's cleared one), mark and all, so runTool doesn't cut it again and the card shows
-  // exactly what the parent got. The child is told, so it can fit its reply to it.
+  // exactly what the parent got (unless the share is under the floor, which the loop's never is). The child is told,
+  // so it can fit its reply to it.
   const setting = subAgentReplyChars(settings.delegate)
   const replyChars =
-    ctx.maxResultChars === undefined ? setting : Math.max(MIN_RESULT_CHARS, Math.min(setting, ctx.maxResultChars - CUT_MARK.length))
+    ctx.maxResultChars === undefined ? setting : Math.max(MIN_CUT_CHARS, Math.min(setting, ctx.maxResultChars - CUT_MARK.length))
   const content = context ? `<task>\n${task}\n</task>\n\n<context>\n${context}\n</context>` : `<task>\n${task}\n</task>`
   const assembled = assemble({
     ...reply.prompt,
@@ -175,14 +177,16 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   let rounds = 0
   const summary = summaryOf(task)
   const withCalls = (calls: number) => `${summary} · ${calls} tool call${calls === 1 ? '' : 's'}`
-  // Everything the parent's card shows while the child runs: its calls, counted on the pill as they come (#169), and
-  // whether one waits for the user.
+  // What the pill says of a run still going, or stopped or failed: the task, and its calls once it has made any (#169).
+  const soFar = (calls: number) => (calls ? withCalls(calls) : summary)
+  // Everything the parent's card shows while the child runs: its calls, counted on the pill as they come, and whether
+  // one waits for the user.
   const report = () =>
     ctx.progress?.({
       tool: 'delegate',
       args: call.args,
       ok: true,
-      summary: events.length ? withCalls(events.length) : summary,
+      summary: soFar(events.length),
       awaiting: events.some((e) => e.awaiting) || undefined,
       child: { task, context, events: [...events], result: '', rounds }
     })
@@ -224,7 +228,7 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
   if (signal.aborted) {
     // Leave the whole child on the parent's event, no longer waiting, then unwind like any stopped tool (saving the
     // reply settles the child's calls with it).
-    ctx.progress?.({ tool: 'delegate', args: call.args, ok: false, summary, child: { ...child, result: '' } })
+    ctx.progress?.({ tool: 'delegate', args: call.args, ok: false, summary: soFar(child.events.length), child: { ...child, result: '' } })
     throw signal.reason instanceof Error ? signal.reason : new Error('Stopped by you')
   }
   if (out.error)
@@ -234,18 +238,21 @@ async function runChild(call: ResolvedCall, ctx: RunContext): Promise<ToolResult
         tool: 'delegate',
         args: call.args,
         ok: false,
-        summary: `${summary} · failed`,
+        summary: `${soFar(child.events.length)} · failed`,
         child: { ...child, result: '', error: out.error }
       }
     }
-  let text = out.content.trim()
-  if (stats.toolRoundLimit)
-    text = `${text}\n\n[The sub-agent stopped at its limit of ${stats.toolRoundLimit} requests; this is what it had so far.]`.trim()
-  // Cut off by the model's own length limit (the parent's reply would show a warning for this): the parent is told, so
-  // it doesn't build on a result that stopped mid-thought as if it were whole (#170).
-  if (stats.doneReason === 'length') text = `${text}\n\n[The sub-agent’s reply hit the model’s length limit and was cut off.]`.trim()
-  if (!text) text = '[The sub-agent gave no answer.]'
-  const result = cut(text, replyChars)
+  // What the parent is told besides the reply: that the child ran out of requests, or that the model cut its reply at
+  // its own length limit (the parent's reply would show a warning for that), so it doesn't build on a result that
+  // stopped mid-thought as if it were whole (#170). The notes come after the cut, so a long reply can't push them out.
+  const notes = [
+    stats.toolRoundLimit && `[The sub-agent stopped at its limit of ${stats.toolRoundLimit} requests; this is what it had so far.]`,
+    stats.doneReason === 'length' && '[The sub-agent’s reply hit the model’s length limit and was cut off.]'
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+  const text = out.content.trim() || (notes ? '' : '[The sub-agent gave no answer.]')
+  const result = [cut(text, Math.max(0, replyChars - (notes ? notes.length + 2 : 0))), notes].filter(Boolean).join('\n\n')
   return {
     content: result,
     event: {

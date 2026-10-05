@@ -3345,6 +3345,15 @@ describe('sub-agents', () => {
     expect(saved.error).toBeNull()
     expect(saved.toolEvents[0]).toMatchObject({ tool: 'delegate', pending: false, ok: false })
     expect(saved.toolEvents[0].summary).toContain('stopped')
+    // The child's partial request was estimated and billed to the chat, and counts in the reply's own stats too (#166).
+    const rows = all<{ kind: string; prompt: number; completion: number }>(
+      'SELECT kind, prompt_tokens AS prompt, completion_tokens AS completion FROM usage_events WHERE message_id = ?',
+      r.assistantMessageId
+    )
+    expect(rows.some((row) => row.kind === 'delegate')).toBe(true)
+    expect(saved.stats!.promptTokens).toBe(rows.reduce((n, row) => n + row.prompt, 0))
+    expect(saved.stats!.completionTokens).toBe(rows.reduce((n, row) => n + row.completion, 0))
+    expect(saved.stats!.estimated).toBe(true)
     expect(listTraces(r.conversation.id).every((t) => t.status !== 'running')).toBe(true)
     expect(listTraces(r.conversation.id).find((t) => t.kind === 'delegate')?.status).toBe('aborted')
   })
@@ -3357,7 +3366,7 @@ describe('sub-agents', () => {
       await waitFor(() => toolEventsIn(r.conversation.id).find((e) => e.event.awaiting))
       await service.stop(r.conversation.id)
       const [event] = getMessage(r.assistantMessageId)!.toolEvents
-      expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: 'Wipe the note. (stopped)' })
+      expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: 'Wipe the note. · 1 tool call (stopped)' })
       expect(event.awaiting).toBeUndefined()
       // The call that waited never ran.
       expect(event.child!.events).toEqual([
@@ -3476,6 +3485,31 @@ describe('sub-agents', () => {
     expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
     // The child's own reason stays with the child: the parent's reply wasn't cut off.
     expect(done.message.stats?.doneReason).toBe('stop')
+  })
+
+  it('keeps the notes to the parent when a child’s long reply is cut, within the room its call has (#170)', async () => {
+    const long = 'word '.repeat(3_000).trim()
+    updateSettings({ delegate: { resultChars: 12_000 } })
+    try {
+      chat = (b, res, n) => {
+        if (isChild(b))
+          return streamChunks(res, [
+            line({ message: { role: 'assistant', content: long }, done: false }),
+            line({ done: true, done_reason: 'length', prompt_eval_count: 10, eval_count: 4096 })
+          ]).then(() => res.end())
+        return hasToolResult(b) ? reply('ok')(b, res, n) : void res.writeHead(200).end(delegateCall('Write at length.'))
+      }
+      const r = start('long')
+      const done = await doneEvent(r.conversation.id)
+      const note = '[The sub-agent’s reply hit the model’s length limit and was cut off.]'
+      const result = done.message.toolEvents[0].child!.result
+      // Cut first, then the note, and no longer than a reply with no note would be.
+      expect(result).toBe(`${long.slice(0, 12_000 - note.length - 2)}${CUT_MARK}\n\n${note}`)
+      expect(result.length).toBe(12_000 + CUT_MARK.length)
+      expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
+    } finally {
+      updateSettings({ delegate: { resultChars: 24_000 } })
+    }
   })
 
   it('keeps a child’s reply at a floor of its own when its call’s room is smaller than the cut mark (#170)', async () => {
@@ -3661,7 +3695,7 @@ describe('sub-agents', () => {
     const done = await doneEvent(r.conversation.id)
     expect(done.message.error).toBeNull()
     const [event] = done.message.toolEvents
-    expect(event).toMatchObject({ tool: 'delegate', ok: false, summary: 'Search, then fail. · failed' })
+    expect(event).toMatchObject({ tool: 'delegate', ok: false, summary: 'Search, then fail. · 1 tool call · failed' })
     expect(event.child!.events).toEqual([expect.objectContaining({ tool: 'web_search', ok: true })])
     expect(event.child!.events.some((e) => e.pending || e.awaiting)).toBe(false)
     // The reason is kept on the child, for its card, and is what the parent was told.
@@ -3834,7 +3868,12 @@ describe('sub-agents', () => {
     expect(saved.error).toBeNull()
     expect(saved.toolEvents).toHaveLength(2)
     for (const [index, event] of saved.toolEvents.entries()) {
-      expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: `the ${['first', 'second'][index]} (stopped)` })
+      expect(event).toMatchObject({
+        tool: 'delegate',
+        pending: false,
+        ok: false,
+        summary: `the ${['first', 'second'][index]} · 1 tool call (stopped)`
+      })
       expect(event.child!.events).toEqual([expect.objectContaining({ tool: 'web_search', pending: false, ok: false })])
       expect(event.child!.events[0].summary).toMatch(/\(stopped\)$/)
     }
