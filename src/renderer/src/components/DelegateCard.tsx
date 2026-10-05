@@ -61,7 +61,7 @@ export function DelegateCard({
               <Markdown text={child.result} conversationId={conversationId} />
             </>
           ) : e.pending ? (
-            <div className="mt-2 text-xs text-subtle">Working…</div>
+            <div className="mt-2 text-xs text-subtle">{e.queued ? 'Waiting its turn…' : 'Working…'}</div>
           ) : child.error ? (
             <div className="mt-2 whitespace-pre-wrap text-xs text-danger">The sub-agent failed: {child.error}</div>
           ) : (

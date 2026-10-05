@@ -26,6 +26,7 @@ import { ASK_OTHER_CHARS } from '@shared/ask'
 import { referenceMarks, referenceNote } from '@shared/atRefs'
 import { DIFF_CUT_MARK, diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
+import { pausedOnYou } from '@shared/toolEvents'
 import type {
   Artifact,
   AskAnswer,
@@ -872,8 +873,8 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   // Nothing has arrived yet: a "Thinking…" card stands in until the first text, thinking or call does.
   const awaitingFirst = streaming && !timeline.length
-  // Waiting on you, not the model: no caret while a tool call waits for approval.
-  const working = streaming && !toolEvents.some((e) => e?.awaiting)
+  // Waiting on you, not the model: no caret while a tool call waits for approval and nothing else still runs.
+  const working = streaming && !pausedOnYou(toolEvents)
   // The caret goes after what the reply has shown so far, but never under a live "Thinking…" card: a later round's
   // card sits last, and the caret goes before it (#151). Text of nothing but whitespace isn't shown, so draws none.
   const last = timeline[timeline.length - 1]
