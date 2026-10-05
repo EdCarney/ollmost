@@ -3492,7 +3492,10 @@ describe('sub-agents', () => {
       return void res.writeHead(200).end(delegateCall('Take forever.'))
     }
     const r = start('stop me')
-    await waitFor(() => chatCalls.some(isChild))
+    // Stopped once the child has text, not just once its request is out: a round with nothing in it yet bills nothing,
+    // and on a slow runner the request alone could be stopped before its first piece arrived. The child's trace says
+    // "Streaming…" until its first text, which moves it on in the same step that keeps the text.
+    await waitFor(() => listTraces(r.conversation.id).some((t) => t.kind === 'delegate' && t.summary !== 'Streaming…'))
     await service.stop(r.conversation.id)
     const saved = getMessage(r.assistantMessageId)!
     expect(saved.stats).toBeTruthy()
