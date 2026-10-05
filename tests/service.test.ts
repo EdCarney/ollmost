@@ -3435,6 +3435,122 @@ describe('sub-agents', () => {
     }
   })
 
+  it('counts a child’s calls on the pill while it runs, not only once it has finished (#169)', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b)) {
+        const results = toolResults(b)
+        if (results === 0) return void res.writeHead(200).end(toolCall('web_search', { query: 'one' }))
+        if (results === 1) return void res.writeHead(200).end(toolCall('web_search', { query: 'two' }))
+        return reply('Both found.')(b, res, n)
+      }
+      return hasToolResult(b) ? reply('ok')(b, res, n) : void res.writeHead(200).end(delegateCall('Search twice.'))
+    }
+    web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] }))
+    const r = start('twice')
+    const done = await doneEvent(r.conversation.id)
+    const summaries = toolEventsIn(r.conversation.id)
+      .filter((e) => e.index === 0)
+      .map((e) => e.event.summary)
+    // The card first showed the task alone, then each call as it came, then the finished total.
+    expect(summaries[0]).toBe('Search twice.')
+    expect(summaries).toContain('Search twice. · 1 tool call')
+    expect(summaries).toContain('Search twice. · 2 tool calls')
+    expect(summaries.indexOf('Search twice. · 1 tool call')).toBeLessThan(summaries.indexOf('Search twice. · 2 tool calls'))
+    expect(done.message.toolEvents[0].summary).toBe('Search twice. · 2 tool calls')
+  })
+
+  it('tells the parent when a child’s reply was cut off by the model’s length limit (#170)', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b))
+        return streamChunks(res, [
+          line({ message: { role: 'assistant', content: 'The list goes on: one, two, thr' }, done: false }),
+          line({ done: true, done_reason: 'length', prompt_eval_count: 10, eval_count: 4096 })
+        ]).then(() => res.end())
+      return hasToolResult(b) ? reply('ok')(b, res, n) : void res.writeHead(200).end(delegateCall('List them all.'))
+    }
+    const r = start('list')
+    const done = await doneEvent(r.conversation.id)
+    const note = '[The sub-agent’s reply hit the model’s length limit and was cut off.]'
+    const result = done.message.toolEvents[0].child!.result
+    expect(result).toBe(`The list goes on: one, two, thr\n\n${note}`)
+    expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
+    // The child's own reason stays with the child: the parent's reply wasn't cut off.
+    expect(done.message.stats?.doneReason).toBe('stop')
+  })
+
+  it('keeps a child’s reply at a floor of its own when its call’s room is smaller than the cut mark (#170)', async () => {
+    const { delegateTools } = await import('../src/main/chat/delegate')
+    const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
+    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: '', model: 'ollama/llama3.2' })
+    const long = 'word '.repeat(200).trim()
+    chat = reply(long)
+    // The tool itself, not runTool, which caps any result to the call's room afterwards: what's under test is that the
+    // tool's own cut never goes negative (a negative count slices from the end).
+    const result = await delegateTools.run(
+      { provider: delegateTools, name: 'delegate', via: null, args: { task: 'Write at length.' } },
+      {
+        mode: 'chat',
+        skills: false,
+        web: true,
+        sources: [],
+        workspace: null,
+        reply: parentReply(c.id, m.id),
+        callIndex: 0,
+        signal: new AbortController().signal,
+        grants: new Set(),
+        // Less than the mark is long: the loop never passes this little.
+        maxResultChars: 10
+      }
+    )
+    expect(result.content).toBe(`${long.slice(0, 200)}${CUT_MARK}`)
+    expect(result.event.child!.result).toBe(result.content)
+  })
+
+  it('adds a child’s tokens and cost to the reply’s own stats, as the chat’s usage already has them (#166)', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b))
+        return hasToolResult(b)
+          ? streamChunks(res, [
+              line({ message: { role: 'assistant', content: 'Found it.' }, done: false }),
+              line({ done: true, done_reason: 'stop', prompt_eval_count: 700, eval_count: 70 })
+            ]).then(() => res.end())
+          : void res.writeHead(200).end(toolCall('web_search', { query: 'ollmost' }))
+      return hasToolResult(b) ? reply('The sub-agent found it.')(b, res, n) : void res.writeHead(200).end(delegateCall('Find it.'))
+    }
+    web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] }))
+    const r = start('find it')
+    const done = await doneEvent(r.conversation.id)
+    const stats = done.message.stats!
+    // The message's figures are the sum of every request made for it, the child's two included.
+    const rows = all<{ kind: string; prompt: number; completion: number }>(
+      'SELECT kind, prompt_tokens AS prompt, completion_tokens AS completion FROM usage_events WHERE message_id = ? ORDER BY created_at',
+      r.assistantMessageId
+    )
+    expect(rows.map((row) => row.kind).sort()).toEqual(['chat', 'chat', 'delegate', 'delegate'])
+    expect(stats.promptTokens).toBe(rows.reduce((n, row) => n + row.prompt, 0))
+    expect(stats.completionTokens).toBe(rows.reduce((n, row) => n + row.completion, 0))
+    // Which is more than the parent's rounds alone: the child's reply was the biggest request.
+    expect(stats.promptTokens!).toBeGreaterThanOrEqual(700 + 10)
+    expect(stats.completionTokens!).toBeGreaterThanOrEqual(70 + 3)
+    // What ended the reply, and how fast it was, are still the parent's own.
+    expect(stats.doneReason).toBe('stop')
+    expect(stats.toolRoundLimit).toBeUndefined()
+  })
+
+  it('adds up usage across rounds and a run, leaving a cost unknown once any part of it is', async () => {
+    const { addUsage } = await import('../src/main/chat/rounds')
+    const stats: MessageStats = { promptTokens: 0, completionTokens: 0 }
+    addUsage(stats, { promptTokens: 10, completionTokens: 3, costUsd: 0.01 })
+    expect(stats).toEqual({ promptTokens: 10, completionTokens: 3, costUsd: 0.01 })
+    // An estimated part marks the whole; a run that made no priced request leaves the cost as it was.
+    addUsage(stats, { promptTokens: 5, completionTokens: 1, estimated: true })
+    expect(stats).toEqual({ promptTokens: 15, completionTokens: 4, costUsd: 0.01, estimated: true })
+    // A part with no known price makes the sum unknown, and it stays so.
+    addUsage(stats, { promptTokens: 1, completionTokens: 1, costUsd: null })
+    addUsage(stats, { promptTokens: 1, completionTokens: 1, costUsd: 0.5 })
+    expect(stats).toEqual({ promptTokens: 17, completionTokens: 6, costUsd: null, estimated: true })
+  })
+
   it('gives the parent as much of a child’s reply as the setting allows when the call has room, past other tools’ limit', async () => {
     // A model name never fetched before, so its info isn't the 8192-token one other tests cached for llama3.2: its
     // window (Ollmost's 32K local cap) has room for the longest reply.

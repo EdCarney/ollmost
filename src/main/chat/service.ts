@@ -443,7 +443,8 @@ async function generate(
           codeSession: codeSessionForPrompt,
           skillIndex
         },
-        onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) })
+        onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) }),
+        stats
       }
     }
     const grants = toolGrants(toolContext)
