@@ -8,6 +8,7 @@ import type { McpImportResult, McpImportSource, McpServer, McpServerInput, ToolP
 import { mcpAllowKey } from '@shared/toolAllow'
 import { anyChatAllows, forgetAllowKeyInChats, forgetServerInChats } from '../db/conversations'
 import { readSetting, writeSetting } from '../db/kv'
+import { testOverride } from '../testOverrides'
 
 // MCP server definitions live in the settings table under their own key, not in Settings: their environment often
 // holds tokens (a GitHub PAT, an API key), so it's encrypted with the OS keychain like the ollama.com key, and only
@@ -274,16 +275,20 @@ export function addImported(servers: ImportedServer[], defaultOn: boolean, skipp
   return { added, skipped: notes }
 }
 
-/** Other apps' MCP configs Ollmost can copy servers from. Tests point these elsewhere. */
+/**
+ * Other apps' MCP configs Ollmost can copy servers from. Tests point these elsewhere; the shipped app reads only the
+ * usual places, since a config names commands to run (#137).
+ */
 const IMPORT_FILES: Array<{ id: McpImportSource['id']; label: string; path: () => string }> = [
   {
     id: 'claude-desktop',
     label: 'Claude Desktop',
     path: () =>
-      process.env.OLLMOST_CLAUDE_DESKTOP_CONFIG ?? join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
+      testOverride('OLLMOST_CLAUDE_DESKTOP_CONFIG') ??
+      join(homedir(), 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
   },
   // Claude Code keeps user-wide servers at the top level of ~/.claude.json (project ones are left alone).
-  { id: 'claude-code', label: 'Claude Code', path: () => process.env.OLLMOST_CLAUDE_CODE_CONFIG ?? join(homedir(), '.claude.json') }
+  { id: 'claude-code', label: 'Claude Code', path: () => testOverride('OLLMOST_CLAUDE_CODE_CONFIG') ?? join(homedir(), '.claude.json') }
 ]
 
 async function readImportFile(path: string) {

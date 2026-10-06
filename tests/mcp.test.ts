@@ -1,10 +1,12 @@
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest'
 import { tempDir } from './tempDir'
 
 // Real MCP servers over stdio (tests/fixtures/mcp-server.mjs), a real in-memory database. Electron's keychain is
 // faked, and spawned processes get Ollmost's environment as it is (the login-shell PATH has its own tests).
+// Unpackaged, as the tests are, unless a test stands in for the shipped app.
+const electronApp = vi.hoisted(() => ({ isPackaged: false, getPath: () => '' }))
 vi.mock('electron', () => ({
   safeStorage: {
     isEncryptionAvailable: () => true,
@@ -12,7 +14,7 @@ vi.mock('electron', () => ({
     decryptString: (b: Buffer) => b.toString().replace(/^enc:/, '')
   },
   shell: {},
-  app: { getPath: () => '' }
+  app: electronApp
 }))
 vi.mock('../src/main/env', () => ({ childEnv: async (extra: Record<string, string> = {}) => ({ ...process.env, ...extra }) }))
 
@@ -181,6 +183,31 @@ describe('importing', () => {
     await expect(config.importFrom('claude-code')).rejects.toThrow(/no MCP servers/)
     config.removeServer('weather')
     config.removeServer(existing.id)
+  })
+
+  it('reads the usual places in the shipped app, wherever the environment points (#137)', async () => {
+    // A config can name commands to run, so only an unpackaged build (the tests, the e2e run) follows the overrides.
+    const home = join(dir, 'home')
+    const usual = join(home, 'Library', 'Application Support', 'Claude', 'claude_desktop_config.json')
+    mkdirSync(dirname(usual), { recursive: true })
+    writeFileSync(usual, JSON.stringify({ mcpServers: { usual: { command: 'npx' } } }))
+    const planted = join(dir, 'planted.json')
+    writeFileSync(planted, JSON.stringify({ mcpServers: { planted: { command: 'sh' } } }))
+    const realHome = process.env.HOME
+    process.env.HOME = home
+    process.env.OLLMOST_CLAUDE_DESKTOP_CONFIG = planted
+    process.env.OLLMOST_CLAUDE_CODE_CONFIG = planted
+    electronApp.isPackaged = true
+    try {
+      // Claude Code's usual file isn't in this home, so a second source could only be the planted one.
+      expect(await config.importSources()).toEqual([
+        { id: 'claude-desktop', label: 'Claude Desktop', path: usual, servers: ['usual'], unsupported: 0 }
+      ])
+    } finally {
+      electronApp.isPackaged = false
+      if (realHome === undefined) delete process.env.HOME
+      else process.env.HOME = realHome
+    }
   })
 
   it('adds pasted servers on for new chats', () => {

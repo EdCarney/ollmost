@@ -34,12 +34,15 @@ import { codeMayBeRunning } from './runner/lock'
 import { OLLMOST_DIR } from './runner/sandbox'
 import { clearPreviews, clearPreviewsSync, sweepWorkspaces } from './runner/workspace'
 import { getSettings } from './settings'
+import { testOverride } from './testOverrides'
 import { refreshPrices } from './usage/pricing'
 import { errorMessage } from './util'
 
 app.setName('Ollmost')
-// Tests and experiments can point Ollmost at a throwaway data folder.
-if (process.env.OLLMOST_USER_DATA) app.setPath('userData', process.env.OLLMOST_USER_DATA)
+// Tests and experiments can point an unpackaged build at a throwaway data folder. The shipped app keeps its own: the
+// folder holds what Ollmost trusts (MCP servers' commands, tools set to Always allow, the endpoints chats go to) (#137).
+const userData = testOverride('OLLMOST_USER_DATA')
+if (userData) app.setPath('userData', userData)
 // Before anything puts files in the data folder (Electron has created it, empty): move the old app's there, if it
 // left one (#60).
 const dataDir = app.getPath('userData')
