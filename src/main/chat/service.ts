@@ -589,8 +589,8 @@ async function generate(
         .filter(Boolean)
         .join(' ')
   } catch (err) {
-    // Only the setup gets here now (a model that can't be reached, a folder that can't be readied): the rounds
-    // report their own failures in `result.error`.
+    // The setup (a model that can't be reached, a folder that can't be readied, a reference read that fails), or a
+    // stop during it: the rounds report their own failures in `result.error`, and keep their partial reply (#171).
     if (!controller.signal.aborted) error = errorMessage(err)
   }
 

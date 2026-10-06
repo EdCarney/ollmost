@@ -879,6 +879,15 @@ await second.win.screenshot({ path: join(SHOTS, 'home-nord-dark.png') })
     await canvas()
   )
   await w.screenshot({ path: join(SHOTS, 'palette-theme.png') })
+  // Over the theme editor, ⌘K does nothing: the editor's preview would hide the palette's, and Enter would save a
+  // theme underneath it (#146).
+  await w.getByRole('button', { name: 'Customize current' }).click()
+  await w.getByRole('dialog', { name: 'Customize theme' }).waitFor()
+  await w.keyboard.press('Meta+K')
+  await w.waitForTimeout(400)
+  check('⌘K doesn’t open the palette over the theme editor', (await w.locator('[data-testid="palette-rows"]').count()) === 0)
+  await w.keyboard.press('Escape')
+  await w.getByRole('dialog', { name: 'Customize theme' }).waitFor({ state: 'detached' })
 }
 await second.app.close()
 

@@ -1,6 +1,9 @@
+import { execFile } from 'node:child_process'
+import { randomBytes } from 'node:crypto'
 import { constants, type Stats } from 'node:fs'
-import { lstat, mkdir, open, realpath, stat } from 'node:fs/promises'
+import { copyFile, lstat, mkdir, open, realpath, rename, rm, stat } from 'node:fs/promises'
 import { basename, dirname, join, relative, resolve, sep } from 'node:path'
+import { promisify } from 'node:util'
 import { Worker } from 'node:worker_threads'
 import { structuredPatch } from 'diff'
 import { DIFF_CUT_MARK } from '@shared/diff'
@@ -529,20 +532,82 @@ async function planWrite(root: string, args: WriteArgs): Promise<Planned> {
   return { located, before, after: args.content }
 }
 
-/** Write the planned text: in place when the file exists (its mode kept), as a new file (with its folders) otherwise. */
+/** Write the planned text: over the file when it exists (its mode kept), as a new file (with its folders) otherwise. */
 async function apply(plan: Planned): Promise<Change> {
   const { located, before, after } = plan
   const change = unifiedDiff(located.rel, before, after)
-  if (before === null) await mkdir(dirname(located.real), { recursive: true })
-  // By the real path, with no link anywhere in it; a new file must not have appeared meanwhile.
-  const flags = (before === null ? constants.O_CREAT | constants.O_EXCL : constants.O_TRUNC) | constants.O_WRONLY | NO_LINKS
-  const handle = await open(located.real, flags, 0o644)
-  try {
-    await handle.writeFile(after, 'utf8')
-  } finally {
-    await handle.close()
-  }
+  if (before === null) {
+    await mkdir(dirname(located.real), { recursive: true })
+    // By the real path, with no link anywhere in it; a new file must not have appeared meanwhile.
+    const handle = await open(located.real, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NO_LINKS, 0o644)
+    try {
+      await handle.writeFile(after, 'utf8')
+    } finally {
+      await handle.close()
+    }
+  } else await replaceText(located.real, after)
   return { rel: located.rel, ...change, size: Buffer.byteLength(after), created: before === null }
+}
+
+/**
+ * Put `text` in the file at `real` (a real path) by writing a temporary file beside it and renaming that over the
+ * file once it's written and synced: a crash or a forced quit mid-write leaves the file as it was, never emptied or
+ * half written (#140). The temporary file starts as a copy of the file, so it carries what writing in place kept: on
+ * a Mac its extended attributes (a download's quarantine mark) and its ACL, and everywhere its permissions. Its owner
+ * is Ollmost's user, and its inode is new, so a hard link to the file keeps the old text. A temporary file that
+ * couldn't be finished is removed; one a crash left stays, hidden, beside the file.
+ */
+async function replaceText(real: string, text: string): Promise<void> {
+  // Opened for writing, though nothing is written to it: a file the user can't write (its mode, an ACL) is refused as
+  // it was when edits were written in place, rather than replaced, which its folder alone would allow. Not a link,
+  // and not waiting on a named pipe.
+  const original = await open(real, constants.O_WRONLY | constants.O_NONBLOCK | NO_LINKS)
+  let mode: number
+  try {
+    // Without setuid, setgid and sticky: a write in place by the file's user cleared the first two, and setting them
+    // or the sticky bit on a file can be refused.
+    mode = (await original.stat()).mode & 0o777
+  } finally {
+    await original.close()
+  }
+  // Short whatever the file's name: a long one plus the suffix could pass the file system's limit on a name.
+  const temp = join(dirname(real), `.${basename(real).slice(0, 64)}.ollmost-${randomBytes(6).toString('hex')}.tmp`)
+  try {
+    await copyWithAttributes(real, temp)
+    const handle = await open(temp, constants.O_WRONLY | constants.O_TRUNC | NO_LINKS)
+    try {
+      await handle.writeFile(text, 'utf8')
+      await handle.chmod(mode)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    await rename(temp, real)
+  } catch (err) {
+    // Not one that was there already (a name made up just now, so all but impossible): that one isn't ours to remove.
+    if ((err as NodeJS.ErrnoException).code !== 'EEXIST') await rm(temp, { force: true }).catch(() => undefined)
+    throw err
+  }
+  // The rename is on disk once the folder is synced. Some file systems refuse a folder's sync; the edit stands anyway.
+  const folder = await open(dirname(real), constants.O_RDONLY).catch(() => null)
+  await folder
+    ?.sync()
+    .catch(() => undefined)
+    .finally(() => folder.close())
+}
+
+const run = promisify(execFile)
+
+/**
+ * Copy `from` to the new name `to`. On a Mac by cp, which keeps the extended attributes (a download's quarantine mark)
+ * and, with -p, the ACL: Node's copyFile copies neither there. The name is taken first, exclusively and with no link in
+ * its path, so cp only ever writes over a file made here just now. Elsewhere copyFile, which keeps the permissions,
+ * what a write in place kept.
+ */
+async function copyWithAttributes(from: string, to: string): Promise<void> {
+  if (process.platform !== 'darwin') return copyFile(from, to, constants.COPYFILE_EXCL)
+  await (await open(to, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | NO_LINKS, 0o600)).close()
+  await run('/bin/cp', ['-p', from, to])
 }
 
 export interface EditArgs {

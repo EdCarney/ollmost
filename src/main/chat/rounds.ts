@@ -238,6 +238,9 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
             roundThinking += ev.text
             openRound.thinking += ev.text
             roundThinkStart ??= Date.now()
+            // Thinking that resumes after text runs on until the next text: the round's time is from its first thinking
+            // to the end of its last, as the live card measures it (#151).
+            roundThinkEnd = null
             input.onDelta({ thinking: ev.text, round: roundAt })
             break
           case 'content':
@@ -448,18 +451,29 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
     }
   } catch (err) {
     if (!input.signal.aborted) error = errorMessage(err)
-    // A stopped or failed stream still spent tokens; record an estimate for the partial round.
     const partial = openRound ? { content: openRound.content, thinking: openRound.thinking } : null
     if (openRound?.thinking) thinkingSegments.push({ text: openRound.thinking, ...roundAt, ms: roundThinkMs() })
-    const billed = partial && (partial.content || partial.thinking) ? recordRound(null) : null
-    roundTrace?.finish({
-      status: input.signal.aborted ? 'aborted' : 'error',
-      response: { ...partial, error: input.signal.aborted ? 'Stopped by you' : (error ?? undefined) },
-      promptTokens: billed?.promptTokens,
-      completionTokens: billed?.completionTokens,
-      costUsd: billed?.costUsd,
-      summary: input.signal.aborted ? 'Stopped' : `Error: ${error}`
-    })
+    // A stopped or failed stream still spent tokens; record an estimate for the partial round. Bookkeeping only: a
+    // write that fails here (a locked database, a full disk) is logged, and the partial reply, already checkpointed,
+    // still goes back to be saved with the error above rather than being lost to an empty one (#171).
+    let billed: ReturnType<typeof recordRound> = null
+    try {
+      billed = partial && (partial.content || partial.thinking) ? recordRound(null) : null
+    } catch (recording) {
+      console.error('Ollmost: a stopped round’s usage couldn’t be recorded', recording)
+    }
+    try {
+      roundTrace?.finish({
+        status: input.signal.aborted ? 'aborted' : 'error',
+        response: { ...partial, error: input.signal.aborted ? 'Stopped by you' : (error ?? undefined) },
+        promptTokens: billed?.promptTokens,
+        completionTokens: billed?.completionTokens,
+        costUsd: billed?.costUsd,
+        summary: input.signal.aborted ? 'Stopped' : `Error: ${error}`
+      })
+    } catch (recording) {
+      console.error('Ollmost: a stopped round’s trace couldn’t be finished', recording)
+    }
   }
 
   return { content, thinking, thinkingSegments, toolEvents, rounds, error, genMs, timedTokens, thinkStart, thinkEnd, triedUnknown }

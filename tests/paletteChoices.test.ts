@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { settingsCommands } from '../src/shared/paletteChoices'
+import { settingsCommands, startIndex } from '../src/shared/paletteChoices'
 import type { ModelInfo, Settings, ThemeDef } from '../src/shared/types'
 
 const appearance: Settings['appearance'] = { themeId: 'clay', mode: 'system', fontSize: 15, chatWidth: 768, responseFont: 'reading' }
@@ -13,6 +13,25 @@ const models = [
   { key: 'ollama/gpt-oss:120b-cloud', name: 'gpt-oss:120b-cloud', endpoint: ollama, where: 'cloud' },
   { key: 'ollama/gemma4:e4b', name: 'gemma4:e4b', endpoint: ollama, where: 'this-mac' }
 ] as ModelInfo[]
+
+describe('where a list’s highlight starts (#146)', () => {
+  const list = {
+    choices: [
+      { value: 'clay', label: 'Clay', patch: {} },
+      { value: 'nord', label: 'Nord', patch: {} }
+    ],
+    current: 'nord'
+  }
+  it('opens a choice list on the value in force, or on nothing when it isn’t listed', () => {
+    expect(startIndex(list, '')).toBe(1)
+    expect(startIndex({ ...list, current: 'gone' }, '')).toBe(-1)
+  })
+  it('starts at the top when typing, and in the command list', () => {
+    expect(startIndex(list, 'no')).toBe(0)
+    expect(startIndex(null, '')).toBe(0)
+    expect(startIndex(null, 'theme')).toBe(0)
+  })
+})
 
 describe('the settings the palette offers choices for', () => {
   it('opens every list on the value in force, out of the box included', () => {

@@ -5,9 +5,9 @@ import { rankCommands } from '@shared/palette'
 import type { SearchHit } from '@shared/types'
 import { api } from '@/lib/api'
 import { cn, relativeTime } from '@/lib/format'
-import type { Choice } from '@shared/paletteChoices'
+import { type Choice, startIndex } from '@shared/paletteChoices'
 import { type PaletteCommand, paletteCommands, recentCommands, rememberCommand } from '@/lib/paletteCommands'
-import { conversationRoute, type Route, useApp } from '@/stores/app'
+import { conversationRoute, reportError, type Route, useApp } from '@/stores/app'
 import { Snippet } from '@/views/ChatsView'
 
 type Row =
@@ -57,6 +57,7 @@ export function CommandPalette() {
       setQuery('')
       setHits([])
       setChoosing(null)
+      setIndex(0)
       setPreviewSettings(null)
     }
   }, [searchOpen, setPreviewSettings])
@@ -66,10 +67,6 @@ export function CommandPalette() {
   useEffect(() => () => setPreviewSettings(null), [setPreviewSettings])
 
   useEffect(() => {
-    // A choice list opens on the value in force (nothing highlighted, and nothing previewed, if it isn't listed);
-    // typing, or the command list, starts at the top.
-    const current = choosing && !query ? (choosing.choices?.findIndex((c) => c.value === choosing.current) ?? -1) : 0
-    setIndex(current)
     setSearched('')
     enterWaiting.current = false
     if (choosing || !query.trim()) return setHits([])
@@ -176,6 +173,7 @@ export function CommandPalette() {
     setPreviewSettings(null)
     setChoosing(null)
     setQuery('')
+    setIndex(startIndex(null, ''))
     input.current?.focus()
   }
 
@@ -188,9 +186,12 @@ export function CommandPalette() {
     }
     if (row.kind === 'choice') {
       if (choosing) rememberCommand(choosing.id)
-      // Saved first, then closed: what's on screen is then the saved value, with no flash of the old one.
+      // Saved first, then closed: what's on screen is then the saved value, with no flash of the old one. A save that
+      // fails says so (#146): closing puts the saved value back, and without a word that looks like nothing happened.
       try {
         await updateSettings(row.choice.patch)
+      } catch (err) {
+        reportError(err)
       } finally {
         setSearchOpen(false)
       }
@@ -200,6 +201,7 @@ export function CommandPalette() {
     if (command.choices) {
       setChoosing(command)
       setQuery('')
+      setIndex(startIndex(command, ''))
       input.current?.focus()
       return
     }
@@ -242,7 +244,10 @@ export function CommandPalette() {
               ref={input}
               autoFocus
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setIndex(startIndex(choosing, e.target.value))
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault()
