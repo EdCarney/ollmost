@@ -5,9 +5,9 @@ import { rankCommands } from '@shared/palette'
 import type { SearchHit } from '@shared/types'
 import { api } from '@/lib/api'
 import { cn, relativeTime } from '@/lib/format'
-import type { Choice } from '@shared/paletteChoices'
+import { type Choice, startIndex } from '@shared/paletteChoices'
 import { type PaletteCommand, paletteCommands, recentCommands, rememberCommand } from '@/lib/paletteCommands'
-import { conversationRoute, type Route, useApp } from '@/stores/app'
+import { conversationRoute, reportError, type Route, useApp } from '@/stores/app'
 import { Snippet } from '@/views/ChatsView'
 
 type Row =
@@ -34,6 +34,11 @@ export function CommandPalette() {
   const toggleSidebar = useApp((s) => s.toggleSidebar)
   const [query, setQuery] = useState('')
   const [hits, setHits] = useState<SearchHit[]>([])
+  // The query the chat search has answered for. Until then, Enter waits for the answer, and whenever it or a project
+  // holds the query, commands matched only by scattered letters stay out: typing a chat's name and pressing Enter
+  // opens the chat, never a command (#142).
+  const [searched, setSearched] = useState('')
+  const enterWaiting = useRef(false)
   const [index, setIndex] = useState(0)
   const [choosing, setChoosing] = useState<PaletteCommand | null>(null)
   const input = useRef<HTMLInputElement>(null)
@@ -52,6 +57,7 @@ export function CommandPalette() {
       setQuery('')
       setHits([])
       setChoosing(null)
+      setIndex(0)
       setPreviewSettings(null)
     }
   }, [searchOpen, setPreviewSettings])
@@ -61,13 +67,24 @@ export function CommandPalette() {
   useEffect(() => () => setPreviewSettings(null), [setPreviewSettings])
 
   useEffect(() => {
-    // A choice list opens on the value in force (nothing highlighted, and nothing previewed, if it isn't listed);
-    // typing, or the command list, starts at the top.
-    const current = choosing && !query ? (choosing.choices?.findIndex((c) => c.value === choosing.current) ?? -1) : 0
-    setIndex(current)
+    setSearched('')
+    enterWaiting.current = false
     if (choosing || !query.trim()) return setHits([])
-    const t = setTimeout(() => api.conversations.search(query).then(setHits), 120)
-    return () => clearTimeout(t)
+    // An answer for an earlier query can come after a later one's: only the current query's lands.
+    let live = true
+    const t = setTimeout(
+      () =>
+        api.conversations.search(query).then((found) => {
+          if (!live) return
+          setHits(found)
+          setSearched(query)
+        }),
+      120
+    )
+    return () => {
+      live = false
+      clearTimeout(t)
+    }
   }, [query, choosing])
 
   const rows = useMemo<Row[]>(() => {
@@ -84,7 +101,14 @@ export function CommandPalette() {
           current: choice.value === choosing.current
         }))
     }
-    const ranked = rankCommands(query, commands, recents).slice(0, q ? 8 : 6)
+    const projectHits = q ? projects.filter((p) => p.name.toLowerCase().includes(q)) : []
+    // Loose command matches only once the query is known to name no chat or project (see `searched`).
+    const answered = searched === query
+    const loose = answered && !hits.length && !projectHits.length
+    // A chat or project named exactly what was typed is what Enter means, above any command the words also fit
+    // ("api" is a keyword of Usage & cost; "ollama" one of Models).
+    const named = answered && [...projectHits.map((p) => p.name), ...hits.map((h) => h.title)].some((t) => t.trim().toLowerCase() === q)
+    const ranked = rankCommands(query, commands, recents, { loose }).slice(0, q ? 8 : 6)
     const commandRows: Row[] = ranked.map((command) => ({ kind: 'command', key: `cmd:${command.id}`, section: 'Commands', command }))
     if (!q)
       return [
@@ -99,16 +123,14 @@ export function CommandPalette() {
           route: { name: 'chat', id: c.id }
         }))
       ]
-    const projectRows = projects
-      .filter((p) => p.name.toLowerCase().includes(q))
-      .map((p): Row => ({
-        kind: 'route',
-        key: p.id,
-        section: 'Projects',
-        icon: <FolderClosed className="size-4" />,
-        label: p.name,
-        route: { name: 'project', id: p.id }
-      }))
+    const projectRows = projectHits.map((p): Row => ({
+      kind: 'route',
+      key: p.id,
+      section: 'Projects',
+      icon: <FolderClosed className="size-4" />,
+      label: p.name,
+      route: { name: 'project', id: p.id }
+    }))
     const chatRows = hits.map((h): Row => {
       const route = conversationRoute(h.conversationId, sessions, h.mode)
       return {
@@ -121,8 +143,16 @@ export function CommandPalette() {
         route
       }
     })
-    return [...commandRows, ...projectRows, ...chatRows]
-  }, [query, choosing, commands, recents, hits, conversations, sessions, projects])
+    return named ? [...projectRows, ...chatRows, ...commandRows] : [...commandRows, ...projectRows, ...chatRows]
+  }, [query, choosing, commands, recents, hits, searched, conversations, sessions, projects])
+
+  // Enter pressed before the search answered (it waits 120 ms after typing): choose once it has, from the rows it
+  // settles, rather than from whatever command sat at the top meanwhile.
+  useEffect(() => {
+    if (!enterWaiting.current || searched !== query) return
+    enterWaiting.current = false
+    void choose(rows[index])
+  })
 
   // While choosing, the highlighted value is on screen before it's saved. Not once the palette is closing: the
   // rows rebuild then, and this must not put a preview back that the close just cleared.
@@ -143,6 +173,7 @@ export function CommandPalette() {
     setPreviewSettings(null)
     setChoosing(null)
     setQuery('')
+    setIndex(startIndex(null, ''))
     input.current?.focus()
   }
 
@@ -155,9 +186,12 @@ export function CommandPalette() {
     }
     if (row.kind === 'choice') {
       if (choosing) rememberCommand(choosing.id)
-      // Saved first, then closed: what's on screen is then the saved value, with no flash of the old one.
+      // Saved first, then closed: what's on screen is then the saved value, with no flash of the old one. A save that
+      // fails says so (#146): closing puts the saved value back, and without a word that looks like nothing happened.
       try {
         await updateSettings(row.choice.patch)
+      } catch (err) {
+        reportError(err)
       } finally {
         setSearchOpen(false)
       }
@@ -167,6 +201,7 @@ export function CommandPalette() {
     if (command.choices) {
       setChoosing(command)
       setQuery('')
+      setIndex(startIndex(command, ''))
       input.current?.focus()
       return
     }
@@ -209,7 +244,10 @@ export function CommandPalette() {
               ref={input}
               autoFocus
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(e) => {
+                setQuery(e.target.value)
+                setIndex(startIndex(choosing, e.target.value))
+              }}
               onKeyDown={(e) => {
                 if (e.key === 'ArrowDown') {
                   e.preventDefault()
@@ -219,7 +257,8 @@ export function CommandPalette() {
                   setIndex((i) => Math.max(i - 1, 0))
                 } else if (e.key === 'Enter') {
                   e.preventDefault()
-                  void choose(rows[index])
+                  if (!choosing && query.trim() && searched !== query) enterWaiting.current = true
+                  else void choose(rows[index])
                 } else if (e.key === 'Backspace' && choosing && !query) {
                   e.preventDefault()
                   back()

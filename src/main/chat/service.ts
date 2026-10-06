@@ -254,6 +254,11 @@ function startAssistant(
   reply: ReplyOptions
 ): SendResult {
   const assistant = insertMessage({ conversationId: conversation.id, parentId: parent.id, role: 'assistant', content: '', model })
+  // A plan-stage reply is the next plan, so the earlier one goes as the reply starts: a revision the user stops, or
+  // that fails, must not leave the Start working card offering a plan that isn't the one on screen (#141). What this
+  // reply writes is kept as it finishes (generate), as before.
+  if (conversation.mode === 'code' && conversation.stage === 'plan' && conversation.plan !== null)
+    conversation = updateConversation(conversation.id, { plan: null })
   const controller = new AbortController()
   const flags = { quiet: false }
   const settled = generate(conversation.id, assistant.id, model, think, controller, flags, reply)
@@ -446,7 +451,8 @@ async function generate(
           codeSession: codeSessionForPrompt,
           skillIndex
         },
-        onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) })
+        onUsage: () => emit({ type: 'usage', conversationId, usage: conversationUsage(conversationId, getSettings().endpoints) }),
+        stats
       }
     }
     const grants = toolGrants(toolContext)
@@ -583,8 +589,8 @@ async function generate(
         .filter(Boolean)
         .join(' ')
   } catch (err) {
-    // Only the setup gets here now (a model that can't be reached, a folder that can't be readied): the rounds
-    // report their own failures in `result.error`.
+    // The setup (a model that can't be reached, a folder that can't be readied, a reference read that fails), or a
+    // stop during it: the rounds report their own failures in `result.error`, and keep their partial reply (#171).
     if (!controller.signal.aborted) error = errorMessage(err)
   }
 

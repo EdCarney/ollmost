@@ -150,10 +150,7 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
       billing: input.model.billing,
       estimated
     })
-    stats.promptTokens! += promptTokens
-    stats.completionTokens! += completionTokens
-    stats.costUsd = stats.costUsd === null || costUsd === null ? null : (stats.costUsd ?? 0) + costUsd
-    if (estimated) stats.estimated = true
+    addUsage(stats, { promptTokens, completionTokens, costUsd, estimated })
     openRound = null
     return { promptTokens, completionTokens, costUsd, estimated }
   }
@@ -241,6 +238,9 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
             roundThinking += ev.text
             openRound.thinking += ev.text
             roundThinkStart ??= Date.now()
+            // Thinking that resumes after text runs on until the next text: the round's time is from its first thinking
+            // to the end of its last, as the live card measures it (#151).
+            roundThinkEnd = null
             input.onDelta({ thinking: ev.text, round: roundAt })
             break
           case 'content':
@@ -309,7 +309,15 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
       let onlyWithheld = true
 
       // One call, once its card shows: ask first where it needs to, run it with its share of the room, show its result.
-      const runCall = async ({ call, index, pending }: ShownCall, maxResultChars: number): Promise<ToolResult> => {
+      const runCall = async ({ call, index, pending: shown }: ShownCall, maxResultChars: number): Promise<ToolResult> => {
+        // Its turn has come: the card stops waiting in line, and a reply saved from here on knows it started (#178).
+        // Saved at once, so a crash right after can't put it back in line.
+        const { queued, ...pending } = shown
+        if (queued) {
+          toolEvents[index] = pending
+          input.onToolEvent(index, pending)
+          checkpoint(true)
+        }
         // A tool that acts on this Mac or the user's accounts waits for their answer (unless allowed for this chat).
         // Stop, deleting the chat and quitting abort the wait, and the call never runs.
         let decision: ToolDecision | 'auto' = 'auto'
@@ -389,10 +397,11 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
         // A batch's calls all show before any runs, in order, so each keeps its place: its index, its card, and a
         // sub-agent's id.
         const shown: ShownCall[] = []
-        for (const call of batch) {
+        for (const [i, call] of batch.entries()) {
           const index = toolEvents.length
-          // `at` places the call in the reply's text, where the UI shows it.
-          const pending = { ...(await pendingEvent(call, toolContext)), at: content.length }
+          // `at` places the call in the reply's text, where the UI shows it. The calls past what may run at once wait
+          // their turn (#178).
+          const pending = { ...(await pendingEvent(call, toolContext)), at: content.length, ...(i >= parallel && { queued: true }) }
           toolEvents.push(pending)
           input.onToolEvent(index, pending)
           shown.push({ call, index, pending })
@@ -442,18 +451,29 @@ export async function runRounds(input: RoundsInput): Promise<RoundsResult> {
     }
   } catch (err) {
     if (!input.signal.aborted) error = errorMessage(err)
-    // A stopped or failed stream still spent tokens; record an estimate for the partial round.
     const partial = openRound ? { content: openRound.content, thinking: openRound.thinking } : null
     if (openRound?.thinking) thinkingSegments.push({ text: openRound.thinking, ...roundAt, ms: roundThinkMs() })
-    const billed = partial && (partial.content || partial.thinking) ? recordRound(null) : null
-    roundTrace?.finish({
-      status: input.signal.aborted ? 'aborted' : 'error',
-      response: { ...partial, error: input.signal.aborted ? 'Stopped by you' : (error ?? undefined) },
-      promptTokens: billed?.promptTokens,
-      completionTokens: billed?.completionTokens,
-      costUsd: billed?.costUsd,
-      summary: input.signal.aborted ? 'Stopped' : `Error: ${error}`
-    })
+    // A stopped or failed stream still spent tokens; record an estimate for the partial round. Bookkeeping only: a
+    // write that fails here (a locked database, a full disk) is logged, and the partial reply, already checkpointed,
+    // still goes back to be saved with the error above rather than being lost to an empty one (#171).
+    let billed: ReturnType<typeof recordRound> = null
+    try {
+      billed = partial && (partial.content || partial.thinking) ? recordRound(null) : null
+    } catch (recording) {
+      console.error('Ollmost: a stopped round’s usage couldn’t be recorded', recording)
+    }
+    try {
+      roundTrace?.finish({
+        status: input.signal.aborted ? 'aborted' : 'error',
+        response: { ...partial, error: input.signal.aborted ? 'Stopped by you' : (error ?? undefined) },
+        promptTokens: billed?.promptTokens,
+        completionTokens: billed?.completionTokens,
+        costUsd: billed?.costUsd,
+        summary: input.signal.aborted ? 'Stopped' : `Error: ${error}`
+      })
+    } catch (recording) {
+      console.error('Ollmost: a stopped round’s trace couldn’t be finished', recording)
+    }
   }
 
   return { content, thinking, thinkingSegments, toolEvents, rounds, error, genMs, timedTokens, thinkStart, thinkEnd, triedUnknown }
@@ -520,6 +540,22 @@ async function runTogether<T, R>(
 function debugLog(wire: WireRequest): void {
   if (!process.env.OLLMOST_DEBUG) return
   appendFileSync(join(paths.data, 'debug.log'), `${new Date().toISOString()} ${wire.endpoint} ${JSON.stringify(redactImages(wire.body))}\n`)
+}
+
+/** What a request, or a run of them, cost: the part of a reply's stats that adds up. */
+export type Usage = Pick<MessageStats, 'promptTokens' | 'completionTokens' | 'costUsd' | 'estimated'>
+
+/**
+ * Add `usage` to `stats`: tokens and cost (a cost unknown on either side is unknown in the sum), and whether any of it
+ * was estimated. Used for each of a reply's rounds, and for a sub-agent's whole run (#166).
+ */
+export function addUsage(stats: MessageStats, usage: Usage): void {
+  stats.promptTokens = (stats.promptTokens ?? 0) + (usage.promptTokens ?? 0)
+  stats.completionTokens = (stats.completionTokens ?? 0) + (usage.completionTokens ?? 0)
+  // Unset on either side means no priced request yet, so the other side's figure stands.
+  if (usage.costUsd !== undefined)
+    stats.costUsd = stats.costUsd === null || usage.costUsd === null ? null : (stats.costUsd ?? 0) + usage.costUsd
+  if (usage.estimated) stats.estimated = true
 }
 
 /** Roughly what the tool definitions add to a request: every round sends them all. */

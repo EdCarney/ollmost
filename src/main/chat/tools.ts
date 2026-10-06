@@ -1,4 +1,4 @@
-import type { ThinkSetting, ToolEvent } from '@shared/types'
+import type { MessageStats, ThinkSetting, ToolEvent } from '@shared/types'
 import type { ToolCall, ToolDef } from '../providers/types'
 import { errorMessage } from '../util'
 import type { AssembleInput, PastToolCall } from './assemble'
@@ -51,6 +51,8 @@ export interface ToolContext {
     prompt: Pick<AssembleInput, 'userName' | 'model' | 'contextLength' | 'web' | 'mcpServers' | 'codeRunner' | 'codeSession' | 'skillIndex'>
     /** Tell the chat its usage moved: called on a child's own requests too, not only the parent's rounds. */
     onUsage?: () => void
+    /** The reply's totals: a child adds its requests' tokens and cost, so the reply's stats cover its sub-agents. */
+    stats?: MessageStats
   }
   /** Set for a sub-agent's own rounds: it is offered no delegate of its own. */
   child?: boolean
@@ -234,10 +236,12 @@ const preview = (content: string) => (content.length > PREVIEW_CHARS ? `${conten
 
 /**
  * A call the reply stopped on: one still running shows as stopped, not spinning forever; one still waiting for an
- * answer never ran. A sub-agent's own calls settle with it, so none is left asking a question nobody can answer; the
- * sub-agent itself ran, so a question it carried up from one of them leaves it stopped, as Stop does, not "not run".
+ * answer, or for its turn in its batch, never ran. A sub-agent's own calls settle with it, so none is left asking a
+ * question nobody can answer; the sub-agent itself ran, so a question it carried up from one of them leaves it
+ * stopped, as Stop does, not "not run" (one that never got its turn didn't run, sub-agent or not, #178).
  */
 export function settleToolEvent(event: ToolEvent): ToolEvent {
+  if (event.queued) return notRunEvent(event)
   if (event.child) {
     const { awaiting, everyTime: _everyTime, ...rest } = event
     const e = { ...rest, child: { ...event.child, events: event.child.events.map(settleToolEvent) } }
@@ -249,7 +253,7 @@ export function settleToolEvent(event: ToolEvent): ToolEvent {
 
 /** A call that never ran: it waited for an answer that didn't come, or for its turn when the reply stopped. */
 export function notRunEvent(event: ToolEvent): ToolEvent {
-  const { awaiting: _awaiting, everyTime: _everyTime, ...rest } = event
+  const { awaiting: _awaiting, everyTime: _everyTime, queued: _queued, ...rest } = event
   return { ...rest, pending: false, ok: false, summary: `${event.summary} (not run)` }
 }
 

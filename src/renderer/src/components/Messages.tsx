@@ -24,8 +24,9 @@ import { memo, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { parseMessage, parseMessageRanges, typeForCodeLanguage } from '@shared/artifactParser'
 import { ASK_OTHER_CHARS } from '@shared/ask'
 import { referenceMarks, referenceNote } from '@shared/atRefs'
-import { diffCounts } from '@shared/diff'
+import { DIFF_CUT_MARK, diffCounts } from '@shared/diff'
 import { type IndexedToolEvent, interleave } from '@shared/timeline'
+import { pausedOnYou } from '@shared/toolEvents'
 import type {
   Artifact,
   AskAnswer,
@@ -483,7 +484,9 @@ export function ApprovalCard({
   const lang = e.tool === 'run_command' ? 'bash' : runLanguage(e)
   const edits = EDIT_TOOL_NAMES.has(e.tool)
   const diff = edits && e.diff ? e.diff : null
-  const counts = diff !== null ? diffCounts(diff) : null
+  // The main process counts the whole change; an older event has only its diff, which may have been cut (#149).
+  const counts: { added: number; removed: number; partial?: boolean } | null =
+    e.changed ?? (diff !== null ? { ...diffCounts(diff), partial: diff.endsWith(DIFF_CUT_MARK) } : null)
   const answer = async (decision: ToolDecision) => {
     setAnswering(true)
     try {
@@ -515,7 +518,7 @@ export function ApprovalCard({
               {counts && (
                 <span className="text-muted">
                   {' '}
-                  +{counts.added} −{counts.removed}
+                  {counts.partial && 'at least '}+{counts.added} −{counts.removed}
                 </span>
               )}
             </>
@@ -870,8 +873,13 @@ export const AssistantMessage = memo(function AssistantMessage({
 
   // Nothing has arrived yet: a "Thinking…" card stands in until the first text, thinking or call does.
   const awaitingFirst = streaming && !timeline.length
-  // Waiting on you, not the model: no caret while a tool call waits for approval.
-  const working = streaming && !toolEvents.some((e) => e?.awaiting)
+  // Waiting on you, not the model: no caret while a tool call waits for approval and nothing else still runs.
+  const working = streaming && !pausedOnYou(toolEvents)
+  // The caret goes after what the reply has shown so far, but never under a live "Thinking…" card: a later round's
+  // card sits last, and the caret goes before it (#151). Text of nothing but whitespace isn't shown, so draws none.
+  const last = timeline[timeline.length - 1]
+  const liveCardLast = last?.kind === 'thinking' && last.thinking.ms === null
+  const caret = working && content.trim() ? <span key="caret" className="stream-caret" /> : null
 
   const occurrences = new Map<string, number>()
   const rendered = timeline.map((item, i) => {
@@ -909,11 +917,10 @@ export const AssistantMessage = memo(function AssistantMessage({
   return (
     <div className="group">
       {awaitingFirst && <ThinkingBlock conversationId={conversationId} thinking="" active durationMs={null} />}
-      {rendered}
+      {liveCardLast ? [...rendered.slice(0, -1), caret, rendered[rendered.length - 1]] : [...rendered, caret]}
       {working && !content && !thinkingSegments.some((t) => t.ms === null) && (
         <div className="stream-caret h-6" aria-label="Waiting for reply" />
       )}
-      {working && content && <span className="stream-caret" />}
       {message.error && !streaming && (
         <div className="mt-2 flex items-start gap-2 rounded-ollmost border border-danger/40 bg-[color-mix(in_srgb,var(--o-danger)_8%,transparent)] px-3 py-2.5 text-sm">
           <TriangleAlert className="mt-0.5 size-4 shrink-0 text-danger" />

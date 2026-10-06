@@ -292,13 +292,15 @@ describe('reply loop', () => {
     const r = start()
     await doneEvent(r.conversation.id)
     events.length = 0
-    // regenerate() awaits file cleanup before registering its reply; a send() landing in that gap
-    // registers its own reply first. The regenerated reply streams and then hangs.
-    chat = (_b, res, n) =>
-      n === 2
-        ? reply('sent reply')(_b, res, n)
-        : streamChunks(res, [line({ message: { role: 'assistant', content: 'regenerated' }, done: false })])
-    const regen = service.regenerate(r.conversation.id, { model: 'ollama/llama3.2', think: null })
+    // regenerate() awaits file cleanup before registering its reply, while send() registers at once: a send() made
+    // right after lands first, and the regenerated reply registers over it. The two requests carry the same history,
+    // and which reaches the mock server first is a race (#118), so the regenerated reply asks a model of its own: it
+    // streams and then hangs, and the sent one finishes.
+    chat = (b, res, n) =>
+      b.model === 'regen-model'
+        ? streamChunks(res, [line({ message: { role: 'assistant', content: 'regenerated' }, done: false })])
+        : reply('sent reply')(b, res, n)
+    const regen = service.regenerate(r.conversation.id, { model: 'ollama/regen-model', think: null })
     service.send({
       conversationId: r.conversation.id,
       projectId: null,
@@ -310,10 +312,11 @@ describe('reply loop', () => {
       toolSources: []
     })
     const second = await regen
-    await doneEvent(r.conversation.id) // the send's reply finished
+    const done = await doneEvent(r.conversation.id) // the send's reply finished
+    expect(done.message.content).toBe('sent reply')
     expect(service.isReplying()).toBe(true) // the regenerated reply is still tracked…
     await service.stop(r.conversation.id) // …so stop() waits for it and it gets saved
-    expect(getMessage(second.assistantMessageId)?.stats).not.toBeNull()
+    expect(getMessage(second.assistantMessageId)).toMatchObject({ content: 'regenerated', stats: expect.anything() })
     expect(service.isReplying()).toBe(false)
   })
 
@@ -343,6 +346,61 @@ describe('reply loop', () => {
     expect(chatCalls).toHaveLength(2)
     expect(chatCalls[1].tools).toBeUndefined()
     expect(done.message.toolEvents[0]).toMatchObject({ tool: 'python', ok: false, unknown: true })
+  })
+
+  it('explains a reply left empty after the model only tried tools Ollmost lacks (#172)', async () => {
+    // Round 1 calls a tool Ollmost doesn't have; round 2, its tools withdrawn, answers with nothing at all.
+    chat = (_b, res, n) =>
+      void res.writeHead(200).end(n === 1 ? toolCall('python', { code: '1+1' }) : line({ done: true, done_reason: 'stop' }))
+    const r = start('what is 1+1')
+    const done = await doneEvent(r.conversation.id)
+    expect(done.message.content).toBe('')
+    expect(done.message.error).toBe(
+      "The model tried to use tools Ollmost doesn't have (python) and gave no answer. Ollmost can't browse the web or run code."
+    )
+    expect(events.filter((e) => e.type === 'error').map((e) => e.error)).toEqual([done.message.error])
+  })
+
+  it('blames a stop, not the unknown tools, for a reply stopped after the model only tried tools Ollmost lacks (#172)', async () => {
+    chat = (_b, res, n) => (n === 1 ? void res.writeHead(200).end(toolCall('python', { code: '1+1' })) : streamChunks(res, []))
+    const r = start('what is 1+1')
+    await waitFor(() => chatCalls.length === 2) // the second round, without tools, hangs
+    await service.stop(r.conversation.id)
+    const saved = getMessage(r.assistantMessageId)!
+    expect(saved.content).toBe('')
+    expect(saved.error).toBeNull()
+    expect(saved.toolEvents).toEqual([expect.objectContaining({ tool: 'python', unknown: true })])
+    expect(events.some((e) => e.type === 'error')).toBe(false)
+  })
+
+  it('keeps the partial reply when recording the stopped round fails (#171)', async () => {
+    chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'part' }, done: false })])
+    const r = start()
+    await waitFor(() => events.some((e) => e.type === 'delta' && e.content === 'part'))
+    // The usage row the stopped round writes fails, as a locked database or a full disk would make it fail.
+    run(
+      `CREATE TRIGGER usage_full BEFORE INSERT ON usage_events WHEN NEW.message_id = '${r.assistantMessageId}'
+       BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END`
+    )
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await service.stop(r.conversation.id, { quiet: true })
+      expect(logged).toHaveBeenCalledWith(
+        expect.stringContaining('usage couldn’t be recorded'),
+        expect.objectContaining({ message: expect.stringContaining('disk is full') })
+      )
+      expect(logged.mock.calls.filter(([m]) => String(m).includes('round’s'))).toHaveLength(1)
+    } finally {
+      run('DROP TRIGGER usage_full')
+      logged.mockRestore()
+    }
+    // What the model had written is saved with the stop, not replaced by an empty reply; the round's trace still ends.
+    const saved = getMessage(r.assistantMessageId)!
+    expect(saved.content).toBe('part')
+    expect(saved.error).toBeNull()
+    expect(saved.stats).toMatchObject({ promptTokens: 0, completionTokens: 0 })
+    expect(all('SELECT id FROM usage_events WHERE message_id = ?', r.assistantMessageId)).toEqual([])
+    expect(listTraces(r.conversation.id).map((t) => t.status)).toEqual(['aborted'])
   })
 
   it('records where in the reply each tool call happened, with a preview of its result', async () => {
@@ -2042,6 +2100,43 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(getConversation(session.id)?.plan).toBeNull()
   })
 
+  it('drops the earlier plan as a revision starts, so a stopped revision never leaves it under Start working (#141)', async () => {
+    const { paths } = await import('../src/main/paths')
+    const { realpathSync } = await import('node:fs')
+    const { join } = await import('node:path')
+    const dir = tempDir('ollmost-service-plan-')
+    paths.workspaces = join(dir, 'workspaces')
+    paths.runner = join(dir, 'runner')
+    const folder = realpathSync(tempDir('ollmost-user-repo-'))
+    const session = createConversation({
+      projectId: null,
+      model: 'ollama/llama3.2',
+      think: null,
+      skills: [],
+      mode: 'code',
+      root: folder,
+      title: 'repo'
+    })
+    service.setStage(session.id, 'plan')
+    chat = reply('Plan A: rename it.')
+    const first = service.send({ ...sendBody(session.id), content: 'plan it' })
+    await doneEvent(first.conversation.id)
+    await waitFor(() => !service.isReplying())
+    expect(getConversation(session.id)?.plan).toBe('Plan A: rename it.')
+    chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'Plan B, half' }, done: false })]) // then hangs
+    // The first reply's deltas are in the list too: cleared, so the wait below is for the revision's own.
+    events.length = 0
+    const second = service.send({ ...sendBody(session.id), content: 'revise it' })
+    // Gone as the revision starts: what the renderer is handed offers no plan to approve.
+    expect(second.conversation.plan).toBeNull()
+    await waitFor(() => events.some((e) => e.type === 'delta' && e.conversationId === second.conversation.id))
+    await service.stop(second.conversation.id, { quiet: true })
+    expect(getMessage(second.assistantMessageId)?.content).toBe('Plan B, half')
+    expect(getConversation(session.id)?.plan).toBeNull()
+    // Starting work now carries no plan, so the model is never told to carry out plan A.
+    expect(service.setStage(session.id, 'work')).toMatchObject({ stage: 'work', plan: null })
+  })
+
   it('refuses an edit the model attempts in plan mode', async () => {
     const { paths } = await import('../src/main/paths')
     const { realpathSync, writeFileSync, readFileSync } = await import('node:fs')
@@ -2200,7 +2295,8 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
     expect(edit.event).toMatchObject({
       tool: 'edit_file',
       args: { path: 'hello.py', old_string: 'hello', new_string: 'bonjour' },
-      diff: '--- a/hello.py\n+++ b/hello.py\n@@ -1,1 +1,1 @@\n-print("hello")\n+print("bonjour")'
+      diff: '--- a/hello.py\n+++ b/hello.py\n@@ -1,1 +1,1 @@\n-print("hello")\n+print("bonjour")',
+      changed: { added: 1, removed: 1 }
     })
     // The read ran unasked, and the model got the numbered file.
     const offered = ((chatCalls[0].tools as Array<{ function: { name: string } }>) ?? []).map((t) => t.function.name)
@@ -2222,7 +2318,7 @@ describe.runIf(process.platform === 'darwin')('the code runner in a reply', () =
       ['edit_file', true, '+1 −1'],
       ['run_command', true, 'cat hello.py']
     ])
-    expect(done.message.toolEvents[1]).toMatchObject({ files: [{ path: 'hello.py', size: 17 }] })
+    expect(done.message.toolEvents[1]).toMatchObject({ files: [{ path: 'hello.py', size: 17 }], changed: { added: 1, removed: 1 } })
     expect(done.message.toolEvents[1].diff).toMatch(/^--- a\/hello\.py/)
     expect(readFileSync(join(folder, 'hello.py'), 'utf8')).toBe('print("bonjour")\n')
     // Allow for this session covered the edit; the command was allowed once.
@@ -2800,7 +2896,8 @@ describe('runRounds', () => {
       contextWindow: null
     }
     const stats: MessageStats = { promptTokens: 0, completionTokens: 0 }
-    const seen: Array<[number, boolean]> = []
+    // Each event as it showed: its index, whether it was still pending, and (while it waited its turn) that it was queued.
+    const seen: Array<[number, boolean] | [number, boolean, true]> = []
     const usage: number[] = []
     const input: RoundsInput = {
       conversationId: conversation.id,
@@ -2818,7 +2915,7 @@ describe('runRounds', () => {
       usageKind: 'delegate',
       traceKind: 'delegate',
       onDelta: () => {},
-      onToolEvent: (index, event) => seen.push([index, !!event.pending]),
+      onToolEvent: (index, event) => seen.push(event.queued ? [index, !!event.pending, true] : [index, !!event.pending]),
       onUsage: () => usage.push(1),
       onLoadedSkill: () => {},
       checkpoint: () => {}
@@ -2877,11 +2974,34 @@ describe('runRounds', () => {
     }
   })
 
+  it('times a round’s thinking to the end of its last stretch when it resumes after text (#151)', async () => {
+    // Thinking, text, thinking again, text: a pause after each, so the stretches can be told apart.
+    const piece = (m: Record<string, unknown>) => line({ message: { role: 'assistant', content: '', ...m }, done: false })
+    chat = (_b, res) =>
+      streamChunks(
+        res,
+        [
+          piece({ thinking: 'first' }),
+          piece({ content: 'Some text. ' }),
+          piece({ thinking: 'second' }),
+          piece({ content: 'More.' }),
+          line({ done: true, done_reason: 'stop', prompt_eval_count: 10, eval_count: 3 })
+        ],
+        100
+      ).then(() => res.end())
+    const { input } = await setup()
+    const out = await runRounds(input)
+    expect(out.content).toBe('Some text. More.')
+    expect(out.thinkingSegments).toEqual([{ text: 'firstsecond', at: 0, index: 0, ms: expect.any(Number) }])
+    // From the first thinking to the text after the second (about 300 ms), not to the first text (about 100 ms).
+    expect(out.thinkingSegments[0].ms).toBeGreaterThanOrEqual(200)
+  })
+
   it('ends quietly when stopped mid-stream, with the round traced as aborted', async () => {
     const controller = new AbortController()
     // Sends a first piece and then hangs, as a model still writing does; the first piece stops it.
     chat = (_b, res) => streamChunks(res, [line({ message: { role: 'assistant', content: 'part' }, done: false })])
-    const { conversation, input } = await setup()
+    const { conversation, message, stats, input } = await setup()
     const out = await runRounds({
       ...input,
       signal: controller.signal,
@@ -2892,7 +3012,18 @@ describe('runRounds', () => {
     expect(out.content).toBe('part')
     expect(out.error).toBeNull()
     expect(out.rounds).toBe(1)
-    expect(listTraces(conversation.id).find((t) => t.kind === 'delegate')?.status).toBe('aborted')
+    const trace = listTraces(conversation.id).find((t) => t.kind === 'delegate')
+    expect(trace?.status).toBe('aborted')
+    // The partial round still spent tokens: one estimated usage row, counted into the reply's stats and the trace (#172).
+    expect(
+      all(
+        'SELECT kind, prompt_tokens AS prompt, completion_tokens AS completion, estimated FROM usage_events WHERE message_id = ?',
+        message.id
+      )
+    ).toEqual([{ kind: 'delegate', prompt: expect.any(Number), completion: 1, estimated: 1 }])
+    expect(stats).toMatchObject({ promptTokens: expect.any(Number), completionTokens: 1, estimated: true })
+    expect(stats.promptTokens).toBeGreaterThan(0)
+    expect(trace).toMatchObject({ promptTokens: stats.promptTokens, completionTokens: 1 })
   })
 
   it('runs calls that may go together at once, each with an even share of the room, their results in call order', async () => {
@@ -2935,7 +3066,8 @@ describe('runRounds', () => {
       // Each got its share of the room as it stood before any ran, and together they fit in it.
       expect(shares).toEqual([oneByOne[0], oneByOne[0], oneByOne[0]])
       expect(shares[0] * 3).toBeLessThanOrEqual(room)
-      // Every call showed, in order, before any ran; each result lands in call order, whichever finished first.
+      // Every call showed, in order, before any ran, none waiting its turn since all three run at once (#178); each
+      // result lands in call order, whichever finished first.
       expect(together.seen.slice(0, 3)).toEqual([
         [0, true],
         [1, true],
@@ -3360,13 +3492,25 @@ describe('sub-agents', () => {
       return void res.writeHead(200).end(delegateCall('Take forever.'))
     }
     const r = start('stop me')
-    await waitFor(() => chatCalls.some(isChild))
+    // Stopped once the child has text, not just once its request is out: a round with nothing in it yet bills nothing,
+    // and on a slow runner the request alone could be stopped before its first piece arrived. The child's trace says
+    // "Streaming…" until its first text, which moves it on in the same step that keeps the text.
+    await waitFor(() => listTraces(r.conversation.id).some((t) => t.kind === 'delegate' && t.summary !== 'Streaming…'))
     await service.stop(r.conversation.id)
     const saved = getMessage(r.assistantMessageId)!
     expect(saved.stats).toBeTruthy()
     expect(saved.error).toBeNull()
     expect(saved.toolEvents[0]).toMatchObject({ tool: 'delegate', pending: false, ok: false })
     expect(saved.toolEvents[0].summary).toContain('stopped')
+    // The child's partial request was estimated and billed to the chat, and counts in the reply's own stats too (#166).
+    const rows = all<{ kind: string; prompt: number; completion: number }>(
+      'SELECT kind, prompt_tokens AS prompt, completion_tokens AS completion FROM usage_events WHERE message_id = ?',
+      r.assistantMessageId
+    )
+    expect(rows.some((row) => row.kind === 'delegate')).toBe(true)
+    expect(saved.stats!.promptTokens).toBe(rows.reduce((n, row) => n + row.prompt, 0))
+    expect(saved.stats!.completionTokens).toBe(rows.reduce((n, row) => n + row.completion, 0))
+    expect(saved.stats!.estimated).toBe(true)
     expect(listTraces(r.conversation.id).every((t) => t.status !== 'running')).toBe(true)
     expect(listTraces(r.conversation.id).find((t) => t.kind === 'delegate')?.status).toBe('aborted')
   })
@@ -3379,7 +3523,7 @@ describe('sub-agents', () => {
       await waitFor(() => toolEventsIn(r.conversation.id).find((e) => e.event.awaiting))
       await service.stop(r.conversation.id)
       const [event] = getMessage(r.assistantMessageId)!.toolEvents
-      expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: 'Wipe the note. (stopped)' })
+      expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: 'Wipe the note. · 1 tool call (stopped)' })
       expect(event.awaiting).toBeUndefined()
       // The call that waited never ran.
       expect(event.child!.events).toEqual([
@@ -3410,6 +3554,50 @@ describe('sub-agents', () => {
     expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: 'Wipe the note. (stopped)' })
     expect(event.awaiting).toBeUndefined()
     expect(event.child!.events).toEqual([{ tool: 'notes__wipe', args: {}, ok: false, pending: false, summary: 'wiping (not run)' }])
+  })
+
+  it('settles a sub-agent still waiting its turn in a reply Ollmost closed on as not run (#178)', () => {
+    const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
+    const user = insertMessage({ conversationId: c.id, parentId: null, role: 'user', content: 'two things' })
+    const cut = insertMessage({ conversationId: c.id, parentId: user.id, role: 'assistant', content: '' })
+    // A checkpoint saved a batch of two: the first in its first request, the second waiting its turn. Then the app died.
+    // Both carry a child with no calls yet; only the mark tells them apart.
+    const child = (task: string) => ({ task, events: [], result: '', rounds: 0 })
+    updateMessage(cut.id, {
+      toolEvents: [
+        { tool: 'delegate', args: { task: 'the first' }, ok: true, pending: true, summary: 'the first', child: child('the first'), at: 0 },
+        {
+          tool: 'delegate',
+          args: { task: 'the second' },
+          ok: true,
+          pending: true,
+          queued: true,
+          summary: 'the second',
+          child: child('the second'),
+          at: 0
+        }
+      ]
+    })
+    service.markInterruptedReplies()
+    const [first, second] = getMessage(cut.id)!.toolEvents
+    expect(first).toEqual({
+      tool: 'delegate',
+      args: { task: 'the first' },
+      ok: false,
+      pending: false,
+      summary: 'the first (stopped)',
+      child: child('the first'),
+      at: 0
+    })
+    expect(second).toEqual({
+      tool: 'delegate',
+      args: { task: 'the second' },
+      ok: false,
+      pending: false,
+      summary: 'the second (not run)',
+      child: child('the second'),
+      at: 0
+    })
   })
 
   it('refuses to run a child that nothing could stop', async () => {
@@ -3455,6 +3643,147 @@ describe('sub-agents', () => {
     } finally {
       updateSettings({ delegate: { resultChars: 24_000 } })
     }
+  })
+
+  it('counts a child’s calls on the pill while it runs, not only once it has finished (#169)', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b)) {
+        const results = toolResults(b)
+        if (results === 0) return void res.writeHead(200).end(toolCall('web_search', { query: 'one' }))
+        if (results === 1) return void res.writeHead(200).end(toolCall('web_search', { query: 'two' }))
+        return reply('Both found.')(b, res, n)
+      }
+      return hasToolResult(b) ? reply('ok')(b, res, n) : void res.writeHead(200).end(delegateCall('Search twice.'))
+    }
+    web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] }))
+    const r = start('twice')
+    const done = await doneEvent(r.conversation.id)
+    const summaries = toolEventsIn(r.conversation.id)
+      .filter((e) => e.index === 0)
+      .map((e) => e.event.summary)
+    // The card first showed the task alone, then each call as it came, then the finished total.
+    expect(summaries[0]).toBe('Search twice.')
+    expect(summaries).toContain('Search twice. · 1 tool call')
+    expect(summaries).toContain('Search twice. · 2 tool calls')
+    expect(summaries.indexOf('Search twice. · 1 tool call')).toBeLessThan(summaries.indexOf('Search twice. · 2 tool calls'))
+    expect(done.message.toolEvents[0].summary).toBe('Search twice. · 2 tool calls')
+  })
+
+  it('tells the parent when a child’s reply was cut off by the model’s length limit (#170)', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b))
+        return streamChunks(res, [
+          line({ message: { role: 'assistant', content: 'The list goes on: one, two, thr' }, done: false }),
+          line({ done: true, done_reason: 'length', prompt_eval_count: 10, eval_count: 4096 })
+        ]).then(() => res.end())
+      return hasToolResult(b) ? reply('ok')(b, res, n) : void res.writeHead(200).end(delegateCall('List them all.'))
+    }
+    const r = start('list')
+    const done = await doneEvent(r.conversation.id)
+    const note = '[The sub-agent’s reply hit the model’s length limit and was cut off.]'
+    const result = done.message.toolEvents[0].child!.result
+    expect(result).toBe(`The list goes on: one, two, thr\n\n${note}`)
+    expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
+    // The child's own reason stays with the child: the parent's reply wasn't cut off.
+    expect(done.message.stats?.doneReason).toBe('stop')
+  })
+
+  it('keeps the notes to the parent when a child’s long reply is cut, within the room its call has (#170)', async () => {
+    const long = 'word '.repeat(3_000).trim()
+    updateSettings({ delegate: { resultChars: 12_000 } })
+    try {
+      chat = (b, res, n) => {
+        if (isChild(b))
+          return streamChunks(res, [
+            line({ message: { role: 'assistant', content: long }, done: false }),
+            line({ done: true, done_reason: 'length', prompt_eval_count: 10, eval_count: 4096 })
+          ]).then(() => res.end())
+        return hasToolResult(b) ? reply('ok')(b, res, n) : void res.writeHead(200).end(delegateCall('Write at length.'))
+      }
+      const r = start('long')
+      const done = await doneEvent(r.conversation.id)
+      const note = '[The sub-agent’s reply hit the model’s length limit and was cut off.]'
+      const result = done.message.toolEvents[0].child!.result
+      // Cut first, then the note, and no longer than a reply with no note would be.
+      expect(result).toBe(`${long.slice(0, 12_000 - note.length - 2)}${CUT_MARK}\n\n${note}`)
+      expect(result.length).toBe(12_000 + CUT_MARK.length)
+      expect(toolMessageIn(chatCalls.find((b) => !isChild(b) && hasToolResult(b))!)).toBe(result)
+    } finally {
+      updateSettings({ delegate: { resultChars: 24_000 } })
+    }
+  })
+
+  it('keeps a child’s reply at a floor of its own when its call’s room is smaller than the cut mark (#170)', async () => {
+    const { delegateTools } = await import('../src/main/chat/delegate')
+    const c = createConversation({ projectId: null, model: 'ollama/llama3.2', think: null, skills: [], toolSources: [] })
+    const m = insertMessage({ conversationId: c.id, parentId: null, role: 'assistant', content: '', model: 'ollama/llama3.2' })
+    const long = 'word '.repeat(200).trim()
+    chat = reply(long)
+    // The tool itself, not runTool, which caps any result to the call's room afterwards: what's under test is that the
+    // tool's own cut never goes negative (a negative count slices from the end).
+    const result = await delegateTools.run(
+      { provider: delegateTools, name: 'delegate', via: null, args: { task: 'Write at length.' } },
+      {
+        mode: 'chat',
+        skills: false,
+        web: true,
+        sources: [],
+        workspace: null,
+        reply: parentReply(c.id, m.id),
+        callIndex: 0,
+        signal: new AbortController().signal,
+        grants: new Set(),
+        // Less than the mark is long: the loop never passes this little.
+        maxResultChars: 10
+      }
+    )
+    expect(result.content).toBe(`${long.slice(0, 200)}${CUT_MARK}`)
+    expect(result.event.child!.result).toBe(result.content)
+  })
+
+  it('adds a child’s tokens and cost to the reply’s own stats, as the chat’s usage already has them (#166)', async () => {
+    chat = (b, res, n) => {
+      if (isChild(b))
+        return hasToolResult(b)
+          ? streamChunks(res, [
+              line({ message: { role: 'assistant', content: 'Found it.' }, done: false }),
+              line({ done: true, done_reason: 'stop', prompt_eval_count: 700, eval_count: 70 })
+            ]).then(() => res.end())
+          : void res.writeHead(200).end(toolCall('web_search', { query: 'ollmost' }))
+      return hasToolResult(b) ? reply('The sub-agent found it.')(b, res, n) : void res.writeHead(200).end(delegateCall('Find it.'))
+    }
+    web = (_p, res) => res.writeHead(200).end(JSON.stringify({ results: [] }))
+    const r = start('find it')
+    const done = await doneEvent(r.conversation.id)
+    const stats = done.message.stats!
+    // The message's figures are the sum of every request made for it, the child's two included.
+    const rows = all<{ kind: string; prompt: number; completion: number }>(
+      'SELECT kind, prompt_tokens AS prompt, completion_tokens AS completion FROM usage_events WHERE message_id = ? ORDER BY created_at',
+      r.assistantMessageId
+    )
+    expect(rows.map((row) => row.kind).sort()).toEqual(['chat', 'chat', 'delegate', 'delegate'])
+    expect(stats.promptTokens).toBe(rows.reduce((n, row) => n + row.prompt, 0))
+    expect(stats.completionTokens).toBe(rows.reduce((n, row) => n + row.completion, 0))
+    // Which is more than the parent's rounds alone: the child's reply was the biggest request.
+    expect(stats.promptTokens!).toBeGreaterThanOrEqual(700 + 10)
+    expect(stats.completionTokens!).toBeGreaterThanOrEqual(70 + 3)
+    // What ended the reply, and how fast it was, are still the parent's own.
+    expect(stats.doneReason).toBe('stop')
+    expect(stats.toolRoundLimit).toBeUndefined()
+  })
+
+  it('adds up usage across rounds and a run, leaving a cost unknown once any part of it is', async () => {
+    const { addUsage } = await import('../src/main/chat/rounds')
+    const stats: MessageStats = { promptTokens: 0, completionTokens: 0 }
+    addUsage(stats, { promptTokens: 10, completionTokens: 3, costUsd: 0.01 })
+    expect(stats).toEqual({ promptTokens: 10, completionTokens: 3, costUsd: 0.01 })
+    // An estimated part marks the whole; a run that made no priced request leaves the cost as it was.
+    addUsage(stats, { promptTokens: 5, completionTokens: 1, estimated: true })
+    expect(stats).toEqual({ promptTokens: 15, completionTokens: 4, costUsd: 0.01, estimated: true })
+    // A part with no known price makes the sum unknown, and it stays so.
+    addUsage(stats, { promptTokens: 1, completionTokens: 1, costUsd: null })
+    addUsage(stats, { promptTokens: 1, completionTokens: 1, costUsd: 0.5 })
+    expect(stats).toEqual({ promptTokens: 17, completionTokens: 6, costUsd: null, estimated: true })
   })
 
   it('gives the parent as much of a child’s reply as the setting allows when the call has room, past other tools’ limit', async () => {
@@ -3567,7 +3896,7 @@ describe('sub-agents', () => {
     const done = await doneEvent(r.conversation.id)
     expect(done.message.error).toBeNull()
     const [event] = done.message.toolEvents
-    expect(event).toMatchObject({ tool: 'delegate', ok: false, summary: 'Search, then fail. · failed' })
+    expect(event).toMatchObject({ tool: 'delegate', ok: false, summary: 'Search, then fail. · 1 tool call · failed' })
     expect(event.child!.events).toEqual([expect.objectContaining({ tool: 'web_search', ok: true })])
     expect(event.child!.events.some((e) => e.pending || e.awaiting)).toBe(false)
     // The reason is kept on the child, for its card, and is what the parent was told.
@@ -3740,7 +4069,12 @@ describe('sub-agents', () => {
     expect(saved.error).toBeNull()
     expect(saved.toolEvents).toHaveLength(2)
     for (const [index, event] of saved.toolEvents.entries()) {
-      expect(event).toMatchObject({ tool: 'delegate', pending: false, ok: false, summary: `the ${['first', 'second'][index]} (stopped)` })
+      expect(event).toMatchObject({
+        tool: 'delegate',
+        pending: false,
+        ok: false,
+        summary: `the ${['first', 'second'][index]} · 1 tool call (stopped)`
+      })
       expect(event.child!.events).toEqual([expect.objectContaining({ tool: 'web_search', pending: false, ok: false })])
       expect(event.child!.events[0].summary).toMatch(/\(stopped\)$/)
     }
@@ -3768,12 +4102,17 @@ describe('sub-agents', () => {
       const r = start('three, then stop')
       const id = r.assistantMessageId
       await waitFor(() => chatCalls.filter(isChild).length === 2, 2000)
-      // The third shows, waiting its turn.
-      expect(lastEvent(r.conversation.id, 2)).toMatchObject({ tool: 'delegate', pending: true })
+      // The third shows, waiting its turn, and says so; the two that started no longer do (#178).
+      expect(lastEvent(r.conversation.id, 2)).toMatchObject({ tool: 'delegate', pending: true, queued: true })
+      expect([0, 1].map((i) => lastEvent(r.conversation.id, i))).toEqual([
+        expect.objectContaining({ tool: 'delegate', pending: true }),
+        expect.objectContaining({ tool: 'delegate', pending: true })
+      ])
+      expect([0, 1].some((i) => lastEvent(r.conversation.id, i)!.queued)).toBe(false)
       await service.stop(r.conversation.id)
       const saved = getMessage(id)!
       expect(saved.toolEvents.map((e) => e.summary)).toEqual(['the first (stopped)', 'the second (stopped)', 'the third (not run)'])
-      expect(saved.toolEvents.some((e) => e.pending || e.ok || e.awaiting)).toBe(false)
+      expect(saved.toolEvents.some((e) => e.pending || e.ok || e.awaiting || e.queued)).toBe(false)
       // It never ran: no request of its own, and no trace, of its call or of a child.
       expect(chatCalls.filter(isChild).some((b) => taskOf(b).includes('third'))).toBe(false)
       const traces = listTraces(r.conversation.id)

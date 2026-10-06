@@ -25,6 +25,14 @@ describe('a stream’s thinking segments', () => {
     expect(applyPiece([seg('Plan', 0, 0, null)], { content: '' }, 2000)).toEqual([seg('Plan', 0, 0, null)])
   })
 
+  it('reopens the round’s segment when thinking resumes after text in the same round (#151)', () => {
+    const ended = applyPiece([seg('Plan', 0, 0, null)], { content: 'Let me' }, 1500)
+    const resumed = applyPiece(ended, { thinking: ' again', round: { at: 0, index: 0 } }, 2000)
+    expect(resumed).toEqual([seg('Plan again', 0, 0, null)])
+    // Ended again by more text, and timed from the round's first thinking.
+    expect(applyPiece(resumed, { content: ' check' }, 2600)).toEqual([seg('Plan again', 0, 0, 1600)])
+  })
+
   it('starts a new segment for the next round, ending the earlier one if nothing else did', () => {
     const s = applyPiece([seg('Plan', 0, 0, null)], { thinking: 'Got it', round: { at: 13, index: 1 } }, 3000)
     expect(s).toEqual([seg('Plan', 0, 0, 2000), seg('Got it', 13, 1, null, 3000)])

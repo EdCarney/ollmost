@@ -185,6 +185,19 @@ describe('tool registry', () => {
     register(fake('runner', ['run_code'], { grants: ['code'] }))
     const withRunner = await runTool(call('load_skill', { name: 'pdf' }), ctx({ skills: true }))
     expect(withRunner.content).not.toContain('cannot execute scripts')
+    expect(withRunner.content).toContain('call run_code with language "bash"')
+  })
+
+  it("names run_command for a code session's skill scripts, and says they wait for work in plan mode (#144)", async () => {
+    // A session's tools grant code too, but it has run_command, never the chat's run_code.
+    register(fake('session', ['run_command'], { grants: ['code'] }))
+    const session = ctx({ skills: true, mode: 'code' })
+    const working = await runTool(call('load_skill', { name: 'pdf' }), session)
+    expect(working.content).toContain("call run_command with the script's full path")
+    expect(working.content).not.toMatch(/run_code|cannot execute scripts/)
+    const planning = await runTool(call('load_skill', { name: 'pdf' }), { ...session, stage: 'plan' })
+    expect(planning.content).toContain('run_command, which is not offered in plan mode')
+    expect(planning.content).not.toMatch(/run_code|cannot execute scripts/)
   })
 })
 
@@ -316,6 +329,17 @@ describe('asking first', () => {
       summary: 'Tidy. (stopped)',
       child: { ...child, events: [{ tool: 'notes__delete', args: {}, ok: false, pending: false, summary: 'notes (not run)' }] }
     })
+  })
+
+  it('settles a call still waiting its turn in its batch as not run, sub-agent or not (#178)', () => {
+    const queued: ToolEvent = { tool: 'web_search', args: {}, ok: true, pending: true, queued: true, summary: 'cats' }
+    expect(settleToolEvent(queued)).toEqual({ tool: 'web_search', args: {}, ok: false, pending: false, summary: 'cats (not run)' })
+    const child = { task: 'Tidy.', events: [], result: '', rounds: 0 }
+    const parent: ToolEvent = { tool: 'delegate', args: {}, ok: true, pending: true, queued: true, summary: 'Tidy.', child }
+    expect(settleToolEvent(parent)).toEqual({ tool: 'delegate', args: {}, ok: false, pending: false, summary: 'Tidy. (not run)', child })
+    // One that started looks the same but for the mark, and it ran.
+    const started: ToolEvent = { tool: 'delegate', args: {}, ok: true, pending: true, summary: 'Tidy.', child }
+    expect(settleToolEvent(started)).toEqual({ tool: 'delegate', args: {}, ok: false, pending: false, summary: 'Tidy. (stopped)', child })
   })
 
   it('lets a call run beside others only when its provider allows it and it never asks', () => {

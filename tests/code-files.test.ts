@@ -1,7 +1,21 @@
-import { chmodSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
+import {
+  chmodSync,
+  linkSync,
+  mkdirSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync
+} from 'node:fs'
+import { execFileSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { basename, dirname, join } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { DIFF_CUT_MARK } from '@shared/diff'
 import type { Workspace } from '../src/main/runner/workspace'
 import { tempDir } from './tempDir'
 
@@ -283,6 +297,58 @@ describe('edit_file and write_file', () => {
     expect(statSync(join(dir, 'run.sh')).mode & 0o777).toBe(0o755)
   })
 
+  it('replaces the file rather than writing into it, leaving nothing beside it (#140)', async () => {
+    const { dir, ws } = project({ 'a.ts': 'x = 1\n' })
+    const before = statSync(join(dir, 'a.ts')).ino
+    // A hard link shares the old inode: the edited file is a new one, so the link keeps the old text.
+    linkSync(join(dir, 'a.ts'), join(dir, 'a.link'))
+    await files.editFile(ws, { path: 'a.ts', oldString: '1', newString: '2' })
+    expect(text(dir, 'a.ts')).toBe('x = 2\n')
+    expect(text(dir, 'a.link')).toBe('x = 1\n')
+    expect(statSync(join(dir, 'a.ts')).ino).not.toBe(before)
+    await files.writeFile(ws, { path: 'a.ts', content: 'x = 3\n' })
+    expect(text(dir, 'a.ts')).toBe('x = 3\n')
+    expect(text(dir, 'a.link')).toBe('x = 1\n')
+    // The temporary file each write went through is gone.
+    expect(readdirSync(dir).sort()).toEqual(['a.link', 'a.ts'])
+  })
+
+  it('edits a file whose name is as long as a name can be, clearing setuid and setgid as a write in place did (#140)', async () => {
+    const long = `${'n'.repeat(250)}.sh`
+    const { dir, ws } = project({ [long]: 'echo 1\n' })
+    chmodSync(join(dir, long), 0o6755)
+    await files.editFile(ws, { path: long, oldString: '1', newString: '2' })
+    expect(text(dir, long)).toBe('echo 2\n')
+    expect(statSync(join(dir, long)).mode & 0o7777).toBe(0o755)
+    expect(readdirSync(dir)).toEqual([long])
+  })
+
+  it.runIf(process.platform === 'darwin')('keeps a downloaded file’s quarantine mark through an edit (#140)', async () => {
+    const { dir, ws } = project({ 'run.sh': 'echo 1\n' })
+    const mark = '0081;5f5e1000;Safari;'
+    execFileSync('/usr/bin/xattr', ['-w', 'com.apple.quarantine', mark, join(dir, 'run.sh')])
+    await files.editFile(ws, { path: 'run.sh', oldString: '1', newString: '2' })
+    expect(text(dir, 'run.sh')).toBe('echo 2\n')
+    expect(
+      execFileSync('/usr/bin/xattr', ['-p', 'com.apple.quarantine', join(dir, 'run.sh')])
+        .toString()
+        .trim()
+    ).toBe(mark)
+  })
+
+  // Root writes anything, so this can only be seen as another user.
+  it.skipIf(process.getuid?.() === 0)(
+    'still refuses a file its mode makes read-only, though its folder could replace it (#140)',
+    async () => {
+      const { dir, ws } = project({ 'a.ts': 'x = 1\n' })
+      chmodSync(join(dir, 'a.ts'), 0o444)
+      await expect(files.editFile(ws, { path: 'a.ts', oldString: '1', newString: '2' })).rejects.toMatchObject({ code: 'EACCES' })
+      await expect(files.writeFile(ws, { path: 'a.ts', content: 'x = 3\n' })).rejects.toMatchObject({ code: 'EACCES' })
+      expect(text(dir, 'a.ts')).toBe('x = 1\n')
+      expect(readdirSync(dir)).toEqual(['a.ts'])
+    }
+  )
+
   it('refuses an old_string that is missing, ambiguous, empty or unchanged, and replaces every occurrence with replace_all', async () => {
     const { dir, ws } = project({ 'a.ts': 'x = 1\ny = 1\n' })
     expect(await refusal(files.editFile(ws, { path: 'a.ts', oldString: '= 2', newString: '= 3' }))).toBe('old_string not found')
@@ -352,11 +418,17 @@ describe('edit_file and write_file', () => {
 
   it('gives the diff an edit or a write would make, or throws what the edit would, writing nothing', async () => {
     const { dir, ws } = project({ 'a.ts': THREE })
-    expect(await files.editDiff(ws, { path: 'a.ts', oldString: 'two', newString: '2' })).toBe(
-      '--- a/a.ts\n+++ b/a.ts\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three'
-    )
+    expect(await files.editDiff(ws, { path: 'a.ts', oldString: 'two', newString: '2' })).toEqual({
+      diff: '--- a/a.ts\n+++ b/a.ts\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three',
+      added: 1,
+      removed: 1
+    })
     await expect(files.editDiff(ws, { path: 'a.ts', oldString: 'nope', newString: '2' })).rejects.toThrow(/not found/)
-    expect(await files.writeDiff(ws, { path: 'b.ts', content: 'b\n' })).toBe('--- /dev/null\n+++ b/b.ts\n@@ -0,0 +1,1 @@\n+b')
+    expect(await files.writeDiff(ws, { path: 'b.ts', content: 'b\n' })).toEqual({
+      diff: '--- /dev/null\n+++ b/b.ts\n@@ -0,0 +1,1 @@\n+b',
+      added: 1,
+      removed: 0
+    })
     await expect(files.writeDiff(ws, { path: '.git/config', content: 'b\n' })).rejects.toThrow(files.Refused)
     // Nothing was written.
     expect(text(dir, 'a.ts')).toBe(THREE)
@@ -366,8 +438,10 @@ describe('edit_file and write_file', () => {
   it('cuts a huge diff, and marks a missing final newline', async () => {
     const { ws } = project()
     const r = await files.writeFile(ws, { path: 'big.txt', content: `${'y'.repeat(60)}\n`.repeat(2500) })
-    expect(r.diff.endsWith('[… the diff was cut here]')).toBe(true)
+    expect(r.diff.endsWith(DIFF_CUT_MARK)).toBe(true)
     expect(r.diff.length).toBeLessThan(100_100)
+    // The counts are of the whole change, not of what's left of the diff (#149).
+    expect(r).toMatchObject({ added: 2500, removed: 0 })
     // Past the diff's time or edit limits, the whole file is shown replaced.
     expect(files.unifiedDiff('x', 'a\nb\nc\n', 'x\nb\ny', { maxEditLength: 0 })).toEqual({
       diff: '--- a/x\n+++ b/x\n@@ -1,3 +1,3 @@\n-a\n-b\n-c\n+x\n+b\n+y\n\\ No newline at end of file',
@@ -518,7 +592,8 @@ describe('the file tools among a session’s tools', () => {
       ok: true,
       pending: true,
       summary: 'a.ts',
-      diff: '--- a/a.ts\n+++ b/a.ts\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three'
+      diff: '--- a/a.ts\n+++ b/a.ts\n@@ -1,3 +1,3 @@\n one\n-two\n+2\n three',
+      changed: { added: 1, removed: 1 }
     })
     const long = await tools.pendingEvent(call('write_file', { path: 'b.ts', content: 'z'.repeat(5000) }), ctx)
     expect(long.diff).toMatch(/^--- \/dev\/null\n\+\+\+ b\/b\.ts\n/)

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { matchScore, rankCommands, settingsTabCommands } from '../src/shared/palette'
+import { matchScore, rankCommands, SCATTERED, settingsTabCommands } from '../src/shared/palette'
 
 const cmds = [
   { id: 'theme', title: 'Change theme', keywords: ['appearance', 'colors'] },
@@ -10,14 +10,19 @@ const cmds = [
 ]
 
 describe('matching a palette query', () => {
-  it('scores a prefix above a word start, a word start above a substring, and a substring above a scattered match', () => {
+  it('scores the whole text, then a prefix, a whole word, a word start, a substring, then a scattered match', () => {
+    const whole = matchScore('change theme', 'Change theme')
     const prefix = matchScore('cha', 'Change theme')
+    const wholeWord = matchScore('theme', 'Change theme')
     const wordStart = matchScore('the', 'Change theme')
     const substring = matchScore('ange', 'Change theme')
     const scattered = matchScore('chtm', 'Change theme')
-    expect(prefix).toBeGreaterThan(wordStart)
+    expect(whole).toBeGreaterThan(prefix)
+    expect(prefix).toBeGreaterThan(wholeWord)
+    expect(wholeWord).toBeGreaterThan(wordStart)
     expect(wordStart).toBeGreaterThan(substring)
     expect(substring).toBeGreaterThan(scattered)
+    expect(scattered).toBe(SCATTERED)
     expect(scattered).toBeGreaterThan(0)
     expect(matchScore('xyz', 'Change theme')).toBe(0)
     expect(matchScore('', 'Change theme')).toBe(0)
@@ -65,12 +70,38 @@ describe('ranking commands', () => {
     expect(rankCommands('change → theme', cmds, []).map((c) => c.id)).toEqual(['theme'])
   })
 
-  it('ranks letters scattered through a title below a keyword that starts with the query', () => {
+  it('ranks letters scattered through a title below a keyword that starts with the query, and leaves them out when asked', () => {
     const list = [
       { id: 'mode', title: 'Appearance mode', keywords: ['light', 'dark'] },
       { id: 'tools', title: 'Settings › Tools', keywords: ['code runner', 'mcp'] }
     ]
     expect(rankCommands('code', list, []).map((c) => c.id)).toEqual(['tools', 'mode'])
+    expect(rankCommands('code', list, [], { loose: false }).map((c) => c.id)).toEqual(['tools'])
+  })
+
+  // The queries from #142: chats named "rust", "test" and "api" ran a command on Enter.
+  it('never matches a keyword by scattered letters, and a title that way only loosely (#142)', () => {
+    const registry = [
+      { id: 'debugger', title: 'Open the debugger', keywords: ['requests', 'traces', 'replay'] },
+      { id: 'usage', title: 'Settings › Usage & cost', keywords: ['settings', 'preferences', 'quota', 'spend', 'tokens', 'api key'] },
+      { id: 'general', title: 'Settings › General', keywords: ['settings', 'preferences', 'name'] }
+    ]
+    // r-u-s-t is in "requests"; no one typing it means the debugger.
+    expect(rankCommands('rust', registry, [])).toEqual([])
+    // t-e-s-t is in the Usage & cost title: listed only when loose matches are wanted.
+    expect(rankCommands('test', registry, []).map((c) => c.id)).toEqual(['usage'])
+    expect(rankCommands('test', registry, [], { loose: false })).toEqual([])
+    // A keyword the query starts is a real match either way.
+    expect(rankCommands('api', registry, [], { loose: false }).map((c) => c.id)).toEqual(['usage'])
+  })
+
+  it('scores a whole word above a word’s start (#142)', () => {
+    const list = [
+      { id: 'model', title: 'Default model' },
+      { id: 'mode', title: 'Appearance mode' }
+    ]
+    expect(rankCommands('mode', list, []).map((c) => c.id)).toEqual(['mode', 'model'])
+    expect(rankCommands('mod', list, []).map((c) => c.id)).toEqual(['model', 'mode'])
   })
 })
 
