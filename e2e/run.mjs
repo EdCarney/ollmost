@@ -2064,7 +2064,9 @@ const evilSvg = (port) =>
       await win.screenshot({ path: join(SHOTS, 'code-edit-approval.png') })
       await card.getByRole('button', { name: 'Allow once' }).click()
 
-      // 3. The command approval card, allowed for the rest of the session.
+      // 3. The command approval card, allowed for the rest of the session. The edit's card stays up while the edit runs
+      // (on a Mac it copies the file with cp, #140), and card.waitFor() returns at once on it, so wait for it to go first.
+      await card.filter({ hasText: 'Edit README.md?' }).waitFor({ state: 'detached', timeout: 20000 })
       await card.waitFor({ timeout: 20000 })
       const commandAsked = await card.innerText()
       check(
